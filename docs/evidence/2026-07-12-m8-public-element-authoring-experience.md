@@ -29,7 +29,7 @@ runtime path and never creates a seeking `<video>` substitute.
 
 | Field | Required final value | Current result |
 |---|---|---|
-| Commit and tree | immutable full commit and tree SHA | **PENDING — freeze not opened** |
+| Commit and tree | immutable full commit and tree SHA | Local engineering implementation commit `63792f9b51b02f264eca110e646b57df6e4dd6c9`, tree `14c59676a24f48ce8fbdb55c22c89037970f45dc`; protected candidate identity pending. |
 | Toolchain | candidate Node/npm/TypeScript/Vite/Playwright and OS | Local gate: Node 25.8.1, TypeScript 7.0.2, Vite 8.1.4, Playwright 1.61.1, macOS arm64; **PENDING — candidate run not started** |
 | Package archives | five exact `1.0.0` archive digests and inspection report | Test-only local exact archives passed with release-set SHA-256 `665f58458b17ab6be96809ae8fc213097d4a8757a5a361dd0ae1bd0965bce679`; protected candidate still pending. |
 | API surface | frozen declaration/API reports and compatibility result | API Extractor 7.58.9 reports and classifications pass for all five public packages; protected candidate comparison pending. |

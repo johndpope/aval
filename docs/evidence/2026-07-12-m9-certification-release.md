@@ -8,6 +8,11 @@ creation, Firefox/WebKit execution on this disk-constrained host, external named
 profiles, human legal/publication-metadata approval, and registry publication
 remain pending.
 
+Local implementation freeze: commit
+`63792f9b51b02f264eca110e646b57df6e4dd6c9`, tree
+`14c59676a24f48ce8fbdb55c22c89037970f45dc`. This is engineering evidence,
+not the still-uncreated protected candidate identity.
+
 ## Implemented independent certification authority
 
 - Private `@rendered-motion/certification` package with the closed result
