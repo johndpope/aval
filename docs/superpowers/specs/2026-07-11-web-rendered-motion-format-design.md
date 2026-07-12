@@ -91,7 +91,7 @@ Version 0 intentionally targets compact UI motion:
 - maximum active decoders per player: one; and
 - default page-wide budget: two active decoders and 192 MiB of tracked motion memory.
 
-Product targets, measured separately from hard limits, are a combined element/worker runtime below 75 KiB gzip with no mandatory WASM, `visualReady` within 50 ms from warm-cache bytes being available, and animated `interactiveReady` within 250 ms for a 256×256 60 fps reference asset on certified devices. Cold-network time is reported separately.
+The original combined element/worker target below 75 KiB gzip was later recorded as a miss. The approved delivery gates measure the source-free bootstrap below 75 KiB, the complete loaded element/player graph at no more than 250 KiB, and the worker at no more than 20 KiB. There is no mandatory WASM. `visualReady` within 50 ms from warm-cache bytes being available and animated `interactiveReady` within 250 ms remain certification targets for a 256×256 60 fps reference asset on qualified devices, not implementation-checkpoint results. Cold-network time is reported separately.
 
 Hosts may lower these limits. Raising them requires an explicit runtime policy and removes reference-profile certification.
 
@@ -614,7 +614,6 @@ Animated mode requires a secure browser context (`https:` or the browser's local
 ```html
 <rendered-motion
   src="/assets/favorite.rma"
-  poster-src="/assets/favorite-idle.png"
   motion="auto"
   autoplay="visible"
 >
@@ -659,7 +658,7 @@ Built-in bindings can emit `pointer.enter`, `pointer.leave`, `focus.in`, `focus.
 
 `motion="auto|reduce|full"` defaults to `auto`, follows live `prefers-reduced-motion` changes, and uses per-state static frames in reduced mode. Reduced mode never starts an infinite loop. `autoplay="visible|manual"` defaults to `visible`; `manual` requires `resume()`. The player exposes visible pause/resume integration guidance for nonessential motion lasting more than five seconds and the compiler warns about high-frequency flashing.
 
-The element reserves the manifest's intrinsic aspect ratio before animation loads, supports CSS width/height with `contain`, `cover`, or `fill`, responds to device-pixel-ratio and resize changes without changing logical state, and always keeps the light-DOM fallback or `poster-src` usable when JavaScript, CORS, CSP, WebCodecs, or WebGL2 is unavailable.
+The element reserves the manifest's intrinsic aspect ratio before animation loads, supports CSS width/height with `contain`, `cover`, or `fill`, responds to device-pixel-ratio and resize changes without changing logical state, and always keeps the author-owned light-DOM fallback usable when JavaScript, CORS, CSP, WebCodecs, or WebGL2 is unavailable. Enhanced initial and per-state statics come only from the verified asset.
 
 ## 11. Compiler and Source Project
 

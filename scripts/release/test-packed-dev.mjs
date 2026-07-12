@@ -1,0 +1,677 @@
+#!/usr/bin/env node
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  cp,
+  lstat,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import { chromium } from "playwright";
+import { build as viteBuild, preview as vitePreview } from "vite";
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const packageDirectory = resolve(root, option("--packages") ?? "artifacts/1.0.0/packages");
+const policy = JSON.parse(await readFile(
+  resolve(root, "config/release/release-policy.json"),
+  "utf8"
+));
+const releaseVersion = policy.releaseVersion;
+const expectedPackages = ["compiler", "element", "format", "graph", "player-web"];
+const archives = (await readdir(packageDirectory))
+  .filter((name) => name.endsWith(".tgz"))
+  .sort()
+  .map((name) => join(packageDirectory, name));
+assert(archives.length === expectedPackages.length, `expected five package archives, found ${archives.length}`);
+
+const temporary = await realpath(await mkdtemp(join(tmpdir(), "rma-packed-dev-")));
+const project = join(temporary, "project");
+const npmCache = join(temporary, "npm-cache");
+let child;
+let childExit;
+let childExitState;
+let browser;
+let viteServer;
+
+try {
+  await cp(resolve(root, "fixtures/starter/m8-idle-hover"), project, { recursive: true });
+  run(
+    process.platform === "win32" ? "npm.cmd" : "npm",
+    [
+      "install",
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      "--no-package-lock",
+      "--offline",
+      "--cache",
+      npmCache,
+      ...archives
+    ],
+    project,
+    120_000
+  );
+  await verifyInstalledGraph(project, releaseVersion);
+
+  const cli = join(
+    project,
+    "node_modules",
+    "@rendered-motion",
+    "compiler",
+    "dist",
+    "cli.js"
+  );
+  child = spawn(process.execPath, [
+    cli,
+    "dev",
+    "motion.json",
+    "--out",
+    "starter.rma",
+    "--port",
+    "0",
+    "--force",
+    "--json"
+  ], {
+    cwd: project,
+    env: { ...process.env, NO_COLOR: "1" },
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  const output = createJsonLineCollector(child.stdout, "packed rma dev stdout");
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk) => {
+    try {
+      stderr = boundedAppend(stderr, chunk, 4 * 1024 * 1024, "packed rma dev stderr");
+    } catch (error) {
+      output.fail(error);
+      child.kill("SIGTERM");
+    }
+  });
+  childExit = new Promise((resolveExit, rejectExit) => {
+    child.once("error", (error) => {
+      output.fail(error);
+      rejectExit(error);
+    });
+    child.once("exit", (code, signal) => resolveExit({ code, signal }));
+  }).then((result) => {
+    childExitState = result;
+    output.fail(new Error(
+      `packed rma dev exited (${String(result.code ?? result.signal)}):\n${stderr}`
+    ));
+    return result;
+  });
+
+  const listening = await output.waitFor((value) =>
+    value?.command === "dev" && value.event === "listening", 30_000);
+  assert(typeof listening.url === "string", "dev listening event omitted its URL");
+  const devUrl = listening.url;
+  assert(/^http:\/\/(?:127\.0\.0\.1|\[::1\]):[0-9]+\/[A-Za-z0-9_-]{43}\/$/u.test(devUrl), `dev server did not expose one loopback capability URL: ${devUrl}`);
+  const firstBuild = await output.waitFor(isBuildEvent, 120_000);
+  verifyBuildEvent(firstBuild);
+
+  const servedSources = await verifyHttpSurface(devUrl, firstBuild, [root, project]);
+  await viteBuild({
+    root: project,
+    configFile: false,
+    logLevel: "silent",
+    build: {
+      outDir: "dist",
+      emptyOutDir: true,
+      minify: "oxc",
+      sourcemap: false
+    }
+  });
+  await cp(join(project, "starter.rma"), join(project, "dist", "starter.rma"));
+  const builtStarter = await readTextTree(join(project, "dist"));
+  assert(builtStarter.includes("rendered-motion"), "generated starter web build omitted the element");
+  assertNoFilesystemLeak(builtStarter, [root, project]);
+  viteServer = await vitePreview({
+    root: project,
+    configFile: false,
+    logLevel: "silent",
+    preview: { host: "127.0.0.1", port: 0, strictPort: true }
+  });
+  const starterUrl = viteServer.resolvedUrls?.local[0];
+  assert(typeof starterUrl === "string" && /^http:\/\/127\.0\.0\.1:[0-9]+\/$/u.test(starterUrl), "generated production starter preview omitted its loopback URL");
+
+  browser = await chromium.launch({ channel: "chromium", headless: true });
+  const starterContext = await browser.newContext();
+  await installWorkerEvidence(starterContext);
+  const starterPage = await starterContext.newPage();
+  const starterFailures = monitorBrowser(starterPage, starterUrl, [root, project]);
+  await starterPage.goto(starterUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await assertPinnedChromiumCapabilities(starterPage);
+  await waitForElementReady(starterPage, "interactiveReady");
+  const starterSnapshot = await publicSnapshot(starterPage);
+  assert(starterSnapshot.stateNames.includes("idle"), "generated starter omitted its idle state");
+  assert(starterSnapshot.stateNames.includes("engaged"), "generated starter omitted its engaged state");
+  assert(starterSnapshot.videoCount === 0, "generated starter created a video element");
+  await starterPage.locator("#favorite").hover();
+  await starterPage.waitForFunction(() =>
+    document.querySelector("rendered-motion")?.requestedState === "engaged",
+  { timeout: 10_000 });
+  await starterPage.mouse.move(0, 0);
+  await starterPage.waitForFunction(() =>
+    document.querySelector("rendered-motion")?.requestedState === "idle",
+  { timeout: 10_000 });
+  await starterFailures.assertWorkerExecuted();
+  starterFailures.assertClean();
+  await starterContext.close();
+
+  const fallbackContext = await browser.newContext();
+  await fallbackContext.addInitScript(() => {
+    Object.defineProperty(globalThis, "Worker", { configurable: true, value: undefined });
+  });
+  const fallbackPage = await fallbackContext.newPage();
+  const fallbackFailures = monitorBrowser(fallbackPage, starterUrl, [root, project]);
+  await fallbackPage.goto(starterUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await waitForElementReady(fallbackPage, "staticReady");
+  const fallbackSnapshot = await publicSnapshot(fallbackPage);
+  assert(
+    fallbackSnapshot.staticReason === "worker-unavailable" || fallbackSnapshot.staticReason === "visibility-suspended",
+    `forced-static starter used an unexpected reason: ${String(fallbackSnapshot.staticReason)}`
+  );
+  assert(fallbackSnapshot.staticCanvasVisible && fallbackSnapshot.staticCanvasDrawn, "forced-static starter did not reveal its verified internal static canvas");
+  assert(fallbackSnapshot.animatedCanvasHidden && fallbackSnapshot.fallbackSlotHidden, "forced-static starter exposed more than the static presentation layer");
+  assert(fallbackSnapshot.fallbackAuthorOwned && fallbackSnapshot.fallbackImageLoaded, "starter did not retain and load its author-owned fallback");
+  assert(fallbackSnapshot.videoCount === 0, "forced-static starter created a video element");
+  fallbackFailures.assertClean();
+  await fallbackContext.close();
+
+  const devContext = await browser.newContext();
+  await installWorkerEvidence(devContext);
+  const page = await devContext.newPage();
+  const browserFailures = monitorBrowser(page, devUrl, [root, project]);
+  await page.goto(devUrl, { waitUntil: "domcontentloaded", timeout: 30_000 });
+  await waitForReady(page, firstBuild.sequence);
+  const initialSnapshot = await publicSnapshot(page);
+  assert(initialSnapshot.readiness === "interactiveReady", "capable pinned Chromium did not reach interactive readiness");
+  assert(initialSnapshot.stateNames.includes("idle"), "packed element omitted the author-defined idle state");
+  assert(initialSnapshot.stateNames.includes("engaged"), "packed element omitted the author-defined engaged state");
+  assert(initialSnapshot.src.includes(`v=${String(firstBuild.sequence)}`), "initial build did not install a generation URL");
+  assert(initialSnapshot.videoCount === 0, "packed dev playground created a video element");
+
+  await page.locator("#interaction").hover();
+  await page.waitForFunction(() =>
+    document.querySelector("rendered-motion")?.requestedState === "engaged",
+  { timeout: 10_000 });
+  await page.mouse.move(0, 0);
+  await page.waitForFunction(() =>
+    document.querySelector("rendered-motion")?.requestedState === "idle",
+  { timeout: 10_000 });
+
+  const projectPath = join(project, "motion.json");
+  const originalProject = await readFile(projectPath, "utf8");
+  const replacementProject = originalProject.replace('"fit":"contain"', '"fit":"cover"');
+  assert(replacementProject !== originalProject, "starter project did not expose the expected replacement seam");
+  await writeFile(projectPath, replacementProject);
+  const secondBuild = await output.waitFor((value) =>
+    isBuildEvent(value) && value.sequence > firstBuild.sequence,
+  120_000);
+  verifyBuildEvent(secondBuild);
+  assert(secondBuild.sha256 !== firstBuild.sha256, "valid project replacement retained the old asset digest");
+  await waitForReady(page, secondBuild.sequence);
+  const replacementSnapshot = await publicSnapshot(page);
+  assert(
+    replacementSnapshot.src.includes(`v=${String(secondBuild.sequence)}`),
+    "watch rebuild did not replace the public element source"
+  );
+  assert(
+    replacementSnapshot.sourceGeneration > initialSnapshot.sourceGeneration,
+    "watch rebuild did not advance the element source generation"
+  );
+  await verifyAsset(devUrl, secondBuild);
+  const report = await checkedJson(new URL("report.json", devUrl));
+  assert(report.generation === secondBuild.sequence, "report endpoint retained a stale generation");
+
+  await browserFailures.assertWorkerExecuted();
+  await devContext.close();
+  await browser.close();
+  browser = undefined;
+  await closePreview(viteServer);
+  viteServer = undefined;
+  browserFailures.assertClean();
+  assertNoFilesystemLeak(JSON.stringify({ servedSources, report }), [root, project]);
+
+  child.kill("SIGINT");
+  const exit = await withTimeout(childExit, 30_000, "packed rma dev did not stop after SIGINT");
+  assert(exit.code === 130 && exit.signal === null, `packed rma dev did not exit cleanly: ${JSON.stringify(exit)}`);
+  child = undefined;
+
+  process.stdout.write(`${JSON.stringify({
+    status: "passed",
+    packages: expectedPackages.length,
+    firstGeneration: firstBuild.sequence,
+    replacementGeneration: secondBuild.sequence,
+    readiness: replacementSnapshot.readiness,
+    exitCode: exit.code
+  })}\n`);
+} finally {
+  if (browser !== undefined) await browser.close().catch(() => undefined);
+  if (viteServer !== undefined) await closePreview(viteServer).catch(() => undefined);
+  if (child !== undefined && childExitState === undefined) {
+    child.kill("SIGTERM");
+    const stopped = await withTimeout(childExit, 5_000, "", false).catch(() => undefined);
+    if (stopped === undefined) {
+      child.kill("SIGKILL");
+      await childExit.catch(() => undefined);
+    }
+  }
+  await rm(temporary, { recursive: true, force: true });
+}
+
+function option(name) {
+  const index = process.argv.indexOf(name);
+  if (index < 0) return undefined;
+  const value = process.argv[index + 1];
+  if (value === undefined || value.startsWith("--")) throw new Error(`${name} requires a value`);
+  return value;
+}
+
+async function verifyInstalledGraph(projectRoot, version) {
+  const scope = join(projectRoot, "node_modules", "@rendered-motion");
+  const canonicalScope = await realpath(scope);
+  const manifests = new Map();
+  for (const name of expectedPackages) {
+    const directory = join(scope, name);
+    assert(!(await lstat(directory)).isSymbolicLink(), `installed ${name} package is a symlink`);
+    const canonical = await realpath(directory);
+    assert(
+      canonical.startsWith(`${canonicalScope}${sep}`),
+      `installed ${name} package escaped the clean node_modules scope`
+    );
+    const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
+    assert(manifest.version === version, `${name} installed at ${String(manifest.version)}, expected ${version}`);
+    manifests.set(name, manifest);
+  }
+  const expectedDependencies = {
+    graph: [],
+    format: ["graph"],
+    "player-web": ["graph", "format"],
+    element: ["player-web"],
+    compiler: ["graph", "format", "player-web", "element"]
+  };
+  for (const [name, expected] of Object.entries(expectedDependencies)) {
+    const dependencies = manifests.get(name)?.dependencies ?? {};
+    assert(JSON.stringify(Object.keys(dependencies).sort()) === JSON.stringify(expected.map((short) => `@rendered-motion/${short}`).sort()), `packed ${name} dependency graph is not exact`);
+    for (const value of Object.values(dependencies)) assert(value === version, `packed ${name} dependency version is not exact`);
+  }
+}
+
+async function verifyHttpSurface(url, build, forbiddenPaths) {
+  const pageResponse = await checkedFetch(new URL("./", url));
+  assert(pageResponse.status === 200, `dev page returned ${pageResponse.status}`);
+  const pageText = await pageResponse.text();
+  const clientResponse = await checkedFetch(new URL("client.js", url));
+  assert(clientResponse.status === 200, `dev client returned ${clientResponse.status}`);
+  const clientText = await clientResponse.text();
+  const moduleResponse = await checkedFetch(new URL("modules/element/auto.js", url));
+  assert(moduleResponse.status === 200, `packed element module returned ${moduleResponse.status}`);
+  const moduleText = await moduleResponse.text();
+  const workerResponse = await checkedFetch(new URL("modules/player-web/decoder-worker/entry.js", url));
+  assert(workerResponse.status === 200, `packed decoder worker entry returned ${workerResponse.status}`);
+  assert(workerResponse.headers.get("content-security-policy")?.includes("default-src 'none'") === true, "packed decoder worker entry omitted its closed CSP");
+  const workerText = await workerResponse.text();
+  const originRoot = new URL("/", url);
+  const unscoped = await checkedFetch(originRoot);
+  assert(unscoped.status === 404, `unscoped dev origin unexpectedly returned ${unscoped.status}`);
+  assertNoFilesystemLeak(`${pageText}\n${clientText}\n${moduleText}\n${workerText}`, forbiddenPaths);
+  assert(clientText.includes('/modules/element/auto.js'), "dev client did not use the public auto entry");
+  await verifyAsset(url, build);
+  return Object.freeze({ pageText, clientText, moduleText, workerText });
+}
+
+async function verifyAsset(url, build) {
+  const assetUrl = new URL("asset.rma", url);
+  const range = await checkedFetch(assetUrl, {
+    headers: { Range: "bytes=0-31" }
+  });
+  assert(range.status === 206, `asset range returned ${range.status}`);
+  assert(range.headers.get("content-range") === `bytes 0-31/${String(build.bytes)}`, "asset range boundary was not exact");
+  assert(range.headers.get("content-encoding") === "identity", "asset range was not identity encoded");
+  assert(range.headers.get("etag") === `"rma-${build.sha256}"`, "asset ETag did not match its publication");
+  assert((await range.arrayBuffer()).byteLength === 32, "asset range body length was not exact");
+
+  const full = await checkedFetch(assetUrl, {
+    headers: { Range: "bytes=0-31", "If-Range": '"stale-entity"' }
+  });
+  assert(full.status === 200, `mismatched If-Range returned ${full.status}`);
+  const bytes = Buffer.from(await full.arrayBuffer());
+  assert(bytes.byteLength === build.bytes, "full asset byte length did not match its publication");
+  assert(createHash("sha256").update(bytes).digest("hex") === build.sha256, "full asset digest did not match its publication");
+}
+
+function monitorBrowser(page, baseUrl, forbiddenPaths = []) {
+  const allowedBase = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
+  const allowedOrigin = new URL(baseUrl).origin;
+  const pageErrors = [];
+  const consoleErrors = [];
+  const failedResponses = [];
+  const unexpectedUrls = [];
+  const workerResponses = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const location = message.location().url;
+    if (location.endsWith("/favicon.ico") && message.text().includes("404")) return;
+    consoleErrors.push(`${message.text()}${location === "" ? "" : ` (${location})`}`);
+  });
+  page.on("response", (response) => {
+    if (response.request().resourceType() === "worker" || response.url().includes("/decoder-worker/entry.js")) workerResponses.push({ status: response.status(), url: response.url() });
+    if (response.status() >= 400 && !response.url().endsWith("/favicon.ico")) {
+      failedResponses.push(`${String(response.status())} ${response.url()}`);
+    }
+  });
+  page.on("request", (request) => {
+    const url = request.url();
+    const decoded = decodeURIComponent(url);
+    if (
+      !url.startsWith(allowedBase) ||
+      forbiddenPaths.some((path) => decoded.includes(path))
+    ) unexpectedUrls.push(url);
+  });
+  return Object.freeze({
+    async assertWorkerExecuted() {
+      await page.waitForFunction(() => {
+        const evidence = globalThis.__renderedMotionWorkerEvidence;
+        return evidence?.created.length > 0 && evidence.messages > 0;
+      }, undefined, { timeout: 30_000 });
+      const evidence = await page.evaluate(() => globalThis.__renderedMotionWorkerEvidence);
+      assert(evidence.created.every((url) => url.startsWith(`${allowedOrigin}/`)), `decoder worker escaped the browser origin: ${evidence.created.join(", ")}`);
+      assert(evidence.errors === 0 && evidence.messageErrors === 0, "decoder worker emitted a transport error");
+      assert(workerResponses.every(({ status }) => status === 200), "observed decoder worker response was not successful");
+    },
+    assertClean() {
+      assert(pageErrors.length === 0, `browser page errors: ${pageErrors.join(" | ")}`);
+      assert(consoleErrors.length === 0, `browser console errors: ${consoleErrors.join(" | ")}`);
+      assert(failedResponses.length === 0, `browser HTTP failures: ${failedResponses.join(" | ")}`);
+      assert(unexpectedUrls.length === 0, `browser escaped the packed dev origin: ${unexpectedUrls.join(" | ")}`);
+    }
+  });
+}
+
+async function installWorkerEvidence(context) {
+  await context.addInitScript(() => {
+    const NativeWorker = globalThis.Worker;
+    const evidence = { created: [], messages: 0, errors: 0, messageErrors: 0 };
+    Object.defineProperty(globalThis, "__renderedMotionWorkerEvidence", { configurable: false, value: evidence });
+    Object.defineProperty(globalThis, "Worker", {
+      configurable: true,
+      value: new Proxy(NativeWorker, {
+        construct(Target, argumentsList) {
+          const worker = Reflect.construct(Target, argumentsList, Target);
+          evidence.created.push(String(argumentsList[0]));
+          worker.addEventListener("message", () => { evidence.messages += 1; });
+          worker.addEventListener("error", () => { evidence.errors += 1; });
+          worker.addEventListener("messageerror", () => { evidence.messageErrors += 1; });
+          return worker;
+        }
+      })
+    });
+  });
+}
+
+async function assertPinnedChromiumCapabilities(page) {
+  const capability = await page.evaluate(async () => {
+    const videoDecoder = globalThis.VideoDecoder;
+    let avcSupported = false;
+    if (typeof videoDecoder === "function") {
+      try {
+        avcSupported = (await videoDecoder.isConfigSupported({ codec: "avc1.42001E", codedWidth: 48, codedHeight: 48 })).supported === true;
+      } catch {
+        avcSupported = false;
+      }
+    }
+    return { worker: typeof Worker === "function", videoDecoder: typeof videoDecoder === "function", avcSupported, webgl2: typeof WebGL2RenderingContext === "function" };
+  });
+  assert(capability.worker && capability.videoDecoder && capability.avcSupported && capability.webgl2, `pinned Chromium lacks required interactive capabilities: ${JSON.stringify(capability)}`);
+}
+
+async function waitForReady(page, sequence) {
+  await page.waitForFunction((expected) => {
+    const motion = document.querySelector("rendered-motion");
+    const status = document.querySelector("#status")?.textContent ?? "";
+    return motion !== null &&
+      motion.readiness === "interactiveReady" &&
+      motion.src.includes(`v=${String(expected)}`) &&
+      status.includes(`Build ${String(expected)}`);
+  }, sequence, { timeout: 30_000 });
+}
+
+async function waitForElementReady(page, expectedReadiness) {
+  try {
+    await page.waitForFunction((expected) => {
+      const motion = document.querySelector("rendered-motion");
+      return motion !== null && motion.readiness === expected;
+    }, expectedReadiness, { timeout: 30_000 });
+  } catch (error) {
+    const evidence = await page.evaluate(() => {
+      const motion = document.querySelector("rendered-motion");
+      return motion === null
+        ? { elementPresent: false }
+        : {
+            elementPresent: true,
+            readiness: motion.readiness,
+            staticReason: motion.staticReason,
+            diagnostics: motion.getDiagnostics()
+          };
+    }).catch((evaluationError) => ({ evaluationError: String(evaluationError) }));
+    const network = await page.evaluate(async () => {
+      const motion = document.querySelector("rendered-motion");
+      if (motion === null) return [];
+      const probe = async (headers) => {
+        const response = await fetch(motion.src, { cache: "no-store", headers });
+        const bytes = (await response.arrayBuffer()).byteLength;
+        return {
+          requestHeaders: headers,
+          status: response.status,
+          type: response.type,
+          url: response.url,
+          contentEncoding: response.headers.get("Content-Encoding"),
+          contentLength: response.headers.get("Content-Length"),
+          contentRange: response.headers.get("Content-Range"),
+          entityTag: response.headers.get("ETag"),
+          bytes
+        };
+      };
+      return [await probe({ Range: "bytes=0-63" }), await probe({})];
+    }).catch((networkError) => ({ networkError: String(networkError) }));
+    throw new Error(
+      `packed element did not reach ${expectedReadiness}: ${JSON.stringify({ evidence, network })}`,
+      { cause: error }
+    );
+  }
+}
+
+async function publicSnapshot(page) {
+  return page.locator("rendered-motion").first().evaluate((motion) => {
+    const fallback = motion.querySelector("[slot=fallback]");
+    const fallbackStyle = fallback === null ? null : getComputedStyle(fallback);
+    const fallbackImage = fallback instanceof HTMLImageElement ? fallback : null;
+    const staticCanvas = motion.shadowRoot?.querySelector('canvas[data-rma-layer="static"]');
+    const animatedCanvas = motion.shadowRoot?.querySelector('canvas[data-rma-layer="animated"]');
+    const fallbackSlot = motion.shadowRoot?.querySelector('slot[data-rma-layer="fallback"]');
+    const staticStyle = staticCanvas === null || staticCanvas === undefined ? null : getComputedStyle(staticCanvas);
+    return ({
+    readiness: motion.readiness,
+    staticReason: motion.staticReason,
+    requestedState: motion.requestedState,
+    visualState: motion.visualState,
+    stateNames: [...motion.stateNames],
+    src: motion.src,
+    sourceGeneration: motion.getDiagnostics().sourceGeneration,
+    videoCount: document.querySelectorAll("video").length,
+    fallbackVisible: fallback !== null && fallbackStyle?.display !== "none" && fallbackStyle?.visibility !== "hidden" && fallback.getBoundingClientRect().width > 0 && fallback.getBoundingClientRect().height > 0,
+    fallbackImageLoaded: fallbackImage === null || (fallbackImage.complete && fallbackImage.naturalWidth > 0),
+    fallbackAuthorOwned: fallback !== null && fallback.parentElement === motion,
+    staticCanvasVisible: staticCanvas instanceof HTMLCanvasElement && !staticCanvas.hidden && staticStyle?.display !== "none" && staticStyle?.visibility !== "hidden" && staticCanvas.getBoundingClientRect().width > 0 && staticCanvas.getBoundingClientRect().height > 0,
+    staticCanvasDrawn: staticCanvas instanceof HTMLCanvasElement && staticCanvas.width > 0 && staticCanvas.height > 0,
+    animatedCanvasHidden: animatedCanvas instanceof HTMLCanvasElement && animatedCanvas.hidden,
+    fallbackSlotHidden: fallbackSlot instanceof HTMLSlotElement && fallbackSlot.hidden
+    });
+  });
+}
+
+function isBuildEvent(value) {
+  return value?.command === "dev" && value.event === "build" && Number.isSafeInteger(value.sequence);
+}
+
+function verifyBuildEvent(value) {
+  assert(value.sequence >= 1, "dev build sequence was invalid");
+  assert(Number.isSafeInteger(value.bytes) && value.bytes > 32, "dev build byte count was invalid");
+  assert(/^[0-9a-f]{64}$/u.test(value.sha256), "dev build digest was invalid");
+}
+
+function createJsonLineCollector(stream, label) {
+  const records = [];
+  const waiters = new Set();
+  let buffer = "";
+  let totalBytes = 0;
+  let failure;
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk) => {
+    totalBytes += Buffer.byteLength(chunk);
+    if (totalBytes > 4 * 1024 * 1024) {
+      fail(new Error(`${label} exceeded 4 MiB`));
+      return;
+    }
+    buffer += chunk;
+    for (;;) {
+      const newline = buffer.indexOf("\n");
+      if (newline < 0) break;
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      if (line.trim() === "") continue;
+      try {
+        emit(JSON.parse(line));
+      } catch (error) {
+        fail(new Error(`${label} emitted invalid JSON: ${line}`, { cause: error }));
+      }
+    }
+  });
+
+  function emit(value) {
+    records.push(value);
+    if (records.length > 128) records.shift();
+    for (const waiter of [...waiters]) {
+      if (!waiter.predicate(value)) continue;
+      waiters.delete(waiter);
+      clearTimeout(waiter.timer);
+      waiter.resolve(value);
+    }
+  }
+
+  function fail(error) {
+    if (failure !== undefined) return;
+    failure = error;
+    for (const waiter of waiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    waiters.clear();
+  }
+
+  return Object.freeze({
+    fail,
+    waitFor(predicate, timeoutMs) {
+      const existing = records.find(predicate);
+      if (existing !== undefined) return Promise.resolve(existing);
+      if (failure !== undefined) return Promise.reject(failure);
+      return new Promise((resolveWait, rejectWait) => {
+        const waiter = {
+          predicate,
+          resolve: resolveWait,
+          reject: rejectWait,
+          timer: setTimeout(() => {
+            waiters.delete(waiter);
+            rejectWait(new Error(`${label} did not emit the expected record in ${String(timeoutMs)} ms`));
+          }, timeoutMs)
+        };
+        waiters.add(waiter);
+      });
+    }
+  });
+}
+
+async function checkedFetch(url, init = {}) {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(15_000) });
+}
+
+async function checkedJson(url) {
+  const response = await checkedFetch(url);
+  assert(response.status === 200, `${url} returned ${response.status}`);
+  return response.json();
+}
+
+async function closePreview(server) {
+  await new Promise((resolveClose, rejectClose) => {
+    server.httpServer.close((error) => error === undefined ? resolveClose() : rejectClose(error));
+  });
+}
+
+async function readTextTree(directory) {
+  let text = "";
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) text += await readTextTree(path);
+    else if (entry.isFile() && /\.(?:css|html|js)$/u.test(entry.name)) {
+      text = boundedAppend(text, await readFile(path, "utf8"), 8 * 1024 * 1024, "starter build text");
+    }
+  }
+  return text;
+}
+
+function assertNoFilesystemLeak(text, forbiddenPaths) {
+  assert(!text.includes("file://"), "browser-visible dev content exposed a file URL");
+  for (const path of forbiddenPaths) {
+    assert(!text.includes(path), `browser-visible dev content exposed ${path}`);
+  }
+}
+
+function run(command, arguments_, cwd, timeout) {
+  const result = spawnSync(command, arguments_, {
+    cwd,
+    encoding: "utf8",
+    timeout,
+    maxBuffer: 4 * 1024 * 1024
+  });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) {
+    throw new Error(`${command} ${arguments_.join(" ")} failed:\n${result.stdout}\n${result.stderr}`);
+  }
+}
+
+function boundedAppend(current, chunk, limit, label) {
+  const result = current + chunk;
+  if (Buffer.byteLength(result) > limit) throw new Error(`${label} exceeded its bound`);
+  return result;
+}
+
+async function withTimeout(promise, milliseconds, message, reject = true) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((resolveTimeout, rejectTimeout) => {
+        timer = setTimeout(
+          () => reject ? rejectTimeout(new Error(message)) : resolveTimeout(undefined),
+          milliseconds
+        );
+      })
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function assert(condition, message) {
+  if (!condition) throw new Error(message);
+}

@@ -2,7 +2,10 @@ import { deriveAvcRenditionGeometry } from "@rendered-motion/format";
 import { describe, expect, it, vi } from "vitest";
 
 import type { IntegratedCandidateAttemptContext } from "./integrated-player-contracts.js";
-import { BrowserAvcCandidateRendererFactory } from "./browser-avc-candidate-factories.js";
+import {
+  BrowserAvcCandidateRendererFactory,
+  BrowserAvcCandidateWorkerFactory
+} from "./browser-avc-candidate-factories.js";
 import { createBrowserAvcCandidateComposition } from "./browser-avc-candidate.js";
 import { BrowserAvcCandidateHub } from "./browser-avc-candidate-hub.js";
 import { BrowserAvcReadinessSession } from "./browser-avc-candidate-readiness.js";
@@ -24,6 +27,31 @@ import type {
 } from "./frame-renderer.js";
 
 describe("browser AVC candidate composition", () => {
+  it("keeps the default candidate worker on the packaged bundler-visible path", () => {
+    const created: RecordingWorker[] = [];
+    class CapturingWorker extends RecordingWorker {
+      public constructor(url: string | URL, options?: WorkerOptions) {
+        super(url, options);
+        created.push(this);
+      }
+    }
+    vi.stubGlobal("Worker", CapturingWorker);
+    try {
+      const canvas = fakeCanvas();
+      const hub = new BrowserAvcCandidateHub(canvas);
+      const factory = new BrowserAvcCandidateWorkerFactory({ hub });
+
+      factory.create(candidateContext());
+
+      expect(created).toHaveLength(1);
+      expect(created[0]?.url.pathname).toMatch(/decoder-worker\/entry\.js$/u);
+      expect(created[0]?.options).toEqual({ type: "module" });
+      expect(hub.snapshot().worker.alive).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("forwards only the planes' narrow context-event capability", () => {
     const canvas = fakeCanvas();
     const addEventListener = vi.fn();
@@ -315,6 +343,21 @@ class FakeBackend implements FrameRendererBackend {
   public dispose(): void {
     this.disposals += 1;
   }
+}
+
+class RecordingWorker {
+  public readonly url: URL;
+  public readonly options: WorkerOptions | undefined;
+
+  public constructor(url: string | URL, options?: WorkerOptions) {
+    this.url = new URL(String(url));
+    this.options = options;
+  }
+
+  public postMessage(_message: unknown, _transfer?: Transferable[]): void {}
+  public addEventListener(_type: string, _listener: EventListener): void {}
+  public removeEventListener(_type: string, _listener: EventListener): void {}
+  public terminate(): void {}
 }
 
 function fakeCanvas(): HTMLCanvasElement {

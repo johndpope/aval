@@ -3,10 +3,13 @@ import { describe, expect, it } from "vitest";
 import { FormatError } from "../src/errors.js";
 import { inspectAvcAnnexBRendition } from "../src/avc/index.js";
 import { validInspectionInput } from "./avc-fixture.js";
+import { mutationSeeds } from "../../../tests/mutation/seed-profile.js";
+
+const SEEDS = mutationSeeds([0x5a17_0c5e]);
 
 describe("seeded hostile AVC mutation corpus", () => {
-  it("returns one deterministic frozen result or PROFILE_INVALID without leaks", () => {
-    const random = xorshift32(0x5a17_0c5e);
+  it.each(SEEDS)("returns one deterministic frozen result or PROFILE_INVALID without leaks for seed %d", (seed) => {
+    const random = xorshift32(seed);
     for (let iteration = 0; iteration < 2_048; iteration += 1) {
       const input = cloneInput();
       const unit = input.units[Math.floor(random() * input.units.length)]!;

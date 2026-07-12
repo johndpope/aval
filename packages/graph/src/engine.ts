@@ -326,6 +326,18 @@ export class MotionGraphEngine {
     });
   }
 
+  /** Whether send(event) would be accepted now, without allocating an input. */
+  public canSend(event: string): boolean {
+    if (
+      typeof event !== "string" ||
+      !this.#runtime.journal.canBeginInput() ||
+      this.#runtime.readiness === "unready" ||
+      this.#runtime.readiness === "disposed" ||
+      this.#runtime.readiness === "error"
+    ) return false;
+    return planEventIntent(this.#intentContext(), event).kind !== "reject";
+  }
+
   public tick(options: MotionGraphTickOptions): Readonly<MotionGraphResult> {
     this.#runtime.assertInstalled("tick");
     if (this.#runtime.readiness === "disposed" || this.#runtime.readiness === "error") {

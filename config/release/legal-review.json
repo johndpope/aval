@@ -1,0 +1,16 @@
+{
+  "schemaVersion": "1.0",
+  "releaseVersion": "1.0.0",
+  "status": "pending",
+  "reviewId": null,
+  "reviewerRole": null,
+  "reviewedAt": null,
+  "scope": [
+    "project-license",
+    "dependency-licenses",
+    "codec-and-patent-obligations",
+    "fixture-and-source-media-rights",
+    "package-names-and-registry-scope"
+  ],
+  "note": "A qualified human review is required before the immutable public candidate is created. Tooling must not change this field automatically."
+}

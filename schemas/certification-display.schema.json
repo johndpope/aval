@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendered-motion.dev/schemas/certification-display.schema.json",
+  "title": "Rendered Motion observed-display certification report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "reportKind", "reportId", "status", "candidateManifestDigest",
+    "runtimeReportId", "runtimeReportDigest", "runtimeReportStatus", "runtimeScenarioId",
+    "runtimeScenarioRepetition", "runtimeScenarioLedgerDigest", "patternDigest", "method",
+    "captureRateMilliHz", "measuredRefreshMilliHz", "minimumConfidenceMillionths",
+    "startedAt", "endedAt", "observationCount", "refreshCount", "distinctAppearanceCount",
+    "thresholdMicroseconds", "firstFailingRefreshOrdinal", "observationLedgerDigest",
+    "captureProvenance", "criteria", "attachments"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "reportKind": { "const": "observed-display" },
+    "reportId": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+    "status": { "enum": ["passed", "failed", "unsupported", "inconclusive", "not-run", "withdrawn"] },
+    "candidateManifestDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtimeReportId": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+    "runtimeReportDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "runtimeReportStatus": { "const": "passed" },
+    "runtimeScenarioId": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+    "runtimeScenarioRepetition": { "type": "integer", "minimum": 1, "maximum": 3 },
+    "runtimeScenarioLedgerDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "patternDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "method": { "enum": ["external-high-speed-capture", "qualified-scanout-trace"] },
+    "captureRateMilliHz": { "type": "integer", "minimum": 1 },
+    "measuredRefreshMilliHz": { "type": "integer", "minimum": 1 },
+    "minimumConfidenceMillionths": { "type": "integer", "minimum": 0, "maximum": 1000000 },
+    "startedAt": { "type": "string", "format": "date-time", "maxLength": 32 },
+    "endedAt": { "type": "string", "format": "date-time", "maxLength": 32 },
+    "observationCount": { "type": "integer", "minimum": 0 },
+    "refreshCount": { "type": "integer", "minimum": 0 },
+    "distinctAppearanceCount": { "type": "integer", "minimum": 0 },
+    "thresholdMicroseconds": { "type": "integer", "minimum": 0 },
+    "firstFailingRefreshOrdinal": { "type": ["integer", "null"], "minimum": 0 },
+    "observationLedgerDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "captureProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawCaptureDigest", "extractor", "operatorRole", "reviewerIds"],
+      "properties": {
+        "rawCaptureDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "extractor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool", "version"],
+          "properties": {
+            "tool": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+            "version": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" }
+          }
+        },
+        "operatorRole": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+        "reviewerIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 16,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" }
+        }
+      }
+    },
+    "criteria": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "evidence"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+          "status": { "enum": ["passed", "failed", "unsupported", "inconclusive", "not-run", "withdrawn"] },
+          "evidence": { "type": "array", "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+          "summary": { "type": "string", "minLength": 1, "maxLength": 2000 }
+        }
+      }
+    },
+    "attachments": { "type": "array", "minItems": 2, "maxItems": 256, "items": { "$ref": "certification-attachment.schema.json" } }
+  },
+  "allOf": [{
+    "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+    "then": {
+      "properties": {
+        "observationCount": { "minimum": 1 },
+        "criteria": { "minItems": 4 }
+      }
+    }
+  }]
+}

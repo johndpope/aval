@@ -269,18 +269,23 @@ headers, and the complete body. The first successful response pins its final
 An opaque response, status `0`, missing body, network rejection, or final-URL
 change fails the session.
 
-For any response whose bytes may become an RMA entity, `Content-Encoding` must
-be absent or contain exactly one case-insensitive `identity` token after outer
-HTTP whitespace is removed. An empty present value, a comma-list, or any other
-coding is rejected. This applies to range and full responses because Fetch
-normally exposes decoded bodies and exact offsets/digests require identity
-representation bytes.
+For a `206`, `Content-Encoding` must be absent or contain exactly one
+case-insensitive `identity` token after outer HTTP whitespace is removed. An
+empty present value, a comma-list, or any other coding is rejected. Range
+offsets describe representation octets, so transformed partial responses cannot
+be combined with authored RMA byte offsets.
 
-If `Content-Length` is present, it must be one canonical nonnegative decimal
-safe integer with no sign, list, or internal whitespace. It must equal the
-expected range length when that length is known and must never exceed the
-active body/file cap. The observed stream length remains authoritative and is
-always checked even when the header is present.
+For a complete `200`, Fetch exposes the decoded stream while response headers
+still describe the encoded representation and may be hidden by CORS. The
+runtime therefore does not interpret `Content-Encoding` or `Content-Length` as
+decoded-byte facts. It reads the stream in bounded-unknown mode, applies the
+decoded file cap, and validates or hashes the decoded complete RMA bytes.
+
+For a `206`, `Content-Length`, when present, must be one canonical nonnegative
+decimal safe integer with no sign, list, or internal whitespace. It must equal
+the expected range length and must never exceed the active body/file cap. The
+observed range stream length remains authoritative. Complete `200` length
+metadata is deliberately not interpreted as decoded length.
 
 ### 5.2 `206 Partial Content`
 
@@ -326,10 +331,11 @@ hashed together, used to complete one blob, or supplied to one player.
 ### 5.4 Bounded `200` behavior
 
 A `200` can be accepted only as a standalone complete representation; it is
-never concatenated with retained partial bytes. It must satisfy the common
-encoding/length rules, remain at or below both the 32 MiB format cap and the
-host's lower cap, and finish with exactly the length declared by its own valid
-header. `validateCompleteAsset()` then rechecks the entire canonical layout.
+never concatenated with retained partial bytes. The decoded stream must remain
+at or below both the 32 MiB format cap and the host's lower cap.
+`Content-Length` describes encoded transfer bytes when content coding is in
+use, so it is read but never used for decoded allocation or equality.
+`validateCompleteAsset()` rechecks the entire decoded canonical layout.
 For external-integrity mode only, the bounded observed bytes are hashed first;
 the header length comparison and complete validation happen after that digest
 succeeds, so no asset-controlled field is read before the authenticity gate.
@@ -437,7 +443,7 @@ padding are rejected before Fetch.
 When this value is present:
 
 - the loader sends no `Range` or `If-Range` request;
-- it reads one bounded full `200` identity response into quarantine;
+- it reads one bounded decoded full `200` response into quarantine;
 - it computes and compares SHA-256 before reading the format header or parsing
   any asset-controlled metadata;
 - only a successful comparison promotes the complete byte array and invokes

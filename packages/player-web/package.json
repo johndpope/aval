@@ -1,21 +1,26 @@
 {
   "name": "@rendered-motion/player-web",
-  "version": "0.0.0",
-  "private": true,
+  "version": "1.0.0",
+  "description": "Web decoder, scheduler, and presentation runtime for rendered motion assets.",
+  "keywords": ["animation", "webcodecs", "webgl", "motion"],
+  "private": false,
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "source": "./src/index.ts",
-      "import": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
+  "files": ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "license": "MIT",
+  "engines": { "node": ">=22.12.0" },
   "dependencies": {
-    "@rendered-motion/format": "0.0.0",
-    "@rendered-motion/graph": "0.0.0"
+    "@rendered-motion/format": "1.0.0",
+    "@rendered-motion/graph": "1.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.release.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json"
   }
 }

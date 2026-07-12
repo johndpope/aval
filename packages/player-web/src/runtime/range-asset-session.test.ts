@@ -268,6 +268,34 @@ describe("entity-pinned range metadata session", () => {
     }
   );
 
+  it("accepts a browser-decoded gzip 200 after a weak-validator range restart", async () => {
+    const fixture = rangeFixture();
+    const initial = partialResponse(fixture.header, 0, fixture.total, 'W/"weak"');
+    const fallback = fullResponse(fixture.asset, null, undefined, {
+      contentEncoding: "gzip",
+      contentLength: 1
+    });
+    const fetcher = scriptedFetch([initial.response, fallback.response]);
+    const resources = new CountingResources();
+
+    const opened = await openRangeAssetSession({
+      request: request(),
+      fetcher,
+      resources,
+      generation: 1,
+      isGenerationCurrent: () => true,
+      timers: new PassiveTimerHost()
+    });
+
+    expect(opened.mode).toBe("full");
+    expect(fetcher.calls.map(({ init }) => init.headers)).toEqual([
+      { Range: "bytes=0-63" },
+      {}
+    ]);
+    if (opened.mode === "full") opened.release();
+    expect(resources.liveBytes).toBe(0);
+  });
+
   it("allows only one no-validator restart and rejects a second 206", async () => {
     const fixture = rangeFixture();
     const first = partialResponse(fixture.header, 0, fixture.total, null);
@@ -694,7 +722,8 @@ function partialResponse(
 function fullResponse(
   bytes: Uint8Array,
   etag: string | null,
-  url?: string
+  url?: string,
+  options: Readonly<{ readonly contentEncoding?: string; readonly contentLength?: number }> = {}
 ): { readonly response: RuntimeFetchResponseView; readonly reader: ScriptedReader } {
   const reader = scriptedReader(bytes);
   return {
@@ -702,8 +731,11 @@ function fullResponse(
     response: response(200, reader, {
       ...(url === undefined ? {} : { url }),
       etag,
-      contentLength: bytes.byteLength,
-      contentRange: null
+      contentLength: options.contentLength ?? bytes.byteLength,
+      contentRange: null,
+      ...(options.contentEncoding === undefined
+        ? {}
+        : { contentEncoding: options.contentEncoding })
     })
   };
 }

@@ -67,6 +67,12 @@ export class OperationJournal {
     return this.#routeOperationsLastTick;
   }
 
+  /** Pure admission query used by synchronous host-event acceptance checks. */
+  public canBeginInput(): boolean {
+    return this.#inputsSinceTick < GRAPH_LIMITS.maxInputsPerTick &&
+      this.#inputSequence < Number.MAX_SAFE_INTEGER;
+  }
+
   public beginInput(): Readonly<InputAdmission> {
     const sequence = this.#nextSequence();
     if (this.#inputsSinceTick >= GRAPH_LIMITS.maxInputsPerTick) {

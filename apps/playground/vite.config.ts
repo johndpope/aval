@@ -2,20 +2,10 @@ import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vite";
 
-import { m7HttpFixturePlugin } from "./m7-http-fixture-plugin.js";
-import { m8HttpFixturePlugin } from "./m8-http-fixture-plugin.js";
+import { createPlaygroundConfig } from "./vite.shared.js";
 
 export default defineConfig({
-  plugins: [m7HttpFixturePlugin(), m8HttpFixturePlugin()],
-  build: {
-    rollupOptions: {
-      input: {
-        playground: fileURLToPath(new URL("./index.html", import.meta.url)),
-        element: fileURLToPath(new URL("./m8-dev-entry.html", import.meta.url)),
-        certification: fileURLToPath(new URL("./certification.html", import.meta.url))
-      }
-    }
-  },
+  ...createPlaygroundConfig(),
   resolve: {
     // The local playground exercises workspace sources without a prior build.
     alias: {

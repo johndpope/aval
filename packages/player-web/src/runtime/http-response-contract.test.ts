@@ -93,6 +93,28 @@ describe("common HTTP response contract", () => {
     }
   });
 
+  it.each([null, "gzip", "br", "gzip, br", "host-defined"])(
+    "treats complete %j response metadata as a decoded unknown-length stream",
+    (contentEncoding) => {
+      expect(validateRuntimeHttpResponse({
+        status: 200,
+        expectedStatus: 200,
+        responseType: "basic",
+        finalUrl: "https://cdn.example.test/asset.rma",
+        bodyAvailable: true,
+        headers: createHeaders({
+          ...(contentEncoding === null ? {} : { "content-encoding": contentEncoding }),
+          "content-length": "1"
+        }),
+        maximumBodyBytes: 64
+      })).toEqual({
+        status: 200,
+        finalUrl: "https://cdn.example.test/asset.rma",
+        contentLength: null
+      });
+    }
+  );
+
   it.each([
     { status: 0, responseType: "opaque" },
     { status: 200, expectedStatus: 206 },

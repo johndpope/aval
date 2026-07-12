@@ -111,9 +111,21 @@ export function validateRuntimeHttpResponse(
     throw new RangeError("response body is unavailable");
   }
 
-  validateIdentityContentEncoding(
-    readRuntimeHeader(values.headers, "Content-Encoding")
-  );
+  const contentEncoding = readRuntimeHeader(values.headers, "Content-Encoding");
+  // Fetch exposes a decoded stream for a complete response while retaining
+  // representation metadata. Its Content-Length therefore describes encoded
+  // transfer bytes, not the decoded RMA bytes that this runtime owns. Partial
+  // responses remain identity-only because their offsets are representation
+  // byte positions.
+  if (values.status === 200) {
+    readRuntimeHeader(values.headers, "Content-Length");
+    return Object.freeze({
+      status: values.status,
+      finalUrl: values.finalUrl,
+      contentLength: null
+    });
+  }
+  validateIdentityContentEncoding(contentEncoding);
   const contentLength = parseCanonicalContentLength(
     readRuntimeHeader(values.headers, "Content-Length")
   );

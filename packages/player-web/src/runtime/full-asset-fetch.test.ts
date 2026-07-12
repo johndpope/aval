@@ -125,25 +125,76 @@ describe("bounded complete-asset fetch", () => {
     }
   });
 
-  it("checks declared and observed full lengths under the active cap", async () => {
+  it("rejects a truncated decoded full body after bounded collection", async () => {
     const asset = createOpaqueTestAsset();
-    for (const [declaredLength, body] of [
-      [asset.byteLength + 1, asset],
-      [asset.byteLength, asset.subarray(0, asset.byteLength - 1)]
+    for (const body of [
+      asset.subarray(0, asset.byteLength - 1)
     ] as const) {
       const resources = new CountingResources();
       await expect(fetchFullAsset({
         request: request(),
         fetcher: scriptedFetch([
-          response(200, declaredLength, scriptedReader(body))
+          response(200, asset.byteLength, scriptedReader(body))
         ]),
         resources,
         generation: 1,
         isGenerationCurrent: () => true,
         timers: new PassiveTimerHost()
-      })).rejects.toMatchObject({ code: "range-response-invalid" });
+      })).rejects.toMatchObject({ code: "invalid-asset" });
       expect(resources.liveBytes).toBe(0);
     }
+  });
+
+  it.each([
+    { contentEncoding: "gzip", contentLength: 1 },
+    { contentEncoding: "br", contentLength: 2 },
+    { contentEncoding: null, contentLength: 3 }
+  ] as const)(
+    "validates one browser-decoded complete body independently of encoded metadata %#",
+    async ({ contentEncoding, contentLength }) => {
+      const asset = createOpaqueTestAsset();
+      const resources = new CountingResources();
+      const result = await fetchFullAsset({
+        request: request(),
+        fetcher: scriptedFetch([
+          response(200, contentLength, scriptedReader(asset), {
+            ...(contentEncoding === null ? {} : { contentEncoding })
+          })
+        ]),
+        resources,
+        generation: 1,
+        isGenerationCurrent: () => true,
+        timers: new PassiveTimerHost()
+      });
+
+      expect(result.bytes).toEqual(asset);
+      expect(resources.peakBytes).toBeGreaterThanOrEqual(asset.byteLength);
+      result.release();
+      expect(resources.liveBytes).toBe(0);
+    }
+  );
+
+  it("cancels and releases a decoded encoded response that exceeds the file cap", async () => {
+    const asset = createOpaqueTestAsset();
+    const reader = scriptedReader(asset);
+    const resources = new CountingResources();
+
+    await expect(fetchFullAsset({
+      request: normalizeRuntimeAssetRequest({
+        url: "https://cdn.example.test/motion.rma"
+      }, { maximumFileBytes: asset.byteLength - 1 }),
+      fetcher: scriptedFetch([
+        response(200, 1, reader, { contentEncoding: "gzip" })
+      ]),
+      resources,
+      generation: 1,
+      isGenerationCurrent: () => true,
+      timers: new PassiveTimerHost()
+    })).rejects.toMatchObject({ code: "range-response-invalid" });
+
+    expect(reader.cancelCount).toBe(1);
+    expect(reader.releaseLockCount).toBe(1);
+    expect(resources.liveBytes).toBe(0);
   });
 
   it("gates every format access behind successful external integrity", async () => {

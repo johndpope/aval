@@ -1,0 +1,344 @@
+{
+  "provenanceVersion": "0.1",
+  "formatVersion": "0.1",
+  "generatedAt": "2026-07-12",
+  "license": "CC0-1.0 generated fixture sources",
+  "generatedBy": {
+    "path": "fixtures/conformance/m8/update-provenance.mjs",
+    "bytes": 10054,
+    "sha256": "6907f1db4eb9808f8627b0f11c6f0c460503e7268d6c654587d634a456906d3d"
+  },
+  "regeneration": {
+    "build": "npm run build -w @rendered-motion/compiler",
+    "check": "node fixtures/conformance/m8/update-provenance.mjs --check"
+  },
+  "sourceFrames": {
+    "count": 30,
+    "aggregateSha256": "f8216e15f4a4f5cf55a66035f37dcc85a93491a64cb3c67b79f4c9df1078fb12",
+    "frames": [
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0000.png",
+        "bytes": 4968,
+        "sha256": "3a74fe71c50660ee30b05cda016efb2bf25441899c34e3d7c2df693eb514d27b"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0001.png",
+        "bytes": 4968,
+        "sha256": "3a5bd5064789777d052ec0b7a25ee247473f628401b6005646907732888bc357"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0002.png",
+        "bytes": 4968,
+        "sha256": "00f9ffdfd47ba41bce24636c56413e200837c00f8a9f48fa866dc1fce7ebaeeb"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0003.png",
+        "bytes": 4968,
+        "sha256": "1381cf8252fa191bdaeaedbb65bb8f29ca2a186359d090599d34698589f9a0d3"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0004.png",
+        "bytes": 4968,
+        "sha256": "84bacf9180b0ab4794f983e96c70d7435c32eb288bb59d1228a6b649f21058d1"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0005.png",
+        "bytes": 4968,
+        "sha256": "9c1bc0d58bdabfce56ceb9a8a5b67d940ddc39219eabf37ecba399585fe91c00"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0006.png",
+        "bytes": 4968,
+        "sha256": "b9f380515d198bf0b9b013b818b1e80978bc3c5c5603b61b0a07b90d4fd64a05"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0007.png",
+        "bytes": 4968,
+        "sha256": "ebaad5502f86479c339cb52bb0e3a57862cbdf710d810cb8661fc97b247965fe"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0008.png",
+        "bytes": 4968,
+        "sha256": "19151155c156b645b2f864c4c5e4b03e84e10f6338d34b6a1759aa59f3759a58"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0009.png",
+        "bytes": 4968,
+        "sha256": "94e246fbb07e9da4e3c038d23c68e609b8ef7b6be7c51df32df90538b8e7a339"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0010.png",
+        "bytes": 4968,
+        "sha256": "d8eab2a05db3a03a983faeefe6797bf0ee720f1509c342cce34f7743c1d28300"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0011.png",
+        "bytes": 4968,
+        "sha256": "b9820214b86484e7346a278a7d0187839ae1e891acf8dd4367a0f7548316669a"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0012.png",
+        "bytes": 4968,
+        "sha256": "0d57cd2ae6bbf688376aa8afea33a21974cae7f74f3794181613be3e738ac3ea"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0013.png",
+        "bytes": 4968,
+        "sha256": "14d0aeb6b3128365a5e0da8dbd9bf345acb06ac41e8dd74a25629d57d184da9b"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0014.png",
+        "bytes": 4968,
+        "sha256": "eb380582c2158478f0ad0d145552b4d01aa83dd2626d915cd6ee577f65f0e81b"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0015.png",
+        "bytes": 4968,
+        "sha256": "c7324082dcb327609493213aec85cbc71c7dcabb15faed5bd4379901ed4d2ccf"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0016.png",
+        "bytes": 4968,
+        "sha256": "6250d1e87825cb10bf3416c893d442d8047306c0c88a23f47c704456588eb237"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0017.png",
+        "bytes": 4968,
+        "sha256": "399db4bc9fa1d5508555a46bc4b60bc7d7272d447e91a15411de6e6553b9b75b"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0018.png",
+        "bytes": 4968,
+        "sha256": "2ade8141c32d39af7b852c1e9a49f8dc431871ba02acb35275af729f001f8465"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0019.png",
+        "bytes": 4968,
+        "sha256": "fab47b05a85f844369218e7576824d2e60163f9ef19c5906a88d9cecbe76b69d"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0020.png",
+        "bytes": 4968,
+        "sha256": "8aa18fcdbf06293e1358b21b03a7bc498c2f00d270904aaf33e130792a6226c1"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0021.png",
+        "bytes": 4968,
+        "sha256": "2ca9d59b09ed53cad03f1977d0dc2288010c2b0949c230d62ab57914c4f207a6"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0022.png",
+        "bytes": 4968,
+        "sha256": "d136b67043bf2beee53c8b838b94682edf15f32599b6f7353297b6ee1a5b0225"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0023.png",
+        "bytes": 4968,
+        "sha256": "f71fd28bd55ea6305c67f71807be13d46941a0d5f58b66b56651c34802875e04"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0024.png",
+        "bytes": 4968,
+        "sha256": "ec56e13745267dd0078241c8aee254c15eb2de11bbc788558f49b55013d0f662"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0025.png",
+        "bytes": 4968,
+        "sha256": "8de4a4693974b48738eb9681f07b1f461669545c014705a013e0cc45f81a3ecc"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0026.png",
+        "bytes": 4968,
+        "sha256": "7f2f68a761a24d9177a2970a69ba8a69c6009578e017bbba22b7a04e7a6c5a8f"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0027.png",
+        "bytes": 4968,
+        "sha256": "1968d85c9d282d944b3552851c9aa081afefda0d78d3335ddd79fdd2fb36e02c"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0028.png",
+        "bytes": 4968,
+        "sha256": "bc16f520b722a6ef8ba4649adba5b6857e3f6fde8cf37f591e79a7a52ce70ac9"
+      },
+      {
+        "path": "fixtures/compiler/m6/source/packed-frames/frame-0029.png",
+        "bytes": 4968,
+        "sha256": "f8d496a27f5f64b8e3d09a00fd232488ce4bfedf6c2b5a08249df44431378803"
+      }
+    ]
+  },
+  "sourceProjects": {
+    "oneStateBase": {
+      "path": "fixtures/compiler/m6/source/packed-loop.json",
+      "bytes": 1003,
+      "sha256": "9d3d2d74cce19601e030708ac2621d7690601de0231ba5e1950ba11000b0dc22"
+    },
+    "oneStateDerived": {
+      "generator": "add visible intro frames 0:3 before the partial body loop 3:11",
+      "bytes": 780,
+      "sha256": "7e36cc3bc488a36a8dc394bc95d4863bf6b3b643aecf4f035e3648a23a9e722e"
+    },
+    "userStatesBase": {
+      "path": "fixtures/compiler/m6/source/packed-all-routes.json",
+      "bytes": 5080,
+      "sha256": "5d82ef90b04be6c52e06fc8fc0eb7fb215e16706d44dda11034f838bab17346f"
+    },
+    "userStatesDerived": {
+      "generator": "replace only the binding table with all fixed 0.1 browser sources",
+      "bytes": 3598,
+      "sha256": "0d4a408d640da5fa686a029ecac30abb873e69881774ca6bb32701deb23e19db",
+      "bindings": [
+        {
+          "source": "activate",
+          "event": "activate-loading"
+        },
+        {
+          "source": "engagement.off",
+          "event": "reset"
+        },
+        {
+          "source": "engagement.on",
+          "event": "hover-on"
+        },
+        {
+          "source": "focus.in",
+          "event": "hover-on"
+        },
+        {
+          "source": "focus.out",
+          "event": "cancel-loading"
+        },
+        {
+          "source": "hidden",
+          "event": "hover-off"
+        },
+        {
+          "source": "pointer.enter",
+          "event": "hover-on"
+        },
+        {
+          "source": "pointer.leave",
+          "event": "hover-off"
+        },
+        {
+          "source": "visible",
+          "event": "hover-on"
+        }
+      ]
+    }
+  },
+  "toolchain": {
+    "ffmpegVersion": "ffmpeg version 8.1.2 Copyright (c) 2000-2026 the FFmpeg developers",
+    "ffmpegExecutableSha256": "329fa7360b28a067a0cd7281474bb18cd868932d5173646a674466bcb56d6e93",
+    "ffmpegVersionOutputSha256": "98f2da65e4b3e39aa6ac74848582be422751d8f52176cf810eceb94bbcaa78d1",
+    "ffmpegConfigurationSha256": "8470f6e5d1c91c01f1228e91aa8827bea05a7e8a39c8dedefdb778716bdc1aec",
+    "ffmpegEncodersOutputSha256": "38b11441f5ffe17fd32539030ba9290b81e730878bb0cffe1af5084e2b7b8879",
+    "ffmpegCalibrationSha256": "2187478d0b9baaa2e44dc458abcdcbc7c9242c360bb233cff2d5229004a6911c",
+    "ffprobeVersion": "ffprobe version 8.1.2 Copyright (c) 2007-2026 the FFmpeg developers",
+    "ffprobeExecutableSha256": "841ab2259a55e5c5e44c5851890867d48750ff1e7cfa92b5fbed91445a493128",
+    "ffprobeVersionOutputSha256": "8316221740e891c1f9d08d30a9a45059af9f1ec96741423eee3ae0c7721d9cec"
+  },
+  "fixtures": [
+    {
+      "role": "one-state-partial-loop",
+      "path": "fixtures/conformance/m8/one-state-partial-loop.rma",
+      "bytes": 10568,
+      "sha256": "812b7d2af2557a20d86ad2c1d01e24a97cfcab495d7b350fdbd194ca8ac3b880",
+      "externalIntegrity": "sha256-gSt9KvJVeiDYatLB0B4kqXz8q0ldezUP29GUyorDuIA=",
+      "manifestSha256": "6112c59a0254664616082ec3ac590cc803cdafe43e83a1e0ffae986fa140851a",
+      "indexSha256": "14e477a11025d42207a0e1728ff35713271dd975e58cb833eac5bac7d750461f",
+      "states": [
+        "default"
+      ],
+      "events": [],
+      "bindings": [],
+      "canvas": {
+        "width": 45,
+        "height": 27,
+        "fit": "contain",
+        "pixelAspect": [
+          1,
+          1
+        ],
+        "colorSpace": "srgb"
+      },
+      "alphaProfiles": [
+        "avc-annexb-packed-alpha-v0"
+      ]
+    },
+    {
+      "role": "user-states-all-routes-alpha",
+      "path": "fixtures/conformance/m8/user-states-all-routes-alpha.rma",
+      "bytes": 38128,
+      "sha256": "8e0110e8d22268f47dcd98d65d31e10df0e23221f38b3661f3d54d198f7f47a8",
+      "externalIntegrity": "sha256-jgEQ6NIiaPR9zZjWXTHhDfDiMiHzizZh89VNGY9/R6g=",
+      "manifestSha256": "f6b6e5197bdd1070cc56c7b02661ba7c6932e9787f447b55867f2e934b9d5035",
+      "indexSha256": "ec23e83211d9e9699a2d8e4e9d3df656be8388aaba0c5a2f8e03302799b403cb",
+      "states": [
+        "done",
+        "hover",
+        "idle",
+        "loading"
+      ],
+      "events": [
+        "reset",
+        "hover-off",
+        "hover-on",
+        "activate-loading",
+        "cancel-loading"
+      ],
+      "bindings": [
+        {
+          "source": "activate",
+          "event": "activate-loading"
+        },
+        {
+          "source": "engagement.off",
+          "event": "reset"
+        },
+        {
+          "source": "engagement.on",
+          "event": "hover-on"
+        },
+        {
+          "source": "focus.in",
+          "event": "hover-on"
+        },
+        {
+          "source": "focus.out",
+          "event": "cancel-loading"
+        },
+        {
+          "source": "hidden",
+          "event": "hover-off"
+        },
+        {
+          "source": "pointer.enter",
+          "event": "hover-on"
+        },
+        {
+          "source": "pointer.leave",
+          "event": "hover-off"
+        },
+        {
+          "source": "visible",
+          "event": "hover-on"
+        }
+      ],
+      "canvas": {
+        "width": 45,
+        "height": 27,
+        "fit": "contain",
+        "pixelAspect": [
+          1,
+          1
+        ],
+        "colorSpace": "srgb"
+      },
+      "alphaProfiles": [
+        "avc-annexb-packed-alpha-v0"
+      ]
+    }
+  ]
+}

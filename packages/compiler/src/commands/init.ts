@@ -1,11 +1,20 @@
-import { mkdir, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  rm,
+} from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { serializeCanonicalJson } from "@rendered-motion/format";
 import type { InitCliArguments } from "../cli-args.js";
+import { sha256Hex } from "../compile/hash.js";
 import { encodeCanonicalRgbaPng } from "../compile/png.js";
 import { CompilerError } from "../diagnostics.js";
 import { validateSourceProject } from "../source-project-schema.js";
+import { syncDirectory } from "../compile/output.js";
+import { publishStagedDirectoryNoReplace } from "./init-publication.js";
 
 export interface InitCommandResult {
   readonly command: "init";
@@ -15,85 +24,121 @@ export interface InitCommandResult {
 }
 
 const PROJECT_FILE = "motion.json";
+const FRAME_COUNT = 22;
 
-/** Create the deterministic, procedurally drawn M6 starter without bundled art. */
+export interface InitCommandDependencies {
+  readonly beforePublish?: (
+    targetDirectory: string,
+    stagedDirectory: string
+  ) => void | Promise<void>;
+  readonly platform?: NodeJS.Platform;
+  readonly publicationSyncDirectory?: (path: string) => Promise<void>;
+}
+
+/** Create the deterministic, transparent idle/hover M8 starter atomically. */
 export async function runInitCommand(
   arguments_: InitCliArguments,
-  cwd: string
+  cwd: string,
+  dependencies: Readonly<InitCommandDependencies> = {}
 ): Promise<Readonly<InitCommandResult>> {
   const directory = resolve(cwd, arguments_.directory);
-  const files = [
-    PROJECT_FILE,
-    "README.md",
-    "ASSET-LICENSE.md",
-    "frames/frame-0000.png",
-    "frames/frame-0001.png"
-  ] as const;
-  let claimedDirectory = false;
+  const parent = dirname(directory);
+  await assertAbsent(directory);
+  await mkdir(parent, { recursive: true, mode: 0o755 });
+  let temporary = "";
   try {
-    await mkdir(dirname(directory), { recursive: true, mode: 0o755 });
-    try {
-      await mkdir(directory, { mode: 0o755 });
-      claimedDirectory = true;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-        throw new CompilerError("IO_FAILED", "Init directory already exists", {
-          path: directory,
-          hint: "Choose a new empty path; init never overwrites files."
-        });
-      }
-      throw error;
-    }
-    await mkdir(resolve(directory, "frames"), { mode: 0o755 });
+    temporary = await mkdtemp(join(parent, `.${basename(directory)}.rma-init-`));
     const project = starterProject();
     validateSourceProject(project);
-    await writeExclusive(
-      resolve(directory, PROJECT_FILE),
-      serializeCanonicalJson(project)
+    const projectBytes = serializeCanonicalJson(project);
+    const frames = Array.from({ length: FRAME_COUNT }, (_, index) =>
+      starterFrame(index)
     );
-    await writeExclusive(
-      resolve(directory, "README.md"),
-      new TextEncoder().encode(README)
+    const frameFiles = frames.map((_, index) =>
+      `frames/frame-${String(index).padStart(4, "0")}.png`
     );
-    await writeExclusive(
-      resolve(directory, "ASSET-LICENSE.md"),
-      new TextEncoder().encode(ASSET_LICENSE)
+    const files = Object.freeze([
+      PROJECT_FILE,
+      "README.md",
+      "ASSET-LICENSE.md",
+      "provenance.json",
+      "package.json",
+      "index.html",
+      "main.js",
+      ...frameFiles
+    ]);
+    const provenance = Object.freeze({
+      provenanceVersion: "0.1",
+      generator: "@rendered-motion/compiler init idle-hover-v2",
+      license: "CC0-1.0",
+      project: Object.freeze({
+        path: PROJECT_FILE,
+        bytes: projectBytes.byteLength,
+        sha256: sha256Hex(projectBytes)
+      }),
+      frames: Object.freeze(frames.map((bytes, index) => Object.freeze({
+        path: frameFiles[index]!,
+        bytes: bytes.byteLength,
+        sha256: sha256Hex(bytes)
+      })))
+    });
+    const outputs = new Map<string, Uint8Array>([
+      [PROJECT_FILE, projectBytes],
+      ["README.md", text(README)],
+      ["ASSET-LICENSE.md", text(ASSET_LICENSE)],
+      ["provenance.json", serializeCanonicalJson(provenance)],
+      ["package.json", serializeCanonicalJson(STARTER_PACKAGE)],
+      ["index.html", text(HTML_EXAMPLE)],
+      ["main.js", text(STARTER_SCRIPT)]
+    ]);
+    for (let index = 0; index < frames.length; index += 1) {
+      outputs.set(frameFiles[index]!, frames[index]!);
+    }
+    await mkdir(join(temporary, "frames"), { mode: 0o755 });
+    for (const relative of files) {
+      await writeSyncedFile(join(temporary, relative), outputs.get(relative)!);
+    }
+    await syncDirectory(join(temporary, "frames"));
+    await syncDirectory(temporary);
+    await dependencies.beforePublish?.(directory, temporary);
+    await publishStagedDirectoryNoReplace(
+      temporary,
+      directory,
+      dependencies.platform,
+      dependencies.publicationSyncDirectory
     );
-    await writeExclusive(
-      resolve(directory, "frames/frame-0000.png"),
-      starterFrame(0)
-    );
-    await writeExclusive(
-      resolve(directory, "frames/frame-0001.png"),
-      starterFrame(1)
-    );
+    temporary = "";
+    return Object.freeze({
+      command: "init" as const,
+      directory,
+      project: resolve(directory, PROJECT_FILE),
+      files
+    });
   } catch (error) {
-    if (claimedDirectory) {
-      await cleanupClaimedInit(directory, files);
+    if (temporary !== "") {
+      await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
     }
     if (error instanceof CompilerError) throw error;
     throw new CompilerError("IO_FAILED", "Could not create init project", {
       path: directory,
-      cause: error
+      cause: error,
+      hint: "Choose a new path; init never overwrites an existing directory."
     });
   }
-  return Object.freeze({
-    command: "init",
-    directory,
-    project: resolve(directory, PROJECT_FILE),
-    files: Object.freeze([...files])
-  });
 }
 
-async function cleanupClaimedInit(
-  directory: string,
-  files: readonly string[]
-): Promise<void> {
-  for (const file of [...files].reverse()) {
-    await rm(resolve(directory, file), { force: true }).catch(() => undefined);
+async function writeSyncedFile(path: string, bytes: Uint8Array): Promise<void> {
+  const handle = await open(path, "wx", 0o644);
+  try {
+    await handle.writeFile(bytes);
+    await handle.sync();
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size !== bytes.byteLength) {
+      throw new Error(`incomplete init file: ${path}`);
+    }
+  } finally {
+    await handle.close();
   }
-  await rmdir(resolve(directory, "frames")).catch(() => undefined);
-  await rmdir(directory).catch(() => undefined);
 }
 
 function starterProject(): Record<string, unknown> {
@@ -101,8 +146,8 @@ function starterProject(): Record<string, unknown> {
     projectVersion: "0.2",
     profile: "avc-annexb-auto-v0",
     canvas: {
-      width: 32,
-      height: 32,
+      width: 48,
+      height: 48,
       fit: "contain",
       pixelAspect: [1, 1],
       colorSpace: "srgb"
@@ -116,77 +161,207 @@ function starterProject(): Record<string, unknown> {
       digits: 4,
       suffix: ".png",
       firstNumber: 0,
-      frameCount: 2
+      frameCount: FRAME_COUNT
     }],
     renditions: [{
       id: "avc.1x",
-      width: 32,
-      height: 32,
-      bitrate: { average: 300_000, peak: 600_000 }
+      width: 48,
+      height: 48,
+      bitrate: { average: 400_000, peak: 800_000 }
     }],
-    units: [{
-      id: "body.default",
-      kind: "body",
-      source: "generated",
-      range: [0, 2],
-      playback: "loop",
-      ports: [{ id: "default", entryFrame: 0, portalFrames: [1] }]
-    }],
-    initialState: "default",
-    states: [{
-      id: "default",
-      bodyUnit: "body.default",
-      poster: { source: "generated", frame: 0 }
-    }],
-    edges: [],
-    bindings: []
+    units: [
+      {
+        id: "idle.body",
+        kind: "body",
+        source: "generated",
+        range: [0, 8],
+        playback: "loop",
+        ports: [{ id: "default", entryFrame: 0, portalFrames: [0] }]
+      },
+      {
+        id: "engage.shift",
+        kind: "reversible",
+        source: "generated",
+        range: [8, 14],
+        residency: {
+          endpoints: [
+            { state: "idle", port: "default", frames: 6 },
+            { state: "engaged", port: "default", frames: 6 }
+          ]
+        }
+      },
+      {
+        id: "engaged.body",
+        kind: "body",
+        source: "generated",
+        range: [14, 22],
+        playback: "loop",
+        ports: [{ id: "default", entryFrame: 0, portalFrames: [0] }]
+      }
+    ],
+    initialState: "idle",
+    states: [
+      { id: "idle", bodyUnit: "idle.body", poster: { source: "generated", frame: 0 } },
+      { id: "engaged", bodyUnit: "engaged.body", poster: { source: "generated", frame: 14 } }
+    ],
+    edges: [
+      {
+        id: "idle.engaged",
+        from: "idle",
+        to: "engaged",
+        trigger: { type: "event", name: "control.engage" },
+        start: {
+          type: "portal",
+          sourcePort: "default",
+          targetPort: "default",
+          maxWaitFrames: 12
+        },
+        transition: {
+          kind: "reversible",
+          unit: "engage.shift",
+          direction: "forward"
+        },
+        continuity: "exact-authored"
+      },
+      {
+        id: "engaged.idle",
+        from: "engaged",
+        to: "idle",
+        trigger: { type: "event", name: "control.release" },
+        start: {
+          type: "portal",
+          sourcePort: "default",
+          targetPort: "default",
+          maxWaitFrames: 12
+        },
+        transition: {
+          kind: "reversible",
+          unit: "engage.shift",
+          direction: "reverse",
+          reverseOf: "idle.engaged"
+        },
+        continuity: "exact-reverse"
+      }
+    ],
+    bindings: [
+      { source: "engagement.off", event: "control.release" },
+      { source: "engagement.on", event: "control.engage" }
+    ]
   };
 }
 
-function starterFrame(index: 0 | 1): Uint8Array {
-  const width = 32;
-  const height = 32;
+function starterFrame(index: number): Uint8Array {
+  const width = 48;
+  const height = 48;
   const rgba = new Uint8Array(width * height * 4);
-  const centerX = index === 0 ? 10 : 21;
+  // The reversible unit contains only in-between poses. Repeating either
+  // resident endpoint inside the bridge would create a visible stop when the
+  // direction flips, and the compiler correctly rejects that duplicate.
+  const resident = index < 8 || index >= 14;
+  const residentFrame = index < 8 ? index : index - 14;
+  const progress = index < 8 ? 0 : index < 14 ? (index - 7) / 7 : 1;
+  const centerX = Math.round(15 + progress * 18);
+  // Sample a complete eight-frame period without duplicating either endpoint.
+  // Frame zero remains the exact authored bridge pose; the final-to-first loop
+  // boundary is the next ordinary one-pixel motion step, not a seek or pause.
+  const centerY = 24 + (resident
+    ? Math.round(Math.sin((residentFrame * Math.PI * 2) / 8))
+    : 0);
+  const radius = Math.round(7 + progress * 3);
   for (let y = 0; y < height; y += 1) {
     for (let x = 0; x < width; x += 1) {
       const offset = (y * width + x) * 4;
-      const checker = ((x >> 3) + (y >> 3)) % 2;
-      const base = checker === 0 ? 24 : 30;
-      const inside = (x - centerX) ** 2 + (y - 16) ** 2 <= 36;
-      rgba[offset] = inside ? 239 : base;
-      rgba[offset + 1] = inside ? 111 : base + 4;
-      rgba[offset + 2] = inside ? 68 : base + 12;
-      rgba[offset + 3] = 255;
+      const distance = (x - centerX) ** 2 + (y - centerY) ** 2;
+      const inside = distance <= radius ** 2;
+      const halo = !inside && distance <= (radius + 3) ** 2;
+      rgba[offset] = inside ? 104 : halo ? 92 : 0;
+      rgba[offset + 1] = inside ? Math.round(126 + 80 * progress) : halo ? 108 : 0;
+      rgba[offset + 2] = inside ? 255 : halo ? 246 : 0;
+      rgba[offset + 3] = inside ? 255 : halo ? 96 : 0;
     }
   }
   return encodeCanonicalRgbaPng({ width, height, rgba });
 }
 
-async function writeExclusive(path: string, bytes: Uint8Array): Promise<void> {
-  await writeFile(path, bytes, { flag: "wx", mode: 0o644 });
+async function assertAbsent(path: string): Promise<void> {
+  try {
+    await lstat(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+  throw new CompilerError("IO_FAILED", "Init directory already exists", {
+    path,
+    hint: "Choose a new path; init never overwrites files."
+  });
 }
 
-const README = `# Rendered Motion starter
+function text(value: string): Uint8Array {
+  return new TextEncoder().encode(value);
+}
 
-Compile the generated two-frame project:
+const STARTER_PACKAGE = Object.freeze({
+  name: "rendered-motion-idle-hover-starter",
+  private: true,
+  type: "module",
+  scripts: {
+    build: "rma compile motion.json --out starter.rma",
+    validate: "rma validate starter.rma",
+    dev: "rma dev motion.json --out starter.rma --force"
+  },
+  dependencies: {
+    "@rendered-motion/compiler": "1.0.0",
+    "@rendered-motion/element": "1.0.0"
+  }
+});
+
+const README = `# Rendered Motion idle/hover starter
+
+The state names (\`idle\` and \`engaged\`) and event names
+(\`control.engage\` and \`control.release\`) are ordinary author data. The
+runtime does not contain a special hover state.
+
+Build and validate locally:
 
 \`\`\`sh
-rma compile motion.json --out starter.rma
+npm install
+npm run build
+npm run validate
+npm run dev
 \`\`\`
 
-Inspect and validate it:
+\`npm run dev\` is the zero-config compiler/watch/browser workflow. The included
+\`index.html\` is the equivalent bundler entry: its npm package import is resolved
+by Vite, Parcel, Webpack, and other package-aware web tooling. It demonstrates
+a native button as the semantic interaction target and a light-DOM fallback.
 
-\`\`\`sh
-rma inspect starter.rma
-rma validate starter.rma
-\`\`\`
+The generated RGBA frames are CC0-1.0 and their exact provenance is recorded
+in \`provenance.json\`. No upload, account, framework, or remote asset is
+required.
+`;
+
+const HTML_EXAMPLE = `<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"><title>Idle/hover rendered motion</title></head>
+<body>
+  <button id="favorite" type="button">
+    <rendered-motion src="./starter.rma" interaction-for="favorite" aria-hidden="true">
+      <img slot="fallback" src="./frames/frame-0000.png" alt="" width="48" height="48">
+    </rendered-motion>
+    <span>Favorite</span>
+  </button>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
+`;
+
+const STARTER_SCRIPT = `import "@rendered-motion/element/auto";
 `;
 
 const ASSET_LICENSE = `# Generated starter asset license
 
-The two PNG frames in this directory are generated procedurally by the
-Rendered Motion compiler. They contain no third-party artwork. To the extent
+The RGBA PNG frames in this directory are generated procedurally by the
+Rendered Motion compiler and contain no third-party artwork. To the extent
 possible under law, the generator's authors waive copyright and related rights
 in those generated example frames under CC0 1.0 Universal.
 

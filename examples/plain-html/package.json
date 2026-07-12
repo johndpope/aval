@@ -1,0 +1,16 @@
+{
+  "name": "rendered-motion-plain-html-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite --host 127.0.0.1"
+  },
+  "dependencies": {
+    "@rendered-motion/element": "1.0.0"
+  },
+  "devDependencies": {
+    "vite": "8.1.4"
+  }
+}

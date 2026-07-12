@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendered-motion.dev/schemas/publication-ledger.schema.json",
+  "title": "Rendered Motion publication ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "releaseVersion", "phase", "mode", "status", "candidateManifestDigest", "releaseManifestDigest", "releaseSetDigest", "registryUrl", "registryUrlSha256", "previousLedgerDigest", "phaseEvidenceDigest", "createdAt", "operations"],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "releaseVersion": { "const": "1.0.0" },
+    "phase": { "enum": ["publish-next", "promote-latest", "cleanup-next", "rollback"] },
+    "mode": { "enum": ["dry-run", "executed"] },
+    "status": { "enum": ["planned", "passed", "failed", "inconclusive"] },
+    "candidateManifestDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseManifestDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseSetDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "registryUrl": { "const": "https://registry.npmjs.org/" },
+    "registryUrlSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "previousLedgerDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+    "phaseEvidenceDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+    "createdAt": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "action", "packageName", "version", "tarballSha256", "registryIntegrity", "tag", "before", "after", "beforeStateDigest", "afterStateDigest", "result", "timestamp", "approvalId"],
+        "properties": {
+          "sequence": { "type": "integer", "minimum": 1, "maximum": 256 },
+          "action": { "enum": ["publish", "tag", "deprecate", "rollback-tag"] },
+          "packageName": { "type": "string", "pattern": "^@rendered-motion/[a-z-]+$" },
+          "version": { "const": "1.0.0" },
+          "tarballSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "registryIntegrity": { "type": "string", "pattern": "^sha512-[A-Za-z0-9+/]{86}==$" },
+          "tag": { "type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$" },
+          "before": { "type": ["string", "null"], "maxLength": 512 },
+          "after": { "type": ["string", "null"], "minLength": 1, "maxLength": 512 },
+          "beforeStateDigest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "afterStateDigest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "result": { "enum": ["planned", "applied", "already-exact", "failed", "ambiguous", "conflict"] },
+          "timestamp": { "type": "string", "format": "date-time", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$" },
+          "approvalId": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@+-]{7,255}$" }
+        }
+      }
+    }
+  }
+}

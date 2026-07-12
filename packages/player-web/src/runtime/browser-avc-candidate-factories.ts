@@ -3,7 +3,10 @@ import type {
   DecoderWorkerWaitOptions,
   ManagedDecoderWorkerFrame
 } from "../decoder-worker/client.js";
-import { createDecoderWorkerClient } from "../decoder-worker/factory.js";
+import {
+  createDecoderWorkerClient,
+  createOwnedDecoderWorkerClient
+} from "../decoder-worker/factory.js";
 import type {
   CreateDecoderWorkerClientOptions,
   OwnedDecoderWorkerPort
@@ -69,16 +72,20 @@ export class BrowserAvcCandidateWorkerFactory
     this.#hub.registerCandidate(context);
     let port: InducibleWorkerPort | null = null;
     const configuredFactory = this.#createPort ?? this.#options.workerFactory;
-    const client = createDecoderWorkerClient({
-      ...this.#options,
-      workerFactory: (url, workerOptions) => {
-        const inner = configuredFactory === undefined
-          ? new Worker(url, workerOptions)
-          : configuredFactory(url, workerOptions);
+    const ownPort = (inner: OwnedDecoderWorkerPort): InducibleWorkerPort => {
         port = new InducibleWorkerPort(inner as OwnedDecoderWorkerPort);
         return port;
-      }
-    });
+    };
+    const client = configuredFactory === undefined && this.#options.entryUrl === undefined
+      ? createOwnedDecoderWorkerClient(this.#options, ownPort)
+      : createDecoderWorkerClient({
+          ...this.#options,
+          workerFactory: (url, workerOptions) => ownPort(
+            configuredFactory === undefined
+              ? new Worker(url, workerOptions)
+              : configuredFactory(url, workerOptions)
+          )
+        });
     if (port === null) throw new Error("decoder worker port was not created");
     const tracked = new TrackedCandidateWorker(client, port);
     this.#hub.registerWorker(tracked);

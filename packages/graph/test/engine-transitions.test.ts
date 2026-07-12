@@ -155,6 +155,13 @@ describe("MotionGraphEngine transition routing", () => {
   it("uses the pending edge's inverse event before normal visual-state lookup", () => {
     const engine = animatedEngine(reversibleGraph());
 
+    const beforeQuery = engine.snapshot();
+    const traceBeforeQuery = engine.getTrace();
+    expect(engine.canSend("hover.enter")).toBe(true);
+    expect(engine.canSend("unknown.event")).toBe(false);
+    expect(engine.snapshot()).toEqual(beforeQuery);
+    expect(engine.getTrace()).toEqual(traceBeforeQuery);
+
     expect(engine.send("hover.enter")).toMatchObject({ accepted: true });
     const cancelled = engine.send("hover.leave");
 

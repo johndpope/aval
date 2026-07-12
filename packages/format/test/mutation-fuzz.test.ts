@@ -8,8 +8,9 @@ import {
   generateReferenceGraphFixture,
   generateReferenceLoopFixture
 } from "./fixture-generator.js";
+import { mutationSeeds } from "../../../tests/mutation/seed-profile.js";
 
-const SEEDS = [1, 0x5eedc0de, 0xc0ffee, 0xffff_ffff] as const;
+const SEEDS = mutationSeeds([1, 0x5eedc0de, 0xc0ffee, 0xffff_ffff]);
 
 function randomFor(seed: number): () => number {
   let state = seed >>> 0;

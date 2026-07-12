@@ -9,8 +9,9 @@ import {
   type MotionGraphResult,
   type MotionGraphSnapshot
 } from "../src/index.js";
+import { mutationSeeds } from "../../../tests/mutation/seed-profile.js";
 
-const FUZZ_SEEDS = [1, 0x5eedc0de, 0xc0ffee, 0xffffffff] as const;
+const FUZZ_SEEDS = mutationSeeds([1, 0x5eedc0de, 0xc0ffee, 0xffffffff]);
 const GENERATED_TICKS = 2_500;
 const DRAIN_TICKS = 80;
 

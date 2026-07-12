@@ -142,7 +142,7 @@ test("uses bounded full fallbacks and externally gates the complete entity", asy
       pngGateCalls: 0,
       mediaGateCalls: 0,
       resources: {
-        quarantinePeakBytes: provenance.asset.bytes,
+        quarantinePeakBytes: provenance.asset.bytes * 2,
         assemblyPeakBytes: 0,
         peakCategories: { "asset-full": provenance.asset.bytes }
       }
@@ -183,7 +183,7 @@ test("uses bounded full fallbacks and externally gates the complete entity", asy
     pngGateCalls: 0,
     mediaGateCalls: 0,
     resources: {
-      quarantinePeakBytes: provenance.asset.bytes,
+      quarantinePeakBytes: provenance.asset.bytes * 2,
       peakCategories: { "asset-full": provenance.asset.bytes }
     }
   });
@@ -218,8 +218,8 @@ test("uses bounded full fallbacks and externally gates the complete entity", asy
     pngGateCalls: 0,
     mediaGateCalls: 0,
     resources: {
-      unpromotedFullReleases: 1,
-      quarantinePeakBytes: provenance.asset.bytes,
+      unpromotedFullReleases: 2,
+      quarantinePeakBytes: provenance.asset.bytes * 2,
       peakCategories: { "asset-full": 0 }
     }
   });

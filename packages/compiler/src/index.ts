@@ -106,6 +106,12 @@ export type {
   UnpackReport
 } from "./commands/asset.js";
 export { startDevCommand } from "./commands/dev.js";
+export {
+  createCompileAdoptionSummary,
+  formatCompileAdoptionSummary,
+  type CompileAdoptionSummary,
+  type CompileAdoptionUnitSummary
+} from "./adoption-summary.js";
 export type {
   DevBuildEvent,
   DevCommandDependencies,

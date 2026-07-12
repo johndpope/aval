@@ -1,7 +1,9 @@
 {
   "name": "@rendered-motion/compiler",
-  "version": "0.0.0",
-  "private": true,
+  "version": "1.0.0",
+  "description": "CLI and compiler for deterministic web rendered motion assets.",
+  "keywords": ["animation", "compiler", "cli", "motion"],
+  "private": false,
   "type": "module",
   "sideEffects": false,
   "bin": {
@@ -9,17 +11,21 @@
   },
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     }
   },
+  "files": ["dist", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"],
+  "license": "MIT",
+  "engines": { "node": ">=22.12.0" },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit"
   },
   "dependencies": {
-    "@rendered-motion/format": "0.0.0",
-    "@rendered-motion/graph": "0.0.0"
+    "@rendered-motion/element": "1.0.0",
+    "@rendered-motion/format": "1.0.0",
+    "@rendered-motion/graph": "1.0.0",
+    "@rendered-motion/player-web": "1.0.0"
   }
 }

@@ -358,12 +358,22 @@ describe("compiler commands", () => {
     expect(parseSourceProject(projectBytes)).toMatchObject({
       sourceProjectVersion: "0.2",
       alphaPolicy: "auto",
-      initialState: "default",
-      sources: [{ type: "png-sequence", frameCount: 2 }],
-      units: [{ kind: "body", range: [0, 2] }]
+      initialState: "idle",
+      sources: [{ type: "png-sequence", frameCount: 22 }],
+      units: [
+        { id: "engage.shift", kind: "reversible", range: [8, 14] },
+        { id: "engaged.body", kind: "body", range: [14, 22] },
+        { id: "idle.body", kind: "body", range: [0, 8] }
+      ],
+      bindings: [
+        { source: "engagement.off", event: "control.release" },
+        { source: "engagement.on", event: "control.engage" }
+      ]
     });
     expect(await readFile(join(first.directory, "ASSET-LICENSE.md"), "utf8"))
       .toContain("procedurally");
+    expect(await readFile(join(first.directory, "provenance.json"), "utf8"))
+      .toContain("CC0-1.0");
     await expect(runInitCommand({
       command: "init", directory: "one", json: false
     }, root)).rejects.toMatchObject({ code: "IO_FAILED" });

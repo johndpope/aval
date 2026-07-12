@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { Plugin } from "vite";
+import type { Plugin, PreviewServer, ViteDevServer } from "vite";
 
 interface M7FixtureProvenance {
   readonly asset: {
@@ -65,11 +65,10 @@ export function m7HttpFixturePlugin(): Plugin {
   let provenance: M7FixtureProvenance;
   let scenarioIds: ReadonlySet<string>;
   const sessions = new Map<string, SessionMetrics>();
+  let loadPromise: Promise<void> | null = null;
 
-  return {
-    name: "rendered-motion-m7-http-fixture",
-    enforce: "pre",
-    async buildStart() {
+  function loadAssets(): Promise<void> {
+    return loadPromise ??= (async () => {
       const [asset, provenanceText, scenariosText] = await Promise.all([
         readFile(fixturePath),
         readFile(provenancePath, "utf8"),
@@ -84,75 +83,91 @@ export function m7HttpFixturePlugin(): Plugin {
       if (fixture.byteLength !== provenance.asset.bytes) {
         throw new Error("M7 HTTP fixture bytes do not match provenance");
       }
-    },
-    configureServer(server) {
-      server.middlewares.use((request, response, next) => {
-        void routeRequest(request, response).catch((error: unknown) => {
-          if (response.headersSent) {
-            response.destroy(error instanceof Error ? error : undefined);
-            return;
-          }
-          response.statusCode = 500;
-          response.setHeader("Content-Type", "application/json; charset=utf-8");
-          response.end(JSON.stringify({ error: "m7-fixture-failure" }));
-        });
+    })();
+  }
 
-        async function routeRequest(
-          incoming: IncomingMessage,
-          outgoing: ServerResponse
-        ): Promise<void> {
-          const url = new URL(incoming.url ?? "/", "http://m7.invalid");
-          if (
-            url.pathname !== ASSET_PATH &&
-            url.pathname !== METRICS_PATH &&
-            url.pathname !== RESET_PATH
-          ) {
-            next();
-            return;
-          }
-          const session = requireParameter(url, "session", SESSION_PATTERN);
-          if (url.pathname === METRICS_PATH) {
-            if (incoming.method !== "GET") return methodNotAllowed(outgoing);
-            writeJson(outgoing, snapshotMetrics(sessions.get(session)));
-            return;
-          }
-          if (url.pathname === RESET_PATH) {
-            if (incoming.method !== "POST") return methodNotAllowed(outgoing);
-            sessions.delete(session);
-            outgoing.statusCode = 204;
-            outgoing.end();
-            return;
-          }
+  function installServer(server: ViteDevServer | PreviewServer): void {
+    server.middlewares.use((request, response, next) => {
+      void routeRequest(request, response).catch((error: unknown) => {
+        if (response.headersSent) {
+          response.destroy(error instanceof Error ? error : undefined);
+          return;
+        }
+        response.statusCode = 500;
+        response.setHeader("Content-Type", "application/json; charset=utf-8");
+        response.end(JSON.stringify({ error: "m7-fixture-failure" }));
+      });
+
+      async function routeRequest(
+        incoming: IncomingMessage,
+        outgoing: ServerResponse
+      ): Promise<void> {
+        const url = new URL(incoming.url ?? "/", "http://m7.invalid");
+        if (
+          url.pathname !== ASSET_PATH &&
+          url.pathname !== METRICS_PATH &&
+          url.pathname !== RESET_PATH
+        ) {
+          next();
+          return;
+        }
+        const session = requireParameter(url, "session", SESSION_PATTERN);
+        if (url.pathname === METRICS_PATH) {
           if (incoming.method !== "GET") return methodNotAllowed(outgoing);
-          const scenario = requireParameter(url, "scenario", null);
-          if (!scenarioIds.has(scenario)) {
-            throw new RangeError("unknown M7 network scenario");
-          }
-          let metrics = sessions.get(session);
-          if (metrics === undefined) {
-            if (sessions.size >= MAX_SESSIONS) {
-              return tooManyRequests(outgoing);
-            }
-            metrics = createMetrics();
-            sessions.set(session, metrics);
-          }
-          if (
-            metrics.requests.length >= MAX_REQUESTS_PER_SESSION ||
-            metrics.activeResponses >= MAX_ACTIVE_RESPONSES_PER_SESSION
-          ) {
+          writeJson(outgoing, snapshotMetrics(sessions.get(session)));
+          return;
+        }
+        if (url.pathname === RESET_PATH) {
+          if (incoming.method !== "POST") return methodNotAllowed(outgoing);
+          sessions.delete(session);
+          outgoing.statusCode = 204;
+          outgoing.end();
+          return;
+        }
+        if (incoming.method !== "GET") return methodNotAllowed(outgoing);
+        const scenario = requireParameter(url, "scenario", null);
+        if (!scenarioIds.has(scenario)) {
+          throw new RangeError("unknown M7 network scenario");
+        }
+        let metrics = sessions.get(session);
+        if (metrics === undefined) {
+          if (sessions.size >= MAX_SESSIONS) {
             return tooManyRequests(outgoing);
           }
-          const requestRecord: RecordedRequest = Object.freeze({
-            ordinal: metrics.requests.length + 1,
-            method: incoming.method,
-            range: headerValue(incoming, "range"),
-            ifRange: headerValue(incoming, "if-range"),
-            scenario
-          });
-          metrics.requests.push(requestRecord);
-          serveAsset(incoming, outgoing, scenario, requestRecord, metrics);
+          metrics = createMetrics();
+          sessions.set(session, metrics);
         }
-      });
+        if (
+          metrics.requests.length >= MAX_REQUESTS_PER_SESSION ||
+          metrics.activeResponses >= MAX_ACTIVE_RESPONSES_PER_SESSION
+        ) {
+          return tooManyRequests(outgoing);
+        }
+        const requestRecord: RecordedRequest = Object.freeze({
+          ordinal: metrics.requests.length + 1,
+          method: incoming.method,
+          range: headerValue(incoming, "range"),
+          ifRange: headerValue(incoming, "if-range"),
+          scenario
+        });
+        metrics.requests.push(requestRecord);
+        serveAsset(incoming, outgoing, scenario, requestRecord, metrics);
+      }
+    });
+  }
+
+  return {
+    name: "rendered-motion-m7-http-fixture",
+    enforce: "pre",
+    async buildStart() {
+      await loadAssets();
+    },
+    configureServer(server) {
+      installServer(server);
+    },
+    async configurePreviewServer(server) {
+      await loadAssets();
+      installServer(server);
     }
   };
 

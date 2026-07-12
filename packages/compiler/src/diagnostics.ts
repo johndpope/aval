@@ -38,6 +38,7 @@ export interface CompilerErrorDetails {
   readonly limit?: number;
   readonly policy?: "auto" | "opaque" | "packed";
   readonly phase?: "classification" | "packing" | "quality";
+  readonly committed?: boolean;
 }
 
 /** Stable diagnostic boundary for CLI, API, and subprocess failures. */
@@ -61,6 +62,7 @@ export class CompilerError extends Error {
   public declare readonly limit?: number;
   public declare readonly policy?: "auto" | "opaque" | "packed";
   public declare readonly phase?: "classification" | "packing" | "quality";
+  public declare readonly committed?: boolean;
 
   public constructor(
     code: CompilerErrorCode,
@@ -90,7 +92,8 @@ export class CompilerError extends Error {
       "value",
       "limit",
       "policy",
-      "phase"
+      "phase",
+      "committed"
     ] as const) {
       if (details[key] !== undefined) {
         Object.defineProperty(this, key, {
@@ -125,6 +128,7 @@ export interface CompilerDiagnostic {
   readonly limit?: number;
   readonly policy?: "auto" | "opaque" | "packed";
   readonly phase?: "classification" | "packing" | "quality";
+  readonly committed?: boolean;
 }
 
 export function diagnosticFromError(error: unknown): CompilerDiagnostic {
@@ -149,7 +153,8 @@ export function diagnosticFromError(error: unknown): CompilerDiagnostic {
       ...(error.value === undefined ? {} : { value: error.value }),
       ...(error.limit === undefined ? {} : { limit: error.limit }),
       ...(error.policy === undefined ? {} : { policy: error.policy }),
-      ...(error.phase === undefined ? {} : { phase: error.phase })
+      ...(error.phase === undefined ? {} : { phase: error.phase }),
+      ...(error.committed === undefined ? {} : { committed: error.committed })
     });
   }
   return Object.freeze({

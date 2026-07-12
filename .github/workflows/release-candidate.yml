@@ -1,0 +1,84 @@
+name: release-candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Current protected default-branch full commit SHA
+        required: true
+        type: string
+      release-version:
+        description: Reviewed clean version intent
+        required: true
+        type: choice
+        options: ["1.0.0"]
+
+concurrency:
+  group: release-candidate-1.0.0
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  candidate:
+    environment: release-candidate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      INPUT_COMMIT: ${{ inputs.commit }}
+      INPUT_RELEASE_VERSION: ${{ inputs.release-version }}
+      GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22.12.0
+          cache: npm
+      - name: Validate protected immutable intent
+        run: node scripts/release/validate-workflow-inputs.mjs candidate
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - name: Run complete release gates
+        run: node scripts/release/release-gate.mjs
+      - name: Build exact release set once
+        run: node scripts/release/build-packages.mjs
+      - run: node scripts/release/inspect-packages.mjs
+      - run: node scripts/release/test-consumers.mjs --packages artifacts/1.0.0/packages
+      - run: node scripts/release/test-packed-dev.mjs --packages artifacts/1.0.0/packages
+      - run: node scripts/security/generate-release-sboms.mjs
+      - run: node scripts/security/generate-license-report.mjs --output artifacts/1.0.0/license-report.json
+      - run: node scripts/security/check-package-artifacts.mjs artifacts/1.0.0/packages
+      - name: Assemble and verify closed candidate
+        run: node scripts/release/create-candidate.mjs
+      - id: candidate_digest
+        run: node scripts/release/export-file-digest.mjs --path artifacts/1.0.0/candidate/candidate-manifest.json --key candidate_digest
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: artifacts/1.0.0/candidate/**
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rendered-motion-1.0.0-candidate-${{ inputs.commit }}
+          path: artifacts/1.0.0/candidate
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 30
+      - name: Record candidate job result
+        if: always()
+        env: { WORKFLOW_JOB_STATUS: "${{ job.status }}" }
+        run: node scripts/release/write-workflow-result.mjs --output workflow-results/candidate.json --job candidate
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rendered-motion-1.0.0-candidate-result-${{ github.run_id }}
+          path: workflow-results/candidate.json
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 30

@@ -1,0 +1,106 @@
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit: { description: Current protected default-branch full commit SHA, required: true, type: string }
+      release-run-id: { description: Final-release workflow run ID, required: true, type: string }
+      release-artifact: { description: Exact final-release artifact name, required: true, type: string }
+      candidate-manifest-sha256: { description: Candidate manifest SHA-256, required: true, type: string }
+      release-manifest-sha256: { description: Release manifest SHA-256, required: true, type: string }
+      release-set-sha256: { description: Release-set SHA-256, required: true, type: string }
+      ledger-run-id: { description: Passed publication ledger workflow run ID, required: true, type: string }
+      ledger-artifact: { description: Exact passed publication ledger artifact name, required: true, type: string }
+      ledger-sha256: { description: Reviewed source ledger SHA-256, required: true, type: string }
+      mitigation-run-id: { description: Public mitigation artifact workflow run ID, required: true, type: string }
+      mitigation-artifact: { description: Exact mitigation artifact name, required: true, type: string }
+      mitigation-sha256: { description: Reviewed mitigation document SHA-256, required: true, type: string }
+      rollback-approval-id: { description: Protected rollback approval ID, required: true, type: string }
+
+concurrency:
+  group: npm-publication-1.0.0
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rollback:
+    environment: npm-rollback
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      INPUT_COMMIT: ${{ inputs.commit }}
+      INPUT_RELEASE_RUN_ID: ${{ inputs.release-run-id }}
+      INPUT_RELEASE_ARTIFACT: ${{ inputs.release-artifact }}
+      INPUT_CANDIDATE_DIGEST: ${{ inputs.candidate-manifest-sha256 }}
+      INPUT_RELEASE_DIGEST: ${{ inputs.release-manifest-sha256 }}
+      INPUT_RELEASE_SET_DIGEST: ${{ inputs.release-set-sha256 }}
+      INPUT_LEDGER_RUN_ID: ${{ inputs.ledger-run-id }}
+      INPUT_LEDGER_ARTIFACT: ${{ inputs.ledger-artifact }}
+      INPUT_LEDGER_DIGEST: ${{ inputs.ledger-sha256 }}
+      INPUT_MITIGATION_RUN_ID: ${{ inputs.mitigation-run-id }}
+      INPUT_MITIGATION_ARTIFACT: ${{ inputs.mitigation-artifact }}
+      INPUT_MITIGATION_DIGEST: ${{ inputs.mitigation-sha256 }}
+      INPUT_ROLLBACK_APPROVAL: ${{ inputs.rollback-approval-id }}
+      GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22.14.0, registry-url: "https://registry.npmjs.org", cache: npm }
+      - run: node scripts/release/validate-workflow-inputs.mjs authorize
+      - run: node scripts/release/checkout-authorized-commit.mjs
+      - run: node scripts/release/validate-workflow-inputs.mjs rollback
+      - run: npm install --global npm@11.5.1
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/typescript/bin/tsc -p packages/certification/tsconfig.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.release-artifact }}
+          path: artifacts/final-release
+          run-id: ${{ inputs.release-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.ledger-artifact }}
+          path: incoming/ledger
+          run-id: ${{ inputs.ledger-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.mitigation-artifact }}
+          path: incoming/mitigation
+          run-id: ${{ inputs.mitigation-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: mkdir -p rollback-result
+      - name: Restore or remove tags and deprecate; never unpublishes immutable 1.0.0 bytes
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_SHORT_LIVED_DIST_TAG_TOKEN }}
+        run: |
+          node scripts/release/rollback-dist-tags.mjs \
+            --release-root artifacts/final-release \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --expected-release-digest "$INPUT_RELEASE_DIGEST" \
+            --expected-release-set-digest "$INPUT_RELEASE_SET_DIGEST" \
+            --ledger incoming/ledger/promote-latest-ledger.json \
+            --expected-ledger-digest "$INPUT_LEDGER_DIGEST" \
+            --mitigation incoming/mitigation/mitigation.md \
+            --expected-mitigation-digest "$INPUT_MITIGATION_DIGEST" \
+            --output rollback-result/rollback-ledger.json \
+            --execute --approval "$INPUT_ROLLBACK_APPROVAL"
+      - if: always()
+        env: { WORKFLOW_JOB_STATUS: "${{ job.status }}" }
+        run: node scripts/release/write-workflow-result.mjs --output rollback-result/rollback-result.json --job rollback
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rendered-motion-1.0.0-rollback-${{ github.run_id }}
+          path: rollback-result
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 90

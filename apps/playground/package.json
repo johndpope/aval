@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build --config vite.production.config.ts",
+    "build:production": "vite build --config vite.production.config.ts",
     "dev": "vite --host 127.0.0.1",
+    "preview:production": "vite preview --config vite.production.config.ts --host 127.0.0.1",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@rendered-motion/format": "0.0.0",
-    "@rendered-motion/player-web": "0.0.0"
+    "@rendered-motion/element": "1.0.0",
+    "@rendered-motion/format": "1.0.0",
+    "@rendered-motion/player-web": "1.0.0"
   }
 }

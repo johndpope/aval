@@ -126,6 +126,7 @@ describe("dedicated decoder worker boundary", () => {
       unitFrame: 0,
       timestamp: 0,
       duration: 1,
+      outputCallbackMicroseconds: 0,
       decodedBytes: 16,
       frame
     });
@@ -263,6 +264,8 @@ describe("dedicated decoder worker boundary", () => {
       ordinal: 0,
       unitFrame: 0
     });
+    expect(managedFirst?.outputCallbackMicroseconds).toEqual(expect.any(Number));
+    expect(Number.isSafeInteger(managedFirst?.outputCallbackMicroseconds)).toBe(true);
     expect(managedSecond).toMatchObject({
       generation: 1,
       ordinal: 1,

@@ -92,6 +92,7 @@ export function isDecoderWorkerEvent(value: unknown): value is DecoderWorkerEven
         isNonNegativeSafeInteger(value.unitFrame) &&
         isNonNegativeSafeInteger(value.timestamp) &&
         isPositiveSafeInteger(value.duration) &&
+        isNonNegativeSafeInteger(value.outputCallbackMicroseconds) &&
         isPositiveSafeInteger(value.decodedBytes) &&
         isClosableFrame(value.frame) &&
         hasExactKeys(value, [
@@ -105,6 +106,7 @@ export function isDecoderWorkerEvent(value: unknown): value is DecoderWorkerEven
           "unitFrame",
           "timestamp",
           "duration",
+          "outputCallbackMicroseconds",
           "decodedBytes",
           "frame"
         ])

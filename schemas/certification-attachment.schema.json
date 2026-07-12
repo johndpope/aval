@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendered-motion.dev/schemas/certification-attachment.schema.json",
+  "title": "Certification attachment",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "path", "sha256", "byteLength", "mediaType"],
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$" },
+    "path": { "type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^(?!/)(?!.*(?:^|/)(?:\\.|\\.\\.)(?:/|$))(?!.*//)[^?\\\\]+$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "byteLength": { "type": "integer", "minimum": 0, "maximum": 1073741824 },
+    "mediaType": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$" }
+  }
+}

@@ -1,7 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const browserPort = process.env.RMA_PLAYWRIGHT_PORT ?? "4173";
+const browserBaseUrl = `http://127.0.0.1:${browserPort}`;
+
 export default defineConfig({
   testDir: "./tests/browser",
+  testIgnore: ["**/m9-*.spec.ts"],
   fullyParallel: false,
   // Browser suites include cadence and decoder/GPU resource assertions.
   // Cross-file workers would benchmark unrelated proofs against each other
@@ -14,14 +18,14 @@ export default defineConfig({
   },
   reporter: [["list"]],
   use: {
-    baseURL: "http://127.0.0.1:4173",
+    baseURL: browserBaseUrl,
     trace: "retain-on-failure",
-    screenshot: "only-on-failure"
+    screenshot: process.env.RMA_SCREENSHOTS === "off" ? "off" : "only-on-failure"
   },
   webServer: {
     command:
-      "npm run dev -w @rendered-motion/playground -- --port 4173 --strictPort",
-    url: "http://127.0.0.1:4173",
+      `npm run dev -w @rendered-motion/playground -- --port ${browserPort} --strictPort`,
+    url: browserBaseUrl,
     reuseExistingServer: !process.env.CI,
     timeout: 30_000
   },
@@ -29,7 +33,11 @@ export default defineConfig({
     {
       name: "chromium",
       use: {
-        ...devices["Desktop Chrome"]
+        ...devices["Desktop Chrome"],
+        channel: "chromium",
+        launchOptions: {
+          ignoreDefaultArgs: ["--disable-back-forward-cache"]
+        }
       }
     }
   ]

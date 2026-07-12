@@ -4,6 +4,10 @@ import type { CompileCliArguments } from "../cli-args.js";
 import { buildDirectArtifact } from "../compile/direct-compiler.js";
 import { buildProjectArtifact } from "../compile/project-compiler.js";
 import { CompilerError } from "../diagnostics.js";
+import {
+  createCompileAdoptionSummary,
+  type CompileAdoptionSummary
+} from "../adoption-summary.js";
 import type {
   CompileArtifact,
   CompileResult,
@@ -28,6 +32,7 @@ export interface CompileCommandDependencies {
 export interface CompileCommandResult extends CompileResult {
   readonly command: "compile";
   readonly reportPath: string;
+  readonly adoption: Readonly<CompileAdoptionSummary>;
 }
 
 const DEFAULT_DEPENDENCIES: CompileCommandDependencies = {
@@ -88,15 +93,19 @@ export async function runCompileCommand(
     buildReportInvocation(arguments_, inputPath, outputPath),
     options.signal
   );
-  return Object.freeze({
-    command: "compile",
+  const result: CompileResult = Object.freeze({
     outputPath,
-    reportPath,
     bytes: artifact.bytes,
     sha256: artifact.sha256,
     provenance: artifact.provenance,
     warnings: artifact.warnings,
     buildDetails: artifact.buildDetails
+  });
+  return Object.freeze({
+    command: "compile",
+    reportPath,
+    ...result,
+    adoption: createCompileAdoptionSummary(result)
   });
 }
 

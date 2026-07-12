@@ -166,6 +166,8 @@ export interface DecoderWorkerFrameEvent {
   readonly unitFrame: number;
   readonly timestamp: number;
   readonly duration: number;
+  /** Worker host-clock observation captured at VideoDecoder output callback entry. */
+  readonly outputCallbackMicroseconds: number;
   readonly decodedBytes: number;
   readonly frame: VideoFrame;
 }

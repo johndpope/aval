@@ -622,6 +622,20 @@ export class IntegratedPlayer {
     return this.#operationGate.run(() => this.#sendNow(event));
   }
 
+  /** Pure acceptance query for listener transactions; it never advances the graph. */
+  public canSend(event: string): boolean {
+    if (typeof event !== "string" || this.#disposed) return false;
+    if (this.#effects.readiness === "staticReady") {
+      const visualState = this.#effects.visualState;
+      return visualState !== null && this.#catalog.graph.definition.edges.some((edge) =>
+        edge.from === visualState &&
+        edge.trigger?.type === "event" &&
+        edge.trigger.name === event
+      );
+    }
+    return this.#graph.canSend(event);
+  }
+
   /** Whether the currently animated graph has a direct ready route. */
   public readyFor(target: string): boolean {
     if (
@@ -666,14 +680,16 @@ export class IntegratedPlayer {
 
   #sendNow(event: string): boolean {
     const result = this.#graph.send(event);
-    if (result.accepted !== true) return false;
+    const accepted = result.accepted === true;
     const playback = this.#activeCandidate?.playback ?? null;
     if (this.#recovery.active) {
-      this.#effects.applyRecoveryIntent(result);
-      this.#recovery.supersedeRecoveryPresentation(
-        result.snapshot.requestedState
-      );
-      return true;
+      if (accepted) {
+        this.#effects.applyRecoveryIntent(result);
+        this.#recovery.supersedeRecoveryPresentation(
+          result.snapshot.requestedState
+        );
+      }
+      return accepted;
     }
     try {
       playback?.synchronizeGraph(result);
@@ -684,8 +700,9 @@ export class IntegratedPlayer {
         error,
         { operation: "send-synchronization" }
       ));
-      return true;
+      return accepted;
     }
+    if (!accepted) return false;
     this.#effects.apply(result);
     this.#visibility.supersedePresentation(result.snapshot.requestedState);
     if (playback === null && this.#readyResult === null) {

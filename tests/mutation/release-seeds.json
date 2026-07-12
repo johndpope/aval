@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "1.0",
+  "generatorVersion": "release-corpus-v1",
+  "profiles": {
+    "pull-request": [1, 2135587861, 2703025645, 4294967295],
+    "release": [1, 17, 127, 65535, 2135587861, 2703025645, 3735928559, 4294967295]
+  }
+}

@@ -1,0 +1,135 @@
+#!/usr/bin/env node
+import { access, readFile, readdir } from "node:fs/promises";
+import { dirname, extname, join, resolve } from "node:path";
+
+const required = [
+  "README.md", "docs/quick-start.md", "docs/states-and-triggers.md",
+  "docs/element-api.md", "docs/compiler.md", "docs/network-and-integrity.md",
+  "docs/accessibility-and-motion.md", "docs/performance-and-budgets.md",
+  "docs/troubleshooting.md", "docs/browser-support.md", "docs/format/0.1.md",
+  "docs/project/0.2.md", "docs/security.md", "docs/versioning.md",
+  "docs/migration/0.x-to-1.0.md", "docs/releases/1.0.0.md",
+  "docs/certification/method.md", "SECURITY.md", "THREAT-MODEL.md",
+  "THIRD_PARTY_NOTICES.md",
+  "docs/evidence/2026-07-12-m8-public-element-authoring-experience.md"
+];
+const failures = [];
+const removedImageApi = new RegExp(
+  `${["poster", "src"].join("-")}|${["poster", "Src"].join("")}`,
+  "u"
+);
+for (const path of required) {
+  try { await access(path); } catch { failures.push(`${path}: required document is missing`); }
+}
+const files = [];
+await collect("docs", files);
+files.push("README.md", "SECURITY.md", "THREAT-MODEL.md", "THIRD_PARTY_NOTICES.md");
+for (const path of files) {
+  const text = await readFile(path, "utf8");
+  if (/@rendered-motion\/[a-z-]+\/src\/|\.\.\/src\//u.test(text)) failures.push(`${path}: source-private import in public documentation`);
+  if (removedImageApi.test(text)) failures.push(`${path}: removed external image API is still documented`);
+  if (!path.startsWith("docs/superpowers/") && !path.startsWith("docs/evidence/") && /\b(?:displayed|scanout)(?:Time|Timestamp)\b/u.test(text)) failures.push(`${path}: forbidden display claim field`);
+  for (const match of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/gu)) {
+    const target = match[1];
+    if (target === undefined || /^(?:https?:|mailto:|#)/u.test(target)) continue;
+    const withoutAnchor = target.split("#")[0];
+    if (withoutAnchor.length === 0 || withoutAnchor.includes("<")) continue;
+    try { await access(resolve(dirname(path), decodeURIComponent(withoutAnchor))); }
+    catch { failures.push(`${path}: broken relative link ${target}`); }
+  }
+}
+const hosting = await readFile("docs/element/hosting-cors-csp-integrity.md", "utf8");
+if (hosting.includes(["unsafe", "inline"].join("-"))) failures.push("docs/element/hosting-cors-csp-integrity.md: CSP must not require inline authority");
+if (!hosting.includes("style-src 'self'") || !hosting.includes("worker-src 'self'")) failures.push("docs/element/hosting-cors-csp-integrity.md: strict self-hosted CSP baseline is incomplete");
+const budgets = await readFile("docs/performance-and-budgets.md", "utf8");
+for (const claim of ["strictly below 75 KiB", "at most 250 KiB", "at most 20 KiB", "recorded as a miss"]) {
+  if (!budgets.includes(claim)) failures.push(`docs/performance-and-budgets.md: missing size decision: ${claim}`);
+}
+const m8Evidence = await readFile(
+  "docs/evidence/2026-07-12-m8-public-element-authoring-experience.md",
+  "utf8"
+);
+if (!m8Evidence.includes("PASSED — test-only local exact archive proof")) failures.push("M8 evidence must record the completed test-only packed proof");
+if (!m8Evidence.includes("externalPublication: false")) failures.push("M8 evidence must preserve the local packed proof claim boundary");
+const support = await readFile("docs/browser-support.md", "utf8");
+const index = JSON.parse(await readFile("docs/certification/1.0.0/index.json", "utf8"));
+const generated = renderSupport(index);
+const captured = support.match(/<!-- BEGIN GENERATED SUPPORT -->\n([\s\S]*?)\n<!-- END GENERATED SUPPORT -->/u)?.[1];
+if (captured !== generated) failures.push("docs/browser-support.md: generated support table is stale");
+for (const directory of ["examples/zero-config-loop", "examples/idle-hover-states", "examples/network-integrity"]) {
+  const packageJson = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
+  if (packageJson.dependencies?.["@rendered-motion/element"] !== "1.0.0") failures.push(`${directory}: example must use exact element 1.0.0`);
+  const source = await readFile(join(directory, "src/main.ts"), "utf8");
+  if (!source.includes('from "@rendered-motion/element"')) failures.push(`${directory}: example must use the public package root`);
+  const exampleReadme = await readFile(join(directory, "README.md"), "utf8");
+  if (!exampleReadme.includes("illustrative")) failures.push(`${directory}: placeholder assets must be labeled illustrative`);
+}
+const reactDirectory = "examples/react-ref";
+const reactPackage = JSON.parse(await readFile(join(reactDirectory, "package.json"), "utf8"));
+const reactLock = JSON.parse(await readFile(join(reactDirectory, "package-lock.json"), "utf8"));
+if (reactPackage.peerDependencies?.["@rendered-motion/element"] !== "1.0.0") failures.push(`${reactDirectory}: example must target exact element 1.0.0`);
+if (reactPackage.peerDependenciesMeta?.["@rendered-motion/element"]?.optional !== true) failures.push(`${reactDirectory}: unpublished element peer must remain optional until packed verification`);
+for (const [name, version] of Object.entries({
+  react: "19.2.7",
+  "react-dom": "19.2.7"
+})) {
+  if (reactPackage.dependencies?.[name] !== version) failures.push(`${reactDirectory}: ${name} must be exactly ${version}`);
+}
+for (const [name, version] of Object.entries({
+  "@types/react": "19.2.17",
+  "@types/react-dom": "19.2.3",
+  typescript: "7.0.2",
+  vite: "8.1.4"
+})) {
+  if (reactPackage.devDependencies?.[name] !== version) failures.push(`${reactDirectory}: ${name} must be exactly ${version}`);
+}
+if (JSON.stringify(reactLock.packages?.[""] ?? {}) !== JSON.stringify({
+  name: reactPackage.name,
+  version: reactPackage.version,
+  dependencies: reactPackage.dependencies,
+  devDependencies: reactPackage.devDependencies,
+  peerDependencies: reactPackage.peerDependencies,
+  peerDependenciesMeta: reactPackage.peerDependenciesMeta
+})) failures.push(`${reactDirectory}: isolated package lock root is stale`);
+const reactSource = await readFile(join(reactDirectory, "src/StatusMotion.tsx"), "utf8");
+const reactAugmentation = await readFile(join(reactDirectory, "src/rendered-motion-jsx.d.ts"), "utf8");
+if (!reactSource.includes('from "@rendered-motion/element"') || /@rendered-motion\/element\//u.test(reactSource)) failures.push(`${reactDirectory}: component must use only the public element package root`);
+if (!reactSource.includes('slot="fallback"')) failures.push(`${reactDirectory}: component must retain an author-owned slotted fallback`);
+if (!reactAugmentation.includes('declare module "react"') || !reactAugmentation.includes("RenderedMotionElementAttributes")) failures.push(`${reactDirectory}: copyable React JSX augmentation is missing`);
+const plainDirectory = "examples/plain-html";
+const plainPackage = JSON.parse(await readFile(join(plainDirectory, "package.json"), "utf8"));
+const plainHtml = await readFile(join(plainDirectory, "index.html"), "utf8");
+const plainSource = await readFile(join(plainDirectory, "main.js"), "utf8");
+const plainReadme = await readFile(join(plainDirectory, "README.md"), "utf8");
+if (plainPackage.dependencies?.["@rendered-motion/element"] !== "1.0.0") failures.push(`${plainDirectory}: example must use exact element 1.0.0`);
+if (plainPackage.devDependencies?.vite !== "8.1.4") failures.push(`${plainDirectory}: example must pin the package-aware web tool`);
+if (!plainSource.includes('from "@rendered-motion/element"')) failures.push(`${plainDirectory}: example must use the public package root`);
+if (/<(?:script|style)[^>]*>[^<]/u.test(plainHtml)) failures.push(`${plainDirectory}: example must not require inline script or style authority`);
+if (!plainReadme.includes("illustrative") || !plainReadme.includes("placeholders")) failures.push(`${plainDirectory}: absent assets must be labeled illustrative placeholders`);
+const starterHtml = await readFile("fixtures/starter/m8-idle-hover/index.html", "utf8");
+const starterSource = await readFile("fixtures/starter/m8-idle-hover/main.js", "utf8");
+if (/<(?:script|style)[^>]*>[^<]/u.test(starterHtml)) failures.push("generated starter must not require inline script or style authority");
+if (!starterSource.includes('"@rendered-motion/element/auto"')) failures.push("generated starter must use the public auto entry");
+if (failures.length > 0) throw new Error(failures.join("\n"));
+process.stdout.write(`${JSON.stringify({ status: "passed", documents: files.length, examples: 5 })}\n`);
+
+function renderSupport(index) {
+  if (!Array.isArray(index.profiles) || index.profiles.length === 0) return [
+    "| Profile | Static fallback | Runtime scheduling | Observed display |",
+    "| --- | --- | --- | --- |",
+    "| No named profiles | not run | not run | not measured |"
+  ].join("\n");
+  return [
+    "| Profile | Static fallback | Runtime scheduling | Observed display |",
+    "| --- | --- | --- | --- |",
+    ...index.profiles.map((profile) => `| ${profile.profileId} | ${label(profile.staticFallback)} | ${label(profile.runtimeScheduling)} | ${profile.observedDisplay === "not-run" ? "not measured" : label(profile.observedDisplay)} |`)
+  ].join("\n");
+}
+function label(value) { return String(value).replaceAll("-", " "); }
+async function collect(directory, output) {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) await collect(path, output);
+    else if (entry.isFile() && extname(entry.name) === ".md") output.push(path);
+  }
+}

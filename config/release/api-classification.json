@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0",
+  "defaultClassification": "stable",
+  "allowed": ["stable", "experimental", "deprecated", "internal"],
+  "packages": {
+    "@rendered-motion/graph": { "experimental": [], "deprecated": [] },
+    "@rendered-motion/format": { "experimental": [], "deprecated": [] },
+    "@rendered-motion/compiler": { "experimental": [], "deprecated": [] },
+    "@rendered-motion/player-web": { "experimental": [], "deprecated": [] },
+    "@rendered-motion/element": { "experimental": [], "deprecated": [] }
+  }
+}

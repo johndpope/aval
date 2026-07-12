@@ -15,6 +15,10 @@ export type BrowserDecoderWorkerFactory = (
   options: WorkerOptions
 ) => OwnedDecoderWorkerPort;
 
+export type DecoderWorkerPortOwner = (
+  worker: OwnedDecoderWorkerPort
+) => OwnedDecoderWorkerPort;
+
 export interface CreateDecoderWorkerClientOptions
   extends DecoderWorkerClientOptions {
   readonly entryUrl?: URL;
@@ -34,11 +38,14 @@ export function resolveDecoderWorkerEntryUrl(): URL {
 export function createDecoderWorkerClient(
   options: CreateDecoderWorkerClientOptions = {}
 ): DecoderWorkerClient {
-  const workerFactory = options.workerFactory ?? defaultWorkerFactory;
-  const entryUrl = options.entryUrl ?? resolveDecoderWorkerEntryUrl();
-  if (!(entryUrl instanceof URL)) {
-    throw new DecoderWorkerTransportError("decoder worker entryUrl must be a URL");
-  }
+  return createOwnedDecoderWorkerClient(options, (worker) => worker);
+}
+
+/** @internal Allows the browser runtime to wrap and track the default port. */
+export function createOwnedDecoderWorkerClient(
+  options: CreateDecoderWorkerClientOptions,
+  ownWorker: DecoderWorkerPortOwner
+): DecoderWorkerClient {
   const workerOptions: WorkerOptions =
     options.workerName === undefined
       ? { type: "module" }
@@ -46,7 +53,16 @@ export function createDecoderWorkerClient(
 
   let worker: OwnedDecoderWorkerPort;
   try {
-    worker = workerFactory(entryUrl, workerOptions);
+    if (options.workerFactory === undefined && options.entryUrl === undefined) {
+      worker = ownCreatedWorker(createPackagedDecoderWorker(options.workerName), ownWorker);
+    } else {
+      const workerFactory = options.workerFactory ?? defaultWorkerFactory;
+      const entryUrl = options.entryUrl ?? resolveDecoderWorkerEntryUrl();
+      if (!(entryUrl instanceof URL)) {
+        throw new DecoderWorkerTransportError("decoder worker entryUrl must be a URL");
+      }
+      worker = ownCreatedWorker(workerFactory(entryUrl, workerOptions), ownWorker);
+    }
   } catch (error) {
     throw normalizeTransportError(error, "failed to create decoder module worker");
   }
@@ -73,6 +89,25 @@ export function createDecoderWorkerClient(
       "failed to initialize decoder worker client"
     );
   }
+}
+
+function ownCreatedWorker(
+  created: OwnedDecoderWorkerPort,
+  ownWorker: DecoderWorkerPortOwner
+): OwnedDecoderWorkerPort {
+  try {
+    return ownWorker(created);
+  } catch (error) {
+    try { created.terminate(); } catch { /* Preserve the ownership failure. */ }
+    throw error;
+  }
+}
+
+/** Keep the default Worker and URL expression together for browser bundlers. */
+function createPackagedDecoderWorker(workerName: string | undefined): OwnedDecoderWorkerPort {
+  return workerName === undefined
+    ? new Worker(new URL("./entry.js", import.meta.url), { type: "module" })
+    : new Worker(new URL("./entry.js", import.meta.url), { type: "module", name: workerName });
 }
 
 function defaultWorkerFactory(

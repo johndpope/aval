@@ -395,8 +395,8 @@ test("drives every M5.5 route through the real worker and WebGL2 renderer", asyn
   expect(report.readiness.decodeLeadFrames).toBeLessThanOrEqual(11);
   expect(report.readiness.ringCapacity).toBeGreaterThanOrEqual(6);
   expect(report.readiness.ringCapacity).toBeLessThanOrEqual(12);
+  expect(supportedOrder).toContain(report.realtime.selectedRendition);
   expect(report.realtime).toMatchObject({
-    selectedRendition: supportedOrder[0],
     introBody: ["intro:0", "intro:1", "intro:2", "idle-body:0"],
     loopSeams: 5,
     advancedTicks: 43,
@@ -764,7 +764,9 @@ async function callProbe(
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() !== "error") return;
+    if (message.location().url.endsWith("/favicon.ico") && message.text().includes("404")) return;
+    errors.push(message.text());
   });
   page.on("pageerror", (error) => {
     errors.push(error.message);

@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rendered-motion.dev/schemas/certification-runtime.schema.json",
+  "title": "Rendered Motion runtime scheduling certification report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion", "reportKind", "reportId", "status", "candidateManifestDigest",
+    "commit", "tree", "startedAt", "endedAt", "operatorRole", "reviewerIds",
+    "environment", "scenarios", "criteria", "attachments"
+  ],
+  "properties": {
+    "schemaVersion": { "const": "1.0" },
+    "reportKind": { "const": "runtime-scheduling" },
+    "reportId": { "$ref": "#/$defs/id" },
+    "status": { "$ref": "#/$defs/status" },
+    "candidateManifestDigest": { "$ref": "#/$defs/digest" },
+    "commit": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "tree": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "startedAt": { "type": "string", "format": "date-time", "maxLength": 32 },
+    "endedAt": { "type": "string", "format": "date-time", "maxLength": 32 },
+    "operatorRole": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "reviewerIds": { "type": "array", "maxItems": 16, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+    "environment": { "$ref": "#/$defs/environment" },
+    "scenarios": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/scenario" } },
+    "criteria": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/criterion" } },
+    "attachments": { "type": "array", "maxItems": 256, "items": { "$ref": "certification-attachment.schema.json" } },
+    "supersedes": { "$ref": "#/$defs/id" },
+    "withdrawalReason": { "type": "string", "minLength": 1, "maxLength": 2000 }
+  },
+  "allOf": [{
+    "if": { "properties": { "status": { "const": "passed" } }, "required": ["status"] },
+    "then": {
+      "properties": {
+        "scenarios": { "minItems": 1 },
+        "criteria": { "minItems": 1 },
+        "attachments": { "minItems": 1 }
+      }
+    }
+  }],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "status": { "enum": ["passed", "failed", "unsupported", "inconclusive", "not-run", "withdrawn"] },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platformClass", "browser", "os", "hardware", "display", "power", "capabilities"],
+      "properties": {
+        "platformClass": { "$ref": "#/$defs/id" },
+        "browser": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["product", "version", "build", "channel", "engineVersion", "flags", "profileClean"],
+          "properties": {
+            "product": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "build": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "channel": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "engineVersion": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "flags": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+            "profileClean": { "type": "boolean" }
+          }
+        },
+        "os": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["product", "version", "build", "architecture", "patchState"],
+          "properties": {
+            "product": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "build": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "architecture": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "patchState": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        },
+        "hardware": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["deviceClass", "cpu", "gpu", "driver", "physicalMemoryMiB", "virtualization", "decoderMode"],
+          "properties": {
+            "deviceClass": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "cpu": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "gpu": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "driver": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "physicalMemoryMiB": { "type": "integer", "minimum": 1 },
+            "virtualization": { "enum": ["none", "virtualized", "unknown"] },
+            "decoderMode": { "enum": ["hardware", "software", "unknown"] }
+          }
+        },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["displayClass", "connection", "nativeWidth", "nativeHeight", "width", "height", "refreshMilliHz", "devicePixelRatioMilli", "colorMode", "hdr", "multiDisplay"],
+          "properties": {
+            "displayClass": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "connection": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "nativeWidth": { "type": "integer", "minimum": 1 },
+            "nativeHeight": { "type": "integer", "minimum": 1 },
+            "width": { "type": "integer", "minimum": 1 },
+            "height": { "type": "integer", "minimum": 1 },
+            "refreshMilliHz": { "type": "integer", "minimum": 1 },
+            "devicePixelRatioMilli": { "type": "integer", "minimum": 1 },
+            "colorMode": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "hdr": { "type": "boolean" },
+            "multiDisplay": { "type": "boolean" }
+          }
+        },
+        "power": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "mode", "chargeRange", "browserEnergyMode", "thermal", "backgroundLoad"],
+          "properties": {
+            "source": { "enum": ["ac", "battery", "unknown"] },
+            "mode": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "chargeRange": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "browserEnergyMode": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "thermal": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "backgroundLoad": { "type": "string", "minLength": 1, "maxLength": 512 }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "maxProperties": 128,
+          "propertyNames": { "pattern": "^[A-Za-z][A-Za-z0-9._-]{0,127}$" },
+          "additionalProperties": { "type": ["boolean", "number", "string"] }
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "repetition", "seed", "status", "boundaryCount", "frameCount", "formatUnderflows", "ledgerDigest"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "seed": { "type": "integer", "minimum": 0 },
+        "status": { "$ref": "#/$defs/status" },
+        "boundaryCount": { "type": "integer", "minimum": 0 },
+        "frameCount": { "type": "integer", "minimum": 0 },
+        "operationCount": { "type": "integer", "minimum": 0 },
+        "headedOperationCount": { "type": "integer", "minimum": 0 },
+        "formatUnderflows": { "type": "integer", "minimum": 0 },
+        "firstFailingOrdinal": { "type": "integer", "minimum": 0 },
+        "ledgerDigest": { "$ref": "#/$defs/digest" }
+      }
+    },
+    "criterion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "status", "evidence"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "status": { "$ref": "#/$defs/status" },
+        "evidence": { "type": "array", "maxItems": 128, "items": { "type": "string", "minLength": 1, "maxLength": 256 } },
+        "summary": { "type": "string", "minLength": 1, "maxLength": 2000 }
+      }
+    }
+  }
+}

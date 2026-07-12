@@ -62,7 +62,7 @@ export class IntegratedTraceHarness {
       scheduler: input.playback.scheduler,
       submitted: cloneSubmitted(input.playback.submitted),
       media: null,
-      readbackTag: null,
+      readbackTag: input.playback.readbackTag ?? null,
       readiness: input.readiness,
       decodeLeadFrames: input.playback.decodeLeadFrames,
       settledRequestIds: settledRequestIds(input.result),

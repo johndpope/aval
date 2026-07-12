@@ -193,6 +193,34 @@ describe("IntegratedPlayer realtime clock ownership", () => {
     await player.dispose();
   });
 
+  it("synchronizes rejected authored events before the next realtime tick", async () => {
+    const frames = new ManualFrames();
+    const factory = new RealtimeCandidateFactory();
+    const player = new IntegratedPlayer({
+      bytes: createIntegratedOpaqueTestAsset(),
+      createStaticStore: () => new ImmediateStaticStore(),
+      candidateFactory: factory,
+      realtime: {
+        requestFrame: frames.request,
+        cancelFrame: frames.cancel,
+        now: () => 0
+      },
+      timers: new IdleTimers()
+    });
+    await player.prepare();
+
+    expect(player.canSend("not-an-authored-event")).toBe(false);
+    expect(factory.session.graphInputSequence).toBe(0);
+    expect(player.send("not-an-authored-event")).toBe(false);
+    expect(factory.session.graphInputSequence).toBe(1);
+    player.startRealtime();
+    expect(() => frames.run(34)).not.toThrow();
+    expect(factory.session.draws).toBe(1);
+    expect(player.snapshot().readiness).toBe("interactiveReady");
+
+    await player.dispose();
+  });
+
   it("rejects realtime start when no presentation source was configured", async () => {
     const player = new IntegratedPlayer({
       bytes: createIntegratedOpaqueTestAsset(),
@@ -543,11 +571,15 @@ class RealtimePlaybackSession implements IntegratedPlaybackSession {
   public available = true;
   public failSynchronize = false;
   public graphKind: "intro" | "body" = "intro";
+  public graphInputSequence = 0;
 
   public prepareContentTick(
     context: Readonly<IntegratedPlaybackTickContext>
   ): Readonly<IntegratedPreparedContentTick> | null {
     this.tickContexts.push(context);
+    if (context.graphSnapshot.inputSequence !== this.graphInputSequence) {
+      throw new Error("playback graph input sequence diverged");
+    }
     if (!this.available) return null;
     if (context.presentationOrdinal !== 1n) return null;
     const unit = this.graphKind === "intro" ? "intro" : "idle-body";
@@ -595,6 +627,7 @@ class RealtimePlaybackSession implements IntegratedPlaybackSession {
 
   public synchronizeGraph(_result: Readonly<MotionGraphResult>): void {
     if (this.failSynchronize) throw new Error("injected synchronization failure");
+    this.graphInputSequence = _result.snapshot.inputSequence;
     if (_result.presentation?.kind === "intro" || _result.presentation?.kind === "body") {
       this.graphKind = _result.presentation.kind;
     }

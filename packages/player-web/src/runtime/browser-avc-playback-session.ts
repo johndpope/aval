@@ -398,7 +398,7 @@ export class BrowserAvcPlaybackSession
         this.#observeRouteIntent(result);
       }
     }
-    if (result.operation === "begin-animated") {
+    if (result.operation === "begin-animated" || result.operation === "resume-animated") {
       this.#synchronizePendingEdge(result);
       this.#activatePendingCut(result);
       this.#scheduleBackground();
@@ -414,7 +414,8 @@ export class BrowserAvcPlaybackSession
         ? Object.freeze([])
         : Object.freeze([scheduler.submittedCursor]),
       selectedBoundary: this.#pendingEdge?.id ?? null,
-      decodeLeadFrames: this.#activation.finalResourcePlan.ringCapacity - 1
+      decodeLeadFrames: this.#activation.finalResourcePlan.ringCapacity - 1,
+      readbackTag: this.#presentationTags.at(-1) ?? null
     });
   }
 
@@ -863,9 +864,33 @@ function assertBrowserGraphSnapshot(
   synchronized: Readonly<MotionGraphSnapshot>,
   label: string
 ): void {
-  if (!sameBrowserGraphValue(context, synchronized)) {
-    throw new Error(`${label} diverged`);
+  const difference = firstBrowserGraphDifference(context, synchronized, "$snapshot");
+  if (difference !== null) throw new Error(`${label} diverged at ${difference}`);
+}
+
+function firstBrowserGraphDifference(left: unknown, right: unknown, path: string): string | null {
+  if (Object.is(left, right)) return null;
+  if (typeof left !== typeof right || left === null || right === null) return path;
+  if (typeof left !== "object") return path;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return path;
+    for (let index = 0; index < left.length; index += 1) {
+      const difference = firstBrowserGraphDifference(left[index], right[index], `${path}[${String(index)}]`);
+      if (difference !== null) return difference;
+    }
+    return null;
   }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  if (leftKeys.length !== rightKeys.length) return `${path}.<keys>`;
+  for (const key of leftKeys) {
+    if (!Object.prototype.hasOwnProperty.call(rightRecord, key)) return `${path}.${key}`;
+    const difference = firstBrowserGraphDifference(leftRecord[key], rightRecord[key], `${path}.${key}`);
+    if (difference !== null) return difference;
+  }
+  return null;
 }
 
 function sameBrowserGraphValue(left: unknown, right: unknown): boolean {

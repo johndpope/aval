@@ -1,0 +1,94 @@
+import {
+  normalizeAutoplay,
+  normalizeBindings,
+  normalizeCrossOrigin,
+  normalizeFit,
+  normalizeIntegrity,
+  normalizeInteractionFor,
+  normalizeMotion,
+  normalizeSize,
+  normalizeSource,
+  normalizeState,
+  readElementConfiguration
+} from "./element-configuration.js";
+import type {
+  RenderedMotionAutoplay,
+  RenderedMotionBindings,
+  RenderedMotionCrossOrigin,
+  RenderedMotionFit,
+  RenderedMotionMotion
+} from "./public-types.js";
+
+/** Realm-independent reflected attribute normalization. */
+export class ElementAttributeReflection {
+  readonly #host: HTMLElement;
+  public constructor(host: HTMLElement) { this.#host = host; }
+
+  public get src(): string { return this.#read().src; }
+  public set src(value: string) { this.#host.setAttribute("src", normalizeSource(value)); }
+  public get integrity(): string { return this.#read().integrity; }
+  public set integrity(value: string) {
+    this.#optional("integrity", normalizeIntegrity(value));
+  }
+  public get crossOrigin(): RenderedMotionCrossOrigin { return this.#read().crossOrigin; }
+  public set crossOrigin(value: RenderedMotionCrossOrigin) {
+    this.#host.setAttribute("crossorigin", normalizeCrossOrigin(value));
+  }
+  public get motion(): RenderedMotionMotion { return this.#read().motion; }
+  public set motion(value: RenderedMotionMotion) {
+    this.#host.setAttribute("motion", normalizeMotion(value));
+  }
+  public get autoplay(): RenderedMotionAutoplay { return this.#read().autoplay; }
+  public set autoplay(value: RenderedMotionAutoplay) {
+    this.#host.setAttribute("autoplay", normalizeAutoplay(value));
+  }
+  public get fit(): RenderedMotionFit | null { return this.#read().fit; }
+  public set fit(value: RenderedMotionFit | null) {
+    const checked = normalizeFit(value);
+    if (checked === null) this.#host.removeAttribute("fit");
+    else this.#host.setAttribute("fit", checked);
+  }
+  public get bindings(): RenderedMotionBindings { return this.#read().bindings; }
+  public set bindings(value: RenderedMotionBindings) {
+    this.#host.setAttribute("bindings", normalizeBindings(value));
+  }
+  public get state(): string | null { return this.#read().state; }
+  public set state(value: string | null) {
+    const checked = normalizeState(value);
+    if (checked === null) this.#host.removeAttribute("state");
+    else this.#host.setAttribute("state", checked);
+  }
+  public get interactionFor(): string { return this.#read().interactionFor; }
+  public set interactionFor(value: string) {
+    this.#optional("interaction-for", normalizeInteractionFor(value));
+  }
+  public get width(): number | null { return this.#read().width; }
+  public set width(value: number | null) { this.#size("width", value); }
+  public get height(): number | null { return this.#read().height; }
+  public set height(value: number | null) { this.#size("height", value); }
+
+  public upgrade(properties: readonly string[]): void {
+    for (const property of properties) {
+      if (!Object.prototype.hasOwnProperty.call(this.#host, property)) continue;
+      const value = Reflect.get(this.#host, property);
+      if (Reflect.deleteProperty(this.#host, property)) {
+        Reflect.set(this.#host, property, value);
+      }
+    }
+  }
+
+  #read() {
+    return readElementConfiguration((name) => this.#host.getAttribute(name)).configuration;
+  }
+
+  #optional(name: string, value: string): void {
+    if (value === "") this.#host.removeAttribute(name);
+    else this.#host.setAttribute(name, value);
+  }
+
+  #size(name: "width" | "height", value: number | null): void {
+    const checked = normalizeSize(value);
+    if (checked === null) this.#host.removeAttribute(name);
+    else this.#host.setAttribute(name, String(checked));
+  }
+}

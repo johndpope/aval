@@ -516,6 +516,7 @@ export class DecoderWorkerCore {
   }
 
   #handleOutput(frame: VideoFrame): void {
+    const outputCallbackMicroseconds = workerClockMicroseconds();
     this.#metrics.outputFrames += 1;
     if (this.#disposed || this.#failure !== null) {
       this.#closeFrame(frame);
@@ -589,6 +590,7 @@ export class DecoderWorkerCore {
             unitFrame: submitted.sample.unitFrame,
             timestamp: submitted.sample.timestamp,
             duration: submitted.sample.duration,
+            outputCallbackMicroseconds,
             decodedBytes,
             frame
           },
@@ -814,6 +816,18 @@ export class DecoderWorkerCore {
     }
   }
 
+}
+
+function workerClockMicroseconds(): number {
+  const value = Math.floor(performance.timeOrigin * 1_000 + performance.now() * 1_000);
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new DecoderWorkerCoreError(
+      "DECODER_OUTPUT_INVALID",
+      "worker output callback clock is invalid",
+      true
+    );
+  }
+  return value;
 }
 
 function submittedSampleMetadata(

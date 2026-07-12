@@ -463,6 +463,9 @@ export function validateIntegratedPlaybackTraceState(
     !Array.isArray(state.submitted) ||
     (state.selectedBoundary !== null &&
       typeof state.selectedBoundary !== "string") ||
+    (state.readbackTag !== undefined &&
+      state.readbackTag !== null &&
+      typeof state.readbackTag !== "string") ||
     (state.decodeLeadFrames !== null &&
       (!Number.isSafeInteger(state.decodeLeadFrames) ||
         state.decodeLeadFrames < 0))

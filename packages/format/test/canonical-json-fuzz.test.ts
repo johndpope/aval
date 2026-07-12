@@ -6,8 +6,9 @@ import {
 } from "../src/canonical-json.js";
 import type { CanonicalJsonValue } from "../src/canonical-json.js";
 import { FormatError } from "../src/errors.js";
+import { mutationSeeds } from "../../../tests/mutation/seed-profile.js";
 
-const SEEDS = [1, 0x5eedc0de, 0xc0ffee, 0xffffffff] as const;
+const SEEDS = mutationSeeds([1, 0x5eedc0de, 0xc0ffee, 0xffffffff]);
 
 function randomFor(seed: number): () => number {
   let state = seed >>> 0;

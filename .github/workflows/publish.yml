@@ -1,0 +1,183 @@
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit: { description: Current protected default-branch full commit SHA, required: true, type: string }
+      release-run-id: { description: Final-release workflow run ID, required: true, type: string }
+      release-artifact: { description: Exact final-release artifact name, required: true, type: string }
+      candidate-manifest-sha256: { description: Reviewed candidate manifest SHA-256, required: true, type: string }
+      release-manifest-sha256: { description: Reviewed release manifest SHA-256, required: true, type: string }
+      release-set-sha256: { description: Reviewed five-package release-set SHA-256, required: true, type: string }
+      publish-approval-id: { description: Protected next-publication approval ID, required: true, type: string }
+      promotion-approval-id: { description: Separate protected latest-promotion approval ID, required: true, type: string }
+
+concurrency:
+  group: npm-publication-1.0.0
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-next:
+    environment: npm-publish-next
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      ledger_digest: ${{ steps.ledger.outputs.digest }}
+      consumer_evidence_digest: ${{ steps.evidence.outputs.digest }}
+    env:
+      INPUT_COMMIT: ${{ inputs.commit }}
+      INPUT_RELEASE_RUN_ID: ${{ inputs.release-run-id }}
+      INPUT_RELEASE_ARTIFACT: ${{ inputs.release-artifact }}
+      INPUT_CANDIDATE_DIGEST: ${{ inputs.candidate-manifest-sha256 }}
+      INPUT_RELEASE_DIGEST: ${{ inputs.release-manifest-sha256 }}
+      INPUT_RELEASE_SET_DIGEST: ${{ inputs.release-set-sha256 }}
+      INPUT_PUBLISH_APPROVAL: ${{ inputs.publish-approval-id }}
+      INPUT_PROMOTION_APPROVAL: ${{ inputs.promotion-approval-id }}
+      GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22.14.0, registry-url: "https://registry.npmjs.org", cache: npm }
+      - run: node scripts/release/validate-workflow-inputs.mjs authorize
+      - run: node scripts/release/checkout-authorized-commit.mjs
+      - run: node scripts/release/validate-workflow-inputs.mjs publish
+      - run: npm install --global npm@11.5.1
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/typescript/bin/tsc -p packages/certification/tsconfig.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.release-artifact }}
+          path: artifacts/final-release
+          run-id: ${{ inputs.release-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - run: mkdir -p publication
+      - name: Publish the verified archives under next
+        run: |
+          node scripts/release/publish-exact.mjs \
+            --release-root artifacts/final-release \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --expected-release-digest "$INPUT_RELEASE_DIGEST" \
+            --expected-release-set-digest "$INPUT_RELEASE_SET_DIGEST" \
+            --output publication/publish-next-ledger.json \
+            --tag next --execute --approval "$INPUT_PUBLISH_APPROVAL"
+      - id: ledger
+        if: always()
+        run: node scripts/release/export-file-digest.mjs --path publication/publish-next-ledger.json --key digest
+      - run: |
+          node scripts/release/verify-registry.mjs \
+            --release-root artifacts/final-release \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --expected-release-digest "$INPUT_RELEASE_DIGEST" \
+            --expected-release-set-digest "$INPUT_RELEASE_SET_DIGEST" \
+            --tag next
+      - name: Test clean consumers from the registry
+        run: |
+          node scripts/release/test-registry-consumers.mjs \
+            --release-root artifacts/final-release \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --expected-release-digest "$INPUT_RELEASE_DIGEST" \
+            --expected-release-set-digest "$INPUT_RELEASE_SET_DIGEST" \
+            --output publication/registry-consumer-evidence.json
+      - id: evidence
+        run: node scripts/release/export-file-digest.mjs --path publication/registry-consumer-evidence.json --key digest
+      - if: always()
+        env: { WORKFLOW_JOB_STATUS: "${{ job.status }}" }
+        run: node scripts/release/write-workflow-result.mjs --output publication/publish-next-result.json --job publish-next
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rendered-motion-1.0.0-publish-next-${{ github.run_id }}
+          path: publication
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 90
+
+  promote-latest:
+    needs: publish-next
+    environment: npm-promote-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    env:
+      INPUT_COMMIT: ${{ inputs.commit }}
+      INPUT_RELEASE_RUN_ID: ${{ inputs.release-run-id }}
+      INPUT_RELEASE_ARTIFACT: ${{ inputs.release-artifact }}
+      INPUT_CANDIDATE_DIGEST: ${{ inputs.candidate-manifest-sha256 }}
+      INPUT_RELEASE_DIGEST: ${{ inputs.release-manifest-sha256 }}
+      INPUT_RELEASE_SET_DIGEST: ${{ inputs.release-set-sha256 }}
+      INPUT_PUBLISH_APPROVAL: ${{ inputs.publish-approval-id }}
+      INPUT_PROMOTION_APPROVAL: ${{ inputs.promotion-approval-id }}
+      EXPECTED_LEDGER_DIGEST: ${{ needs.publish-next.outputs.ledger_digest }}
+      EXPECTED_EVIDENCE_DIGEST: ${{ needs.publish-next.outputs.consumer_evidence_digest }}
+      GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22.14.0, registry-url: "https://registry.npmjs.org", cache: npm }
+      - run: node scripts/release/validate-workflow-inputs.mjs authorize
+      - run: node scripts/release/checkout-authorized-commit.mjs
+      - run: node scripts/release/validate-workflow-inputs.mjs publish
+      - run: npm install --global npm@11.5.1
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/typescript/bin/tsc -p packages/certification/tsconfig.json
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.release-artifact }}
+          path: artifacts/final-release
+          run-id: ${{ inputs.release-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rendered-motion-1.0.0-publish-next-${{ github.run_id }}
+          path: publication
+      - name: Promote only after exact next consumers
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_SHORT_LIVED_DIST_TAG_TOKEN }}
+        run: |
+          node scripts/release/promote-dist-tags.mjs \
+            --release-root artifacts/final-release \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --expected-release-digest "$INPUT_RELEASE_DIGEST" \
+            --expected-release-set-digest "$INPUT_RELEASE_SET_DIGEST" \
+            --ledger publication/publish-next-ledger.json \
+            --expected-ledger-digest "$EXPECTED_LEDGER_DIGEST" \
+            --consumer-evidence publication/registry-consumer-evidence.json \
+            --expected-consumer-evidence-digest "$EXPECTED_EVIDENCE_DIGEST" \
+            --output publication/promote-latest-ledger.json \
+            --from next --to latest --execute --approval "$INPUT_PROMOTION_APPROVAL"
+      - run: |
+          node scripts/release/verify-registry.mjs \
+            --release-root artifacts/final-release \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --expected-release-digest "$INPUT_RELEASE_DIGEST" \
+            --expected-release-set-digest "$INPUT_RELEASE_SET_DIGEST" \
+            --tag latest
+      - if: always()
+        env: { WORKFLOW_JOB_STATUS: "${{ job.status }}" }
+        run: node scripts/release/write-workflow-result.mjs --output publication/promote-latest-result.json --job promote-latest
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rendered-motion-1.0.0-promote-latest-${{ github.run_id }}
+          path: |
+            publication/promote-latest-ledger.json
+            publication/promote-latest-result.json
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 90

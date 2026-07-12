@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "emitDeclarationOnly": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "tsBuildInfoFile": "dist/element.release.tsbuildinfo"
+  }
+}

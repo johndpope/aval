@@ -123,6 +123,8 @@ describe("CLI argument grammar", () => {
       project: "motion.json",
       output: "x.rma",
       force: false,
+      port: 4174,
+      open: false,
       json: false
     });
   });

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "1.0",
+  "releaseVersion": "1.0.0",
+  "wireFormatVersion": "0.1",
+  "projectSchemaVersion": "0.2",
+  "publicPackages": [
+    "@rendered-motion/graph",
+    "@rendered-motion/format",
+    "@rendered-motion/player-web",
+    "@rendered-motion/element",
+    "@rendered-motion/compiler"
+  ],
+  "registry": { "url": "https://registry.npmjs.org/" },
+  "toolchain": {
+    "minimumNode": "22.12.0",
+    "minimumNpm": "10.9.0",
+    "candidateNode": "22.12.0",
+    "candidateNpm": "10.9.0",
+    "typescript": "7.0.2",
+    "apiExtractor": "7.58.9",
+    "vitest": "4.1.10",
+    "playwright": "1.61.1"
+  },
+  "trustedPublishing": {
+    "minimumNode": "22.14.0",
+    "minimumNpm": "11.5.1",
+    "oidcOperations": ["publish", "stage-publish"],
+    "distTagPromotionRequiresSeparateShortLivedAuthorization": true
+  },
+  "ci": {
+    "operatingSystems": ["ubuntu-24.04", "macos-15", "windows-2025"],
+    "playwrightProjects": ["chromium", "firefox", "webkit"],
+    "playwrightBrowserManifestSha256": "ee39bc924bc3d1bd895626c2910f1292d109bbfeeb5abd113acb45e1951cc942",
+    "playwrightBrowsers": {
+      "chromium": { "revision": "1228", "engineVersion": "149.0.7827.55" },
+      "firefox": { "revision": "1532", "engineVersion": "151.0" },
+      "webkit": { "revision": "2311", "engineVersion": "26.5" }
+    },
+    "referenceRepetitions": 3,
+    "jobTimeoutMinutes": 45,
+    "artifactRetentionDays": 30
+  },
+  "namedProfiles": {
+    "requiredPlatformClasses": ["macos-26-apple-silicon", "windows-11-uhd620-or-better"],
+    "requiredBrowsersByPlatform": {
+      "macos-26-apple-silicon": ["Safari", "Chrome", "Firefox", "Microsoft Edge"],
+      "windows-11-uhd620-or-better": ["Chrome", "Microsoft Edge", "Firefox"]
+    },
+    "requiredRefreshMilliHz": [60000],
+    "conditionalRefreshMilliHz": 120000,
+    "requiredScenarioIds": [
+      "loop-1000",
+      "all-routes-1000",
+      "active-inverse-1000",
+      "portal-1000",
+      "rapid-input-10000",
+      "decoder-throughput-300",
+      "terminal-settlement"
+    ],
+    "repetitions": 3,
+    "minimumThroughputMillionths": 1500000
+  },
+  "limits": {
+    "maximumReportBytes": 16777216,
+    "maximumAttachmentBytes": 1073741824,
+    "maximumAttachments": 256,
+    "maximumFixtures": 4096,
+    "maximumMutationCases": 100000,
+    "maximumMutationInputBytes": 16777216,
+    "maximumRetainedFailures": 32
+  },
+  "allowedAttachmentMediaTypes": [
+    "application/json",
+    "application/jsonl",
+    "text/csv",
+    "text/plain",
+    "video/mp4",
+    "video/quicktime",
+    "application/vnd.rendered-motion.frame-ledger+json"
+  ],
+  "displayCaptureQualification": {
+    "qualifiedScanoutProviders": {},
+    "extractors": {
+      "rma-display-extractor": "1.0.0"
+    },
+    "operatorRoles": ["qualified-display-capture-operator"],
+    "reviewerIds": ["independent-display-reviewer-a", "independent-display-reviewer-b"]
+  },
+  "security": {
+    "maximumProductionSeverity": "moderate",
+    "allowedLicenses": ["0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "MIT", "MPL-2.0", "Unicode-3.0"]
+  },
+  "rollback": {
+    "previousKnownGood": "none",
+    "candidateDistTag": "next",
+    "releaseDistTag": "latest"
+  }
+}

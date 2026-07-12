@@ -1,0 +1,110 @@
+name: release-final
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit: { description: Current protected default-branch full commit SHA, required: true, type: string }
+      candidate-run-id: { description: Candidate workflow run ID, required: true, type: string }
+      candidate-artifact: { description: Exact candidate artifact name, required: true, type: string }
+      candidate-manifest-sha256: { description: Reviewed candidate manifest SHA-256, required: true, type: string }
+      report-run-id: { description: Protected release-reports workflow run ID, required: true, type: string }
+      report-artifact: { description: Exact closed release-reports artifact name, required: true, type: string }
+      report-index-sha256: { description: Reviewed report index SHA-256, required: true, type: string }
+      created-at: { description: Reviewed canonical UTC release timestamp, required: true, type: string }
+
+concurrency:
+  group: release-final-1.0.0
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  finalize:
+    environment: release-final
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    env:
+      INPUT_COMMIT: ${{ inputs.commit }}
+      INPUT_CANDIDATE_RUN_ID: ${{ inputs.candidate-run-id }}
+      INPUT_CANDIDATE_ARTIFACT: ${{ inputs.candidate-artifact }}
+      INPUT_CANDIDATE_DIGEST: ${{ inputs.candidate-manifest-sha256 }}
+      INPUT_REPORT_RUN_ID: ${{ inputs.report-run-id }}
+      INPUT_REPORT_ARTIFACT: ${{ inputs.report-artifact }}
+      INPUT_REPORT_INDEX_DIGEST: ${{ inputs.report-index-sha256 }}
+      INPUT_CREATED_AT: ${{ inputs.created-at }}
+      GITHUB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22.12.0, cache: npm }
+      - run: node scripts/release/validate-workflow-inputs.mjs authorize
+      - run: node scripts/release/checkout-authorized-commit.mjs
+      - run: node scripts/release/validate-workflow-inputs.mjs finalize
+      - run: npm ci --ignore-scripts
+      - run: node node_modules/typescript/bin/tsc -p packages/certification/tsconfig.json
+      - name: Bind candidate and reports to their exact protected source workflows
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/release/verify-workflow-run.mjs \
+            --run-id "$INPUT_CANDIDATE_RUN_ID" \
+            --expected-workflow .github/workflows/release-candidate.yml \
+            --expected-commit "$INPUT_COMMIT"
+          node scripts/release/verify-workflow-run.mjs \
+            --run-id "$INPUT_REPORT_RUN_ID" \
+            --expected-workflow .github/workflows/release-reports.yml \
+            --expected-commit "$INPUT_COMMIT"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.candidate-artifact }}
+          path: incoming/candidate
+          run-id: ${{ inputs.candidate-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ inputs.report-artifact }}
+          path: incoming/reports
+          run-id: ${{ inputs.report-run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Finalize without rebuilding candidate bytes
+        run: |
+          node scripts/release/finalize-release.mjs \
+            --candidate incoming/candidate/candidate-manifest.json \
+            --expected-commit "$INPUT_COMMIT" \
+            --expected-candidate-digest "$INPUT_CANDIDATE_DIGEST" \
+            --reports-root incoming/reports \
+            --report-index incoming/reports/index.json \
+            --expected-report-index-digest "$INPUT_REPORT_INDEX_DIGEST" \
+            --output artifacts/final-release \
+            --created-at "$INPUT_CREATED_AT"
+      - id: release_digest
+        run: node scripts/release/export-file-digest.mjs --path artifacts/final-release/release-manifest.json --key release_digest
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with: { subject-path: artifacts/final-release/** }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rendered-motion-1.0.0-release-${{ inputs.commit }}
+          path: artifacts/final-release
+          if-no-files-found: error
+          include-hidden-files: false
+          retention-days: 90
+      - if: always()
+        env: { WORKFLOW_JOB_STATUS: "${{ job.status }}" }
+        run: node scripts/release/write-workflow-result.mjs --output workflow-results/finalize.json --job finalize
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: rendered-motion-1.0.0-finalize-result-${{ github.run_id }}
+          path: workflow-results/finalize.json
+          if-no-files-found: warn
+          include-hidden-files: false
+          retention-days: 90

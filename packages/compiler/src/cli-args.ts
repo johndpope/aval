@@ -52,6 +52,8 @@ export interface DevCliArguments extends CliBaseArguments {
   readonly ffmpegPath?: string;
   readonly ffprobePath?: string;
   readonly force: boolean;
+  readonly port?: number;
+  readonly open?: boolean;
 }
 
 export interface HelpCliArguments {
@@ -77,13 +79,15 @@ const VALUE_FLAGS = new Set([
   "--alpha",
   "--frames",
   "--ffmpeg",
-  "--ffprobe"
+  "--ffprobe",
+  "--port"
 ]);
 
 const BOOLEAN_FLAGS = new Set([
   "--json",
   "--force",
-  "--normalize-vfr"
+  "--normalize-vfr",
+  "--open"
 ]);
 
 interface RawCommand {
@@ -287,7 +291,9 @@ function parseInit(raw: RawCommand): InitCliArguments {
 }
 
 function parseDev(raw: RawCommand): DevCliArguments {
-  allowFlags(raw, ["--out", "--ffmpeg", "--ffprobe", "--json", "--force"]);
+  allowFlags(raw, [
+    "--out", "--ffmpeg", "--ffprobe", "--port", "--json", "--force", "--open"
+  ]);
   const ffmpegPath = optionalToolPath(raw.values.get("--ffmpeg"), "--ffmpeg");
   const ffprobePath = optionalToolPath(raw.values.get("--ffprobe"), "--ffprobe");
   return Object.freeze({
@@ -297,8 +303,19 @@ function parseDev(raw: RawCommand): DevCliArguments {
     ...(ffmpegPath === undefined ? {} : { ffmpegPath }),
     ...(ffprobePath === undefined ? {} : { ffprobePath }),
     force: raw.booleans.has("--force"),
+    port: parsePort(raw.values.get("--port") ?? "4174"),
+    open: raw.booleans.has("--open"),
     json: raw.booleans.has("--json")
   });
+}
+
+function parsePort(value: string): number {
+  if (!/^[0-9]+$/u.test(value)) usage("--port must be an integer from 0 through 65535");
+  const port = Number(value);
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) {
+    usage("--port must be an integer from 0 through 65535");
+  }
+  return port;
 }
 
 function allowFlags(raw: RawCommand, allowed: readonly string[]): void {

@@ -28,7 +28,10 @@ import { BrowserAvcCandidateHub } from "./browser-avc-candidate-hub.js";
 import { BrowserAvcPlaybackSession } from "./browser-avc-playback-session.js";
 import { DecodeTimeline } from "./decode-timeline.js";
 import type { IntegratedCandidateAttemptContext } from "./integrated-player-contracts.js";
-import { createIntegratedActivationPresentation } from "./integrated-player-support.js";
+import {
+  createIntegratedActivationPresentation,
+  createIntegratedResumePresentation
+} from "./integrated-player-support.js";
 import { createInteractionCachePlan } from "./interaction-cache-plan.js";
 import type {
   AvcCandidateActivationInput,
@@ -76,6 +79,23 @@ afterEach(async () => {
 });
 
 describe("browser playback phase ownership", () => {
+  it("starts adjacent body preparation when static readiness resumes animated", async () => {
+    const harness = await BrowserSessionHarness.create({
+      activation: "resume",
+      requireScheduledBackground: true
+    });
+
+    expect(harness.activationBackgroundStarted).toBe(true);
+    expect(harness.tags()).toEqual(["body:idle:idle-body:0"]);
+    expect(harness.schedulerSnapshot()).toMatchObject({
+      ringSize: 5,
+      smoothSession: true
+    });
+    await expect(harness.tick()).resolves.toMatchObject({
+      presentation: { kind: "body", state: "idle", frameIndex: 1 }
+    });
+  });
+
   it("keeps intro/body identity adjacent in the real browser composition harness", async () => {
     const harness = await BrowserSessionHarness.create();
 
@@ -601,6 +621,7 @@ class BrowserSessionHarness {
   public readonly worker: PhaseWorker;
   public readonly renderer: PhaseRenderer;
   public readonly routeReady: boolean[] = [];
+  public readonly activationBackgroundStarted: boolean;
 
   readonly #catalog: RuntimeAssetCatalog;
   readonly #session: BrowserAvcPlaybackSession;
@@ -613,16 +634,20 @@ class BrowserSessionHarness {
     readonly graph: MotionGraphEngine;
     readonly worker: PhaseWorker;
     readonly renderer: PhaseRenderer;
+    readonly activationBackgroundStarted: boolean;
   }) {
     this.#catalog = options.catalog;
     this.#session = options.session;
     this.graph = options.graph;
     this.worker = options.worker;
     this.renderer = options.renderer;
+    this.activationBackgroundStarted = options.activationBackgroundStarted;
   }
 
   public static async create(options: {
     readonly completionStart?: "cut" | "finish";
+    readonly activation?: "initial" | "resume";
+    readonly requireScheduledBackground?: boolean;
   } = {}): Promise<BrowserSessionHarness> {
     const catalog = installRuntimeAssetCatalog(createBrowserPhaseAsset(options));
     const graph = new MotionGraphEngine();
@@ -657,11 +682,14 @@ class BrowserSessionHarness {
       interactionCache: cache,
       ringCapacity: 6
     });
+    const activationSnapshot = options.activation === "resume"
+      ? graph.beginStatic("visibility-suspended").snapshot
+      : installed.snapshot;
     const context: Readonly<IntegratedCandidateAttemptContext> = Object.freeze({
       catalog,
       candidate,
       inspection: inspected.inspection,
-      graphSnapshot: installed.snapshot,
+      graphSnapshot: activationSnapshot,
       hostMaxRuntimeBytes: null
     });
     const runtime = new AbortController();
@@ -689,11 +717,10 @@ class BrowserSessionHarness {
       clock: input.clock
     });
     const activation: Readonly<AvcCandidateActivationInput> = Object.freeze({
-      graphSnapshot: installed.snapshot,
-      expectedPresentation: createIntegratedActivationPresentation(
-        catalog.graph,
-        installed.snapshot
-      ),
+      graphSnapshot: activationSnapshot,
+      expectedPresentation: options.activation === "resume"
+        ? createIntegratedResumePresentation(catalog.graph, activationSnapshot)
+        : createIntegratedActivationPresentation(catalog.graph, activationSnapshot),
       scheduler,
       finalResourcePlan: resourcePlan,
       signal: runtime.signal,
@@ -708,18 +735,39 @@ class BrowserSessionHarness {
       activation,
       hub
     });
-    const harness = new BrowserSessionHarness({
-      catalog,
-      session,
-      graph,
-      worker,
-      renderer
-    });
-    session.synchronizeGraph(graph.beginAnimated());
-    session.drawInitial();
-    await session.settled();
-    openHarnesses.add(harness);
-    return harness;
+    const backgroundGate = options.requireScheduledBackground === true
+      ? worker.gateNextWait()
+      : null;
+    let activationBackgroundStarted = false;
+    try {
+      session.synchronizeGraph(options.activation === "resume"
+        ? graph.resumeAnimated()
+        : graph.beginAnimated());
+      session.drawInitial();
+      if (backgroundGate !== null) {
+        await resolvesWithin(backgroundGate.entered, 1_000,
+          "animated activation did not schedule adjacent body preparation");
+        activationBackgroundStarted = true;
+        backgroundGate.release();
+      }
+      await session.settled();
+      const harness = new BrowserSessionHarness({
+        catalog,
+        session,
+        graph,
+        worker,
+        renderer,
+        activationBackgroundStarted
+      });
+      openHarnesses.add(harness);
+      return harness;
+    } catch (error) {
+      backgroundGate?.release();
+      await session.dispose().catch(() => undefined);
+      await worker.dispose().catch(() => undefined);
+      catalog.dispose();
+      throw error;
+    }
   }
 
   public static async createAtBodyZero(options: {
@@ -1400,6 +1448,24 @@ function phaseCutEdge(id: string, from: string, to: string) {
     continuity: "cut" as const,
     targetRunwayFrames: 6
   };
+}
+
+async function resolvesWithin<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  message: string
+): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error(message)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
+  }
 }
 
 const PHASE_KEY_ACCESS_UNIT = Object.freeze([

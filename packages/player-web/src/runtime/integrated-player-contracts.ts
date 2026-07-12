@@ -139,6 +139,8 @@ export interface IntegratedPlaybackTraceState {
   readonly submitted: readonly Readonly<RuntimeMediaCursor>[];
   readonly selectedBoundary: string | null;
   readonly decodeLeadFrames: number | null;
+  /** Last pixels proven through the playback draw barrier, when available. */
+  readonly readbackTag?: string | null;
 }
 
 export interface IntegratedPreparedContentTick

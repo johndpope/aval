@@ -485,7 +485,9 @@ async function callHarness<T>(
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(message.text());
+    if (message.type() !== "error") return;
+    if (message.location().url.endsWith("/favicon.ico") && message.text().includes("404")) return;
+    errors.push(message.text());
   });
   page.on("pageerror", (error) => {
     errors.push(error.message);

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 import {
   parseCliArguments,
@@ -20,10 +22,15 @@ import {
   type CompileCommandDependencies
 } from "./commands/compile.js";
 import {
+  createCompileAdoptionSummary,
+  formatCompileAdoptionSummary
+} from "./adoption-summary.js";
+import {
   startDevCommand,
   type DevCommandDependencies
 } from "./commands/dev.js";
 import { runInitCommand } from "./commands/init.js";
+import { openDevServer, startDevServer } from "./commands/dev-server.js";
 import { runInspectCommand } from "./commands/inspect.js";
 import { runUnpackCommand } from "./commands/unpack.js";
 import { runValidateCommand } from "./commands/validate.js";
@@ -74,7 +81,7 @@ export async function runCli(
           io,
           arguments_.json,
           result,
-          `Compiled ${safe(result.outputPath)} (${String(result.bytes)} bytes, ${result.sha256})\nReport ${safe(result.reportPath)}`
+          `Compiled ${safe(result.outputPath)} (${String(result.bytes)} bytes, ${result.sha256})\nReport ${safe(result.reportPath)}\n${formatCompileAdoptionSummary(result.adoption)}`
         );
         return 0;
       }
@@ -114,40 +121,75 @@ export async function runCli(
         return 0;
       }
       case "dev": {
-        const session = await startDevCommand(arguments_, {
-          cwd,
-          ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
-          ...(runtime.devDebounceMs === undefined
-            ? {}
-            : { debounceMs: runtime.devDebounceMs }),
-          ...(runtime.devDependencies === undefined
-            ? {}
-            : { dependencies: runtime.devDependencies }),
-          onBuild: ({ sequence, result }) => {
-            outputResult(
-              io,
-              arguments_?.command === "dev" && arguments_.json,
-              {
-                command: "dev",
-                event: "build",
-                sequence,
-                outputPath: result.outputPath,
+        const server = await startDevServer({
+          assetPath: resolve(cwd, arguments_.output),
+          port: arguments_.port ?? 4174
+        });
+        outputResult(io, arguments_.json, {
+          command: "dev",
+          event: "listening",
+          url: server.url
+        }, `Dev playground ${server.url}`);
+        if (arguments_.open === true) openDevServer(server.url);
+        let session: Awaited<ReturnType<typeof startDevCommand>> | null = null;
+        try {
+          session = await startDevCommand(arguments_, {
+            cwd,
+            ...(runtime.signal === undefined ? {} : { signal: runtime.signal }),
+            ...(runtime.devDebounceMs === undefined
+              ? {}
+              : { debounceMs: runtime.devDebounceMs }),
+            ...(runtime.devDependencies === undefined
+              ? {}
+              : { dependencies: runtime.devDependencies }),
+            onBuild: ({ sequence, result }) => {
+              const adoption = createCompileAdoptionSummary(result);
+              server.publish({
+                generation: sequence,
                 bytes: result.bytes,
                 sha256: result.sha256,
-                warnings: result.warnings
-              },
-              `Build ${String(sequence)}: ${safe(result.outputPath)} (${String(result.bytes)} bytes)`
-            );
-          },
-          onFailure: ({ error }) => {
-            outputDiagnostic(
-              io,
-              arguments_?.command === "dev" && arguments_.json,
-              diagnosticFromError(error)
-            );
-          }
-        });
-        await session.closed;
+                warnings: result.warnings,
+                report: {
+                  frameRate: adoption.frameRate.text,
+                  units: adoption.units,
+                  geometry: adoption.geometry,
+                  alpha: adoption.alpha,
+                  continuityPassed: adoption.reports.continuityPassed,
+                  continuityCuts: adoption.reports.continuityCuts,
+                  strictStatics: adoption.reports.strictStatics,
+                  alphaAuditedFrames: adoption.reports.alphaAuditedFrames
+                }
+              });
+              outputResult(
+                io,
+                arguments_?.command === "dev" && arguments_.json,
+                {
+                  command: "dev",
+                  event: "build",
+                  sequence,
+                  outputPath: result.outputPath,
+                  bytes: result.bytes,
+                  sha256: result.sha256,
+                  warnings: result.warnings
+                },
+                `Build ${String(sequence)}: ${safe(result.outputPath)} (${String(result.bytes)} bytes)`
+              );
+            },
+            onFailure: ({ error }) => {
+              outputDiagnostic(
+                io,
+                arguments_?.command === "dev" && arguments_.json,
+                diagnosticFromError(error)
+              );
+            }
+          });
+          await Promise.race([session.closed, server.closed]);
+        } finally {
+          await Promise.allSettled([
+            session?.close() ?? Promise.resolve(),
+            server.close()
+          ]);
+        }
         return runtime.signal?.aborted === true ? 130 : 0;
       }
     }
@@ -216,7 +258,7 @@ export const HELP_TEXT = `Usage:
   rma validate <asset.rma> [--json]
   rma unpack <asset.rma> --out <empty-directory> [--json]
   rma init <directory> [--json]
-  rma dev <project.json> --out <asset.rma> [--force] [--json]
+  rma dev <project.json> --out <asset.rma> [--port <0-65535>] [--open] [--force] [--json]
 
 Common compile options: --ffmpeg <absolute-path> --ffprobe <absolute-path> --force --json`;
 
@@ -236,6 +278,14 @@ async function main(): Promise<void> {
 }
 
 const invokedPath = process.argv[1];
-if (invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href) {
+if (invokedPath !== undefined && isInvokedModule(invokedPath)) {
   await main();
+}
+
+function isInvokedModule(invokedPath: string): boolean {
+  try {
+    return realpathSync(invokedPath) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }

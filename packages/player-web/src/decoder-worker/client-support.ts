@@ -36,6 +36,7 @@ export interface ManagedDecoderWorkerFrame {
   readonly unitFrame: number;
   readonly timestamp: number;
   readonly duration: number;
+  readonly outputCallbackMicroseconds?: number;
   readonly decodedBytes: number;
   readonly closed: boolean;
   close(): void;
@@ -93,6 +94,7 @@ export class ManagedDecoderWorkerFrameImpl
   public readonly unitFrame: number;
   public readonly timestamp: number;
   public readonly duration: number;
+  public readonly outputCallbackMicroseconds: number;
   public readonly decodedBytes: number;
   readonly #release: () => void;
   #closed = false;
@@ -110,6 +112,7 @@ export class ManagedDecoderWorkerFrameImpl
     this.unitFrame = event.unitFrame;
     this.timestamp = event.timestamp;
     this.duration = event.duration;
+    this.outputCallbackMicroseconds = event.outputCallbackMicroseconds;
     this.decodedBytes = event.decodedBytes;
     this.#release = release;
   }

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex,nofollow">
+    <title>Rendered Motion certification harness</title>
+  </head>
+  <body>
+    <main id="certification-app" class="certification-shell">
+      <div class="certification-banner" data-certification-banner role="status">
+        Loading the certification harness…
+      </div>
+      <div class="certification-grid">
+        <section class="certification-panel" aria-labelledby="certification-title">
+          <h1 id="certification-title">Runtime evidence harness</h1>
+          <p>
+            This page records public-path functional and runtime inputs. A callback timestamp is
+            never presented as physical display or scan-out evidence.
+          </p>
+          <div class="certification-controls" aria-label="Certification controls">
+            <button type="button" data-action="run">Run public harness</button>
+            <button type="button" data-action="faults">Run resource/fault profile</button>
+            <button type="button" data-action="abort">Abort safely</button>
+            <button type="button" data-action="export">Export last report</button>
+          </div>
+          <p data-certification-status aria-live="polite">Initializing…</p>
+          <div class="certification-stage" data-certification-stage aria-label="Rendered Motion test stage"></div>
+        </section>
+        <section class="certification-panel" aria-labelledby="report-title">
+          <h2 id="report-title">Bounded canonical report</h2>
+          <pre data-certification-report aria-live="off">No report has been produced.</pre>
+        </section>
+      </div>
+    </main>
+    <script type="module" src="/src/certification/index.ts"></script>
+  </body>
+</html>
