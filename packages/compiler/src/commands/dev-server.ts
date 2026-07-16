@@ -9,7 +9,11 @@ import type { DevRequestAuthority } from "./dev-request-security.js";
 import { createDevServerRequestHandler } from "./dev-server-router.js";
 import { normalizePublishedBuild, type DevServerBuild } from "./dev-server-model.js";
 
-export type { DevServerBuild, DevServerReport } from "./dev-server-model.js";
+export type {
+  DevServerAsset,
+  DevServerBuild,
+  DevServerBuildReport
+} from "./dev-server-model.js";
 export { openDevServer, launchDevServerOpener } from "./dev-browser-opener.js";
 export { createBoundedReadAdmission, isResolvedPathWithinRoot, readOpenedFile, resolveRealPathWithinRoot } from "./dev-file-reader.js";
 export { createPackageModuleStore, findOwningPackageRoot, resolveCompilerPackageEntry } from "./dev-package-modules.js";
@@ -28,14 +32,14 @@ export interface DevServer {
 const MAX_CONCURRENT_MODULE_READS = 8;
 
 export async function startDevServer(options: Readonly<{
-  assetPath: string;
+  bundlePath: string;
   port?: number;
   host?: "127.0.0.1" | "::1";
   createHttpServer?: typeof createServer;
 }>): Promise<DevServer> {
   const host = options.host ?? "127.0.0.1";
   const port = options.port ?? 4174;
-  validateOptions(options.assetPath, host, port);
+  validateOptions(options.bundlePath, host, port);
   const modules = await createPackageModuleStore();
   const eventStreams = createDevEventStreamHub();
   const assetReads = createBoundedReadAdmission(1);
@@ -56,7 +60,7 @@ export async function startDevServer(options: Readonly<{
   let closeOperation: Promise<void> | null = null;
   const server = (options.createHttpServer ?? createServer)(createDevServerRequestHandler({
     sessionPath,
-    assetPath: options.assetPath,
+    bundlePath: options.bundlePath,
     authority: () => authority,
     current: () => current,
     eventStreams,
@@ -130,10 +134,10 @@ export async function startDevServer(options: Readonly<{
   }
 }
 
-function validateOptions(assetPath: string, host: string, port: number): void {
+function validateOptions(bundlePath: string, host: string, port: number): void {
   if (host !== "127.0.0.1" && host !== "::1") throw new CompilerError("CLI_USAGE", "Dev server host must be a loopback address");
   if (!Number.isSafeInteger(port) || port < 0 || port > 65_535) throw new CompilerError("CLI_USAGE", "Dev server port must be from 0 through 65535");
-  if (typeof assetPath !== "string" || assetPath.trim().length === 0 || assetPath.includes("\0")) throw new CompilerError("CLI_USAGE", "Dev server asset path must be a non-empty file path");
+  if (typeof bundlePath !== "string" || bundlePath.trim().length === 0 || bundlePath.includes("\0")) throw new CompilerError("CLI_USAGE", "Dev server bundle path must be a non-empty directory path");
 }
 
 async function bind(server: ReturnType<typeof createServer>, port: number, host: "127.0.0.1" | "::1"): Promise<void> {

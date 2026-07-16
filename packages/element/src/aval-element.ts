@@ -1,5 +1,5 @@
 import type {
-  BindingV01,
+  Binding,
   RuntimeReadiness,
   RuntimeReadinessResult,
   StaticReason
@@ -55,10 +55,6 @@ export function createAvalElementClass(
       if (previous !== next) this.#reconciler.configurationChanged(name);
     }
 
-    public get src(): string { return this.#attributes.src; }
-    public set src(value: string) { this.#attributes.src = value; }
-    public get integrity(): string { return this.#attributes.integrity; }
-    public set integrity(value: string) { this.#attributes.integrity = value; }
     public get crossOrigin(): AvalCrossOrigin { return this.#attributes.crossOrigin; }
     public set crossOrigin(value: AvalCrossOrigin) { this.#attributes.crossOrigin = value; }
     public get motion(): AvalMotion { return this.#attributes.motion; }
@@ -93,7 +89,7 @@ export function createAvalElementClass(
     public get effectivelyVisible(): boolean { return this.#reconciler.effectivelyVisible; }
     public get stateNames(): readonly string[] { return this.#reconciler.stateNames; }
     public get eventNames(): readonly string[] { return this.#reconciler.eventNames; }
-    public get inputBindings(): readonly Readonly<BindingV01>[] {
+    public get inputBindings(): readonly Readonly<Binding>[] {
       return this.#reconciler.inputBindings;
     }
 

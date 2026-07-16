@@ -1,13 +1,13 @@
-import type { ReadinessV01 } from "@pixel-point/aval-format";
+import type { Readiness } from "@pixel-point/aval-format";
 
 import { CompilerError } from "../diagnostics.js";
-import type { SourceProjectV01 } from "../model.js";
+import type { SourceProject } from "../model.js";
 
 /** Derive the minimal route set required before animated initial readiness. */
 export function deriveReadiness(project: Pick<
-  SourceProjectV01,
+  SourceProject,
   "initialState" | "states" | "edges"
->): ReadinessV01 {
+>): Readiness {
   const states = new Map(project.states.map((state) => [state.id, state]));
   const initial = states.get(project.initialState);
   if (initial === undefined) {

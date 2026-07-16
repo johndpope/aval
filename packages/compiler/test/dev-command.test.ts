@@ -6,7 +6,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { startDevCommand, type WatchHandle } from "../src/commands/dev.js";
 import { CompilerError } from "../src/diagnostics.js";
-import type { CompileArtifact, ProjectArtifactOptions } from "../src/model.js";
+import type {
+  CompileBundleArtifact,
+  ProjectArtifactOptions
+} from "../src/model.js";
 
 const roots: string[] = [];
 
@@ -31,7 +34,7 @@ describe("dev single-flight watcher", () => {
     const session = await startDevCommand({
       command: "dev",
       project: "motion.json",
-      output: "motion.avl",
+      output: "motion",
       mediaTimeoutMs: 900_000,
       force: false,
       json: false
@@ -39,10 +42,10 @@ describe("dev single-flight watcher", () => {
       cwd: root,
       debounceMs: 100,
       dependencies: {
-        buildProjectArtifact: (options) => {
+        buildProjectBundleArtifact: (options) => {
           concurrent += 1;
           maximumConcurrent = Math.max(maximumConcurrent, concurrent);
-          return new Promise<Readonly<CompileArtifact>>((resolve) => {
+          return new Promise<Readonly<CompileBundleArtifact>>((resolve) => {
             const finish = <T>(operation: () => T): T => {
               concurrent -= 1;
               return operation();
@@ -96,7 +99,10 @@ describe("dev single-flight watcher", () => {
     expect(maximumConcurrent).toBe(1);
     expect(builds).toEqual([5]);
     expect(failures).toEqual([]);
-    expect((await readFile(join(root, "motion.avl")))[0]).toBe(3);
+    expect((await readFile(join(root, "motion", "h264.avl")))[0]).toBe(3);
+    expect(new Uint8Array(await readFile(join(root, "motion", "build.json")))).toEqual(
+      artifact(3).buildReportBytes
+    );
     expect(session.watchPaths().map((path) => path.split("/").at(-1)).sort()).toEqual([
       "motion.json",
       "render.mp4"
@@ -112,14 +118,14 @@ describe("dev single-flight watcher", () => {
     const session = await startDevCommand({
       command: "dev",
       project: "motion.json",
-      output: "motion.avl",
+      output: "motion",
       force: false,
       json: false
     }, {
       cwd: root,
       signal: controller.signal,
       dependencies: {
-        buildProjectArtifact: (options) => {
+        buildProjectBundleArtifact: (options) => {
           observedSignal = options.signal;
           return new Promise((_resolve, reject) => {
             options.signal?.addEventListener("abort", () => {
@@ -139,21 +145,21 @@ describe("dev single-flight watcher", () => {
     vi.useFakeTimers();
     const root = await createProject();
     const listeners = new Map<string, () => void>();
-    const pending: Array<(artifact: Readonly<CompileArtifact>) => void> = [];
+    const pending: Array<(artifact: Readonly<CompileBundleArtifact>) => void> = [];
     const published: number[] = [];
     const session = await startDevCommand({
       command: "dev",
       project: "motion.json",
-      output: "motion.avl",
+      output: "motion",
       force: false,
       json: false
     }, {
       cwd: root,
       debounceMs: 0,
       dependencies: {
-        buildProjectArtifact: () => new Promise((resolve) => pending.push(resolve)),
+        buildProjectBundleArtifact: () => new Promise((resolve) => pending.push(resolve)),
         publishArtifact: async (built, { outputPath }) => {
-          published.push(built.assetBytes[0]!);
+          published.push(built.assets[0]!.assetBytes[0]!);
           return resultFromArtifact(outputPath, built);
         },
         watchPath: (path, onChange) => {
@@ -186,7 +192,7 @@ describe("dev single-flight watcher", () => {
     const sourceBefore = await readFile(source);
     let compileCalls = 0;
     const dependencies = {
-      buildProjectArtifact: async () => {
+      buildProjectBundleArtifact: async () => {
         compileCalls += 1;
         return artifact();
       },
@@ -212,7 +218,7 @@ describe("dev single-flight watcher", () => {
 
 interface DeferredCompile {
   readonly options: ProjectArtifactOptions;
-  readonly resolve: (result: Readonly<CompileArtifact>) => void;
+  readonly resolve: (result: Readonly<CompileBundleArtifact>) => void;
 }
 
 async function createProject(): Promise<string> {
@@ -220,8 +226,8 @@ async function createProject(): Promise<string> {
   roots.push(root);
   await writeFile(join(root, "render.mp4"), "placeholder");
   await writeFile(join(root, "motion.json"), JSON.stringify({
-    projectVersion: "0.1",
-    profile: "avc-annexb-opaque-v0",
+    projectVersion: "1.0",
+    alpha: "opaque",
     canvas: {
       width: 32,
       height: 32,
@@ -236,11 +242,10 @@ async function createProject(): Promise<string> {
       path: "render.mp4",
       timing: { mode: "exact" }
     }],
-    renditions: [{
-      id: "opaque",
-      codedWidth: 32,
-      codedHeight: 32,
-      bitrate: { average: 300_000, peak: 600_000 }
+    encodings: [{
+      codec: "h264",
+      preset: "medium",
+      renditions: [{ id: "opaque", width: 32, height: 32, crf: 20 }]
     }],
     units: [{
       id: "body",
@@ -258,11 +263,37 @@ async function createProject(): Promise<string> {
   return root;
 }
 
-function artifact(marker = 4): Readonly<CompileArtifact> {
+function artifact(marker = 4): Readonly<CompileBundleArtifact> {
+  const assetBytes = new Uint8Array(10).fill(marker);
+  const sha256 = "b".repeat(64);
+  const type = 'application/vnd.aval; codecs="avc1.64001E"';
+  const integrity = `sha256-${Buffer.from(sha256, "hex").toString("base64")}`;
+  const reportedAsset = Object.freeze({
+    codec: "h264" as const,
+    path: "h264.avl",
+    bytes: assetBytes.byteLength,
+    sha256,
+    type,
+    integrity
+  });
   return Object.freeze({
-    assetBytes: new Uint8Array(10).fill(marker),
-    bytes: 10,
-    sha256: "b".repeat(64),
+    assets: Object.freeze([Object.freeze({
+      codec: "h264" as const,
+      filename: "h264.avl" as const,
+      assetBytes,
+      bytes: assetBytes.byteLength,
+      sha256,
+      manifest: Object.freeze({}) as unknown as CompileBundleArtifact["assets"][number]["manifest"],
+      invocations: Object.freeze([])
+    })]),
+    buildReport: Object.freeze({
+      reportVersion: "1.0" as const,
+      assets: Object.freeze([reportedAsset]),
+      sourceMarkup: `<source src="h264.avl" type='${type}' integrity="${integrity}">`
+    }),
+    buildReportBytes: new TextEncoder().encode(
+      JSON.stringify({ marker, reportVersion: "1.0" })
+    ),
     provenance: Object.freeze({
       executable: "/ffmpeg",
       executableSha256: "f".repeat(64),
@@ -279,24 +310,24 @@ function artifact(marker = 4): Readonly<CompileArtifact> {
       ffprobeVersionOutputSha256: "3".repeat(64),
       aggregateMemoryLimit: "derived"
     }),
-    warnings: Object.freeze([]),
-    buildDetails: Object.freeze({
-      detailsVersion: "0.2"
-    }) as unknown as CompileArtifact["buildDetails"]
+    warnings: Object.freeze([])
   });
 }
 
 function resultFromArtifact(
   outputPath: string,
-  built: Readonly<CompileArtifact>
+  built: Readonly<CompileBundleArtifact>
 ) {
   return Object.freeze({
     outputPath,
-    bytes: built.bytes,
-    sha256: built.sha256,
+    reportPath: join(outputPath, "build.json"),
+    assets: Object.freeze(built.buildReport.assets.map((asset) => Object.freeze({
+      ...asset,
+      path: join(outputPath, asset.path)
+    }))),
     provenance: built.provenance,
     warnings: built.warnings,
-    buildDetails: built.buildDetails
+    sourceMarkup: built.buildReport.sourceMarkup
   });
 }
 

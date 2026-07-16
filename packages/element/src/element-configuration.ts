@@ -3,8 +3,10 @@ import type {
   AvalBindings,
   AvalCrossOrigin,
   AvalFit,
-  AvalMotion
+  AvalMotion,
+  AvalSourceCandidate
 } from "./public-types.js";
+import type { ElementSourceCandidatesRead } from "./element-source-candidates.js";
 
 export const MAX_ELEMENT_URL_CODE_UNITS = 4_096;
 export const MAX_INTERACTION_ID_CODE_UNITS = 256;
@@ -14,8 +16,7 @@ const EXTERNAL_INTEGRITY_PATTERN = /^sha256-([A-Za-z0-9+/]{43})=$/u;
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 export interface ElementConfiguration {
-  readonly src: string;
-  readonly integrity: string;
+  readonly sourceCandidates: readonly Readonly<AvalSourceCandidate>[];
   readonly crossOrigin: AvalCrossOrigin;
   readonly motion: AvalMotion;
   readonly autoplay: AvalAutoplay;
@@ -49,9 +50,15 @@ export interface ElementConfigurationChangeSet {
 }
 
 export function readElementConfiguration(
-  getAttribute: (name: string) => string | null
+  getAttribute: (name: string) => string | null,
+  sourceRead: Readonly<ElementSourceCandidatesRead> = EMPTY_SOURCE_READ
 ): Readonly<ElementConfigurationRead> {
-  const failures: ElementConfigurationFailure[] = [];
+  const failures: ElementConfigurationFailure[] = sourceRead.failures.map((failure) =>
+    Object.freeze({
+      attribute: `source[${failure.sourceIndex}].${failure.attribute}`,
+      code: "invalid-configuration" as const
+    })
+  );
   const read = <T>(
     name: string,
     normalize: (value: string | null) => T,
@@ -68,8 +75,7 @@ export function readElementConfiguration(
     }
   };
   const configuration = Object.freeze({
-    src: read("src", (value) => normalizeBoundedString(value ?? "", "src"), ""),
-    integrity: read("integrity", (value) => normalizeIntegrity(value ?? ""), ""),
+    sourceCandidates: freezeSourceCandidates(sourceRead.candidates),
     crossOrigin: read("crossorigin", normalizeCrossOriginAttribute, "anonymous"),
     motion: read("motion", (value) => normalizeEnum(value ?? "auto", MOTIONS, "motion"), "auto"),
     autoplay: read(
@@ -101,7 +107,7 @@ export function diffElementConfiguration(
 ): Readonly<ElementConfigurationChangeSet> {
   if (previous === null) {
     return Object.freeze({
-      retrievalIdentity: next.src !== "",
+      retrievalIdentity: next.sourceCandidates.length > 0,
       motion: true,
       autoplay: true,
       fit: true,
@@ -113,8 +119,7 @@ export function diffElementConfiguration(
   }
   return Object.freeze({
     retrievalIdentity:
-      previous.src !== next.src ||
-      previous.integrity !== next.integrity ||
+      !sourceCandidatesEqual(previous.sourceCandidates, next.sourceCandidates) ||
       previous.crossOrigin !== next.crossOrigin,
     motion: previous.motion !== next.motion,
     autoplay: previous.autoplay !== next.autoplay,
@@ -126,13 +131,43 @@ export function diffElementConfiguration(
   });
 }
 
+function sourceCandidatesEqual(
+  previous: readonly Readonly<AvalSourceCandidate>[],
+  next: readonly Readonly<AvalSourceCandidate>[]
+): boolean {
+  if (previous.length !== next.length) return false;
+  return previous.every((candidate, index) => {
+    const other = next[index];
+    return other !== undefined &&
+      candidate.src === other.src &&
+      candidate.type === other.type &&
+      candidate.codec === other.codec &&
+      candidate.integrity === other.integrity;
+  });
+}
+
+function freezeSourceCandidates(
+  candidates: readonly Readonly<AvalSourceCandidate>[]
+): readonly Readonly<AvalSourceCandidate>[] {
+  return Object.freeze(candidates.map((candidate) => Object.freeze({
+    src: candidate.src,
+    type: candidate.type,
+    codec: candidate.codec,
+    integrity: candidate.integrity
+  })));
+}
+
 export function normalizeSource(value: unknown): string {
-  return normalizeBoundedString(value, "src");
+  const normalized = normalizeBoundedString(value, "src");
+  if (normalized.length === 0) throw new TypeError("src must not be empty");
+  if (/\0|[\u0001-\u001f\u007f]/u.test(normalized)) {
+    throw new TypeError("src contains control characters");
+  }
+  return normalized;
 }
 
 export function normalizeIntegrity(value: unknown): string {
   if (typeof value !== "string") throw new TypeError("integrity must be a string");
-  if (value === "") return "";
   if (value.length !== 51) {
     throw new TypeError("integrity must be canonical sha256 Base64 for 32 bytes");
   }
@@ -282,3 +317,8 @@ const BINDINGS: ReadonlySet<AvalBindings> = new Set([
   "auto",
   "none"
 ]);
+
+const EMPTY_SOURCE_READ: Readonly<ElementSourceCandidatesRead> = Object.freeze({
+  candidates: Object.freeze([]),
+  failures: Object.freeze([])
+});

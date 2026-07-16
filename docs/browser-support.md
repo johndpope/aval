@@ -4,10 +4,18 @@ Functional CI uses pinned Playwright Chromium, Firefox, and WebKit engines. It
 proves browser-path correctness and fallback-state behavior; it is not a
 branded Chrome, Edge, Firefox, or Safari certificate.
 
-The player probes the exact authored WebCodecs configuration and WebGL texture
-requirements. If a browser or GPU cannot allocate them, playback uses the
-host's external fallback/error path; it does not retry with a smaller canvas,
-rendition, cache, or frame rate.
+The player evaluates direct-child sources in author order. It validates each
+required codec hint and probes every otherwise-eligible authored rendition
+with `VideoDecoder.isConfigSupported()` inside the same module-worker
+environment used for decoding. It does not sniff the user agent or call media
+element `canPlayType()`.
+
+A deterministically unsupported codec/configuration advances to the next
+source. Network, CORS/CSP, integrity, malformed-asset, WebGL/resource, and
+general decoder failures are terminal for that generation and keep the host's
+external fallback visible. Within a file, renditions remain in authored
+quality order. The runtime never silently changes canvas size, frame rate, or
+active codec.
 
 <!-- BEGIN GENERATED SUPPORT -->
 | Profile | Host fallback | Runtime scheduling | Observed display |

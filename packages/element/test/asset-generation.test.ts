@@ -13,6 +13,21 @@ import type { ShadowLayerOwner } from "../src/shadow-layers.js";
 import type { AvalCleanupReceipt } from "../src/public-types.js";
 import { RuntimeAcquisitionCleanupError } from "../src/runtime-acquisition-error.js";
 
+const SOURCE_CANDIDATES = Object.freeze([
+  Object.freeze({
+    src: "asset.av1.avl",
+    type: 'application/vnd.aval; codecs="av01.0.08M.10"' as const,
+    codec: "av01.0.08M.10",
+    integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  }),
+  Object.freeze({
+    src: "asset.h264.avl",
+    type: 'application/vnd.aval; codecs="avc1.640028"' as const,
+    codec: "avc1.640028",
+    integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  })
+]);
+
 describe("ElementAssetGeneration", () => {
   it("does not reapply the motion policy captured by runtime construction", async () => {
     let policyCalls = 0;
@@ -38,6 +53,8 @@ describe("ElementAssetGeneration", () => {
     let disposals = 0;
     let publishCleanup: () => void = () => undefined;
     let capturedInitialPresentation: unknown;
+    let capturedSourceCandidates: unknown;
+    let capturedCredentials: unknown;
     const metadata: BrowserRuntimeMetadata = Object.freeze({
       initialState: "idle",
       stateNames: Object.freeze(["idle", "success"]),
@@ -95,8 +112,7 @@ describe("ElementAssetGeneration", () => {
       layers: {} as ShadowLayerOwner,
       elementGeneration: 1,
       generation: 1,
-      source: "asset.avl",
-      integrity: "",
+      sourceCandidates: SOURCE_CANDIDATES,
       credentials: "same-origin",
       motionPolicy: "auto",
       hostReducedMotion: false,
@@ -109,6 +125,8 @@ describe("ElementAssetGeneration", () => {
       },
       factory: async (input) => {
         capturedInitialPresentation = input.initialPresentation;
+        capturedSourceCandidates = input.sourceCandidates;
+        capturedCredentials = input.credentials;
         publishCleanup = () => input.cleanupSink(completeReceipt(1));
         input.onMetadata(metadata);
         return runtime;
@@ -143,6 +161,8 @@ describe("ElementAssetGeneration", () => {
       devicePixelRatio: 2,
       fit: "cover"
     });
+    expect(capturedSourceCandidates).toBe(SOURCE_CANDIDATES);
+    expect(capturedCredentials).toBe("same-origin");
     expect(generation.canSend("request.success")).toBe(true);
     expect(generation.send("request.success")).toBe(true);
     await generation.setState("success");
@@ -205,8 +225,7 @@ describe("ElementAssetGeneration", () => {
       layers: {} as ShadowLayerOwner,
       elementGeneration: 1,
       generation: 1,
-      source: "asset.avl",
-      integrity: "",
+      sourceCandidates: SOURCE_CANDIDATES,
       credentials: "same-origin",
       motionPolicy: "auto",
       hostReducedMotion: false,
@@ -401,8 +420,7 @@ function testGeneration(
     layers: {} as ShadowLayerOwner,
     elementGeneration: 1,
     generation: 1,
-    source: "asset.avl",
-    integrity: "",
+    sourceCandidates: SOURCE_CANDIDATES,
     credentials: "same-origin",
     motionPolicy: "auto",
     hostReducedMotion: false,

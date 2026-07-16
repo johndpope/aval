@@ -1,6 +1,6 @@
 import {
-  ACCESS_UNIT_INDEX_HEADER_LENGTH,
-  ACCESS_UNIT_RECORD_LENGTH,
+  CHUNK_INDEX_HEADER_LENGTH,
+  CHUNK_INDEX_RECORD_LENGTH,
   FORMAT_DEFAULT_BUDGETS,
   FORMAT_HEADER_LENGTH,
   FORMAT_MAGIC,
@@ -43,7 +43,7 @@ function fail(message: string, offset: number): never {
 function assertMagic(bytes: Uint8Array): void {
   for (let index = 0; index < FORMAT_MAGIC.length; index += 1) {
     if (bytes[index] !== FORMAT_MAGIC[index]) {
-      fail("format magic does not match AVLF 0.1", index);
+      fail("format magic does not match AVLF 1.0", index);
     }
   }
 }
@@ -67,7 +67,7 @@ function validateHeaderShape(
   if (header.requiredFeatureFlags !== 0) {
     throw new FormatError(
       "FEATURE_UNSUPPORTED",
-      "required feature flags are unsupported in format 0.1",
+      "required feature flags are unsupported in format 1.0",
       { offset: 16 }
     );
   }
@@ -100,20 +100,20 @@ function validateHeaderShape(
     fail(`index offset must be ${expectedIndexOffset}`, 48);
   }
   if (
-    header.indexLength < ACCESS_UNIT_INDEX_HEADER_LENGTH ||
-    (header.indexLength - ACCESS_UNIT_INDEX_HEADER_LENGTH) %
-      ACCESS_UNIT_RECORD_LENGTH !==
+    header.indexLength < CHUNK_INDEX_HEADER_LENGTH ||
+    (header.indexLength - CHUNK_INDEX_HEADER_LENGTH) %
+      CHUNK_INDEX_RECORD_LENGTH !==
       0
   ) {
     fail("index length does not encode whole access-unit records", 56);
   }
-  const sampleCount =
-    (header.indexLength - ACCESS_UNIT_INDEX_HEADER_LENGTH) /
-    ACCESS_UNIT_RECORD_LENGTH;
-  if (sampleCount > budgets.maxSampleRecords) {
+  const chunkCount =
+    (header.indexLength - CHUNK_INDEX_HEADER_LENGTH) /
+    CHUNK_INDEX_RECORD_LENGTH;
+  if (chunkCount > budgets.maxChunkRecords) {
     throw new FormatError(
       "BUDGET_EXCEEDED",
-      `sample record count exceeds the active limit of ${budgets.maxSampleRecords}`,
+      `chunk record count exceeds the active limit of ${budgets.maxChunkRecords}`,
       { offset: 56 }
     );
   }
@@ -137,7 +137,7 @@ function validateHeaderShape(
   }
 }
 
-/** Decodes and validates the exact 64-byte version-0.1 header. */
+/** Decodes and validates the exact 64-byte version-1.0 header. */
 export function parseHeader(
   bytes: Uint8Array,
   options?: FormatOptions
@@ -240,7 +240,7 @@ export function parseHeader(
   }
 }
 
-/** Encodes one canonical version-0.1 header into a new 64-byte array. */
+/** Encodes one canonical version-1.0 header into a new 64-byte array. */
 export function encodeHeader(
   header: FormatHeader,
   options?: FormatOptions
@@ -314,5 +314,5 @@ export function encodeHeader(
 }
 
 export const MINIMUM_CANONICAL_FILE_LENGTH =
-  FORMAT_HEADER_LENGTH + ACCESS_UNIT_INDEX_HEADER_LENGTH;
+  FORMAT_HEADER_LENGTH + CHUNK_INDEX_HEADER_LENGTH;
 export const MAXIMUM_DEFAULT_FILE_LENGTH = FORMAT_DEFAULT_BUDGETS.maxFileBytes;

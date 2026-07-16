@@ -8,7 +8,7 @@ import {
 } from "node:path";
 import { cwd } from "node:process";
 
-import { deriveAvcRenditionGeometryFromVisible } from "@pixel-point/aval-format";
+import { deriveVideoRenditionGeometry } from "@pixel-point/aval-format";
 
 import { CompilerError } from "../diagnostics.js";
 import {
@@ -18,12 +18,14 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   MAX_PROCESS_STDERR_BYTES,
-  type ToolProvenance
+  type ToolProvenance,
+  type VideoCodec
 } from "../model.js";
 import { runBoundedProcess } from "../process-runner.js";
 import { sha256Hex } from "../compile/hash.js";
-import { packRgbaToPlanarYuv420 } from "../compile/packed-yuv420.js";
-import { createEncodeAvcUnitInvocation } from "./encode-unit.js";
+import { convertRgba16ToYuv420 } from "../compile/rgba16-to-yuv420.js";
+import { composeVideoSurfaceRgba16 } from "../compile/video-surface-rgba16.js";
+import { createEncodeVideoUnitInvocation } from "./video-encode-unit.js";
 
 const VERSION_OUTPUT_LIMIT = 256 * 1024;
 const ENCODERS_OUTPUT_LIMIT = 512 * 1024;
@@ -40,7 +42,8 @@ export const FFPROBE_VERSION_ARGUMENTS = Object.freeze(["-version"] as const);
 export async function discoverFfmpeg(
   executable?: string,
   signal?: AbortSignal,
-  ffprobeExecutable?: string
+  ffprobeExecutable?: string,
+  requestedCodecs: readonly VideoCodec[] = Object.freeze(["h264"])
 ): Promise<Readonly<ToolProvenance>> {
   const ffmpeg = await resolveExecutable(
     executable,
@@ -78,16 +81,7 @@ export async function discoverFfmpeg(
     );
   }
   const encoders = new TextDecoder().decode(encodersResult.stdout);
-  if (
-    !configurationLine.includes("--enable-libx264") ||
-    !/(?:^|\s)libx264(?:\s|$)/mu.test(encoders)
-  ) {
-    throw new CompilerError(
-      "FFMPEG_UNSUPPORTED",
-      "FFmpeg does not expose the required libx264 encoder",
-      { hint: "Install an FFmpeg build configured with --enable-libx264." }
-    );
-  }
+  validateRequestedEncoders(requestedCodecs, encoders);
   const calibrationSha256 = await runCalibration(ffmpeg, signal);
   const [finalFfmpeg, finalFfprobe] = await Promise.all([
     fingerprintRegularFile(ffmpeg, MAX_TOOL_BYTES, "FFmpeg executable", signal),
@@ -111,6 +105,36 @@ export async function discoverFfmpeg(
     ffprobeVersionOutputSha256: sha256Hex(probeVersion.stdout),
     aggregateMemoryLimit: "derived"
   });
+}
+
+function validateRequestedEncoders(
+  requested: readonly VideoCodec[],
+  encoders: string
+): void {
+  if (requested.length < 1) {
+    throw new CompilerError("INPUT_INVALID", "At least one output codec is required");
+  }
+  const encoderByCodec = Object.freeze({
+    h264: "libx264",
+    h265: "libx265",
+    vp9: "libvpx-vp9",
+    av1: "libaom-av1"
+  } satisfies Readonly<Record<VideoCodec, string>>);
+  const seen = new Set<VideoCodec>();
+  for (const codec of requested) {
+    if (seen.has(codec)) {
+      throw new CompilerError("INPUT_INVALID", "Requested output codecs are invalid or duplicated");
+    }
+    seen.add(codec);
+    const encoder = encoderByCodec[codec];
+    if (!new RegExp(`(?:^|\\s)${encoder}(?:\\s|$)`, "mu").test(encoders)) {
+      throw new CompilerError(
+        "FFMPEG_UNSUPPORTED",
+        `FFmpeg does not expose the requested ${encoder} encoder`,
+        { hint: `Install an FFmpeg build that enables ${encoder}.` }
+      );
+    }
+  }
 }
 
 /** Re-prove the effective encoder and both exact tool identities after use. */
@@ -178,7 +202,7 @@ async function runCalibration(
   executable: string,
   signal?: AbortSignal
 ): Promise<string> {
-  const calibration = createCalibrationPayload(executable);
+  const calibration = createCalibrationPayload();
   const result = await runBoundedProcess({
     executable,
     arguments: calibration.invocation.arguments,
@@ -195,58 +219,61 @@ async function runCalibration(
   return sha256Hex(result.stdout);
 }
 
-export function createCalibrationInvocation(executable = "ffmpeg") {
-  return createCalibrationPayload(executable).invocation;
+export function createCalibrationInvocation() {
+  return createCalibrationPayload().invocation;
 }
 
 /** Build deterministic compiler-packed bytes for the exact production encoder. */
-function createCalibrationPayload(executable: string) {
-  const geometry = deriveAvcRenditionGeometryFromVisible({
+function createCalibrationPayload() {
+  const geometry = deriveVideoRenditionGeometry({
     canvasWidth: 15,
     canvasHeight: 17,
-    profile: "avc-annexb-packed-alpha-v0",
+    layout: "packed-alpha",
     visibleWidth: 15,
-    visibleHeight: 17
+    visibleHeight: 17,
+    storage: { widthAlignment: 2, heightAlignment: 2 }
   });
   const packed = Array.from({ length: 2 }, (_, frame) => {
-    const rgba = new Uint8Array(15 * 17 * 4);
+    const rgba = new Uint16Array(15 * 17 * 4);
     for (let pixel = 0; pixel < 15 * 17; pixel += 1) {
       const offset = pixel * 4;
-      rgba[offset] = (pixel * 17 + frame * 31) & 0xff;
-      rgba[offset + 1] = (pixel * 7 + frame * 47) & 0xff;
-      rgba[offset + 2] = (pixel * 3 + frame * 59) & 0xff;
-      rgba[offset + 3] = (pixel * 11 + frame * 73) & 0xff;
+      rgba[offset] = ((pixel * 17 + frame * 31) & 0xff) * 257;
+      rgba[offset + 1] = ((pixel * 7 + frame * 47) & 0xff) * 257;
+      rgba[offset + 2] = ((pixel * 3 + frame * 59) & 0xff) * 257;
+      rgba[offset + 3] = ((pixel * 11 + frame * 73) & 0xff) * 257;
     }
-    return packRgbaToPlanarYuv420({ geometry, rgba }).data;
+    return convertRgba16ToYuv420(
+      composeVideoSurfaceRgba16(rgba, geometry),
+      { width: geometry.codedWidth, height: geometry.codedHeight, bitDepth: 8 }
+    );
   });
   const frameBytes = packed[0]!.byteLength;
   const bytes = new Uint8Array(frameBytes * packed.length);
   packed.forEach((frame, index) => bytes.set(frame, index * frameBytes));
-  const invocation = createEncodeAvcUnitInvocation({
+  const rendition = Object.freeze({
+    id: "calibration",
+    width: 15,
+    height: 17,
+    crf: 23
+  });
+  const invocation = createEncodeVideoUnitInvocation({
     source: {
-      type: "raw-yuv420p",
       path: join(cwd(), "aval-compiler-packed-calibration.yuv"),
       width: geometry.codedWidth,
       height: geometry.codedHeight,
+      bitDepth: 8,
       frameRate: { numerator: 30, denominator: 1 },
       frameBytes
     },
     startFrame: 0,
     endFrame: 2,
-    codedWidth: geometry.codedWidth,
-    codedHeight: geometry.codedHeight,
-    decodedStorageRect: geometry.decodedStorageRect,
     encoding: {
       codec: "h264",
       preset: "medium",
-      legacyZeroLatency: true,
-      rateControl: {
-        mode: "abr",
-        averageBitrate: 300_000,
-        maxBitrate: 600_000
-      }
+      renditions: Object.freeze([rendition])
     },
-    executable
+    rendition,
+    geometry
   });
   return Object.freeze({ invocation, bytes });
 }

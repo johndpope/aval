@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -5,49 +6,79 @@ import { expect, test } from "@playwright/test";
 import type { AvalElement } from "@pixel-point/aval-element";
 import { parseFrontIndex } from "@pixel-point/aval-format";
 
-const ASSET_PATH = resolve(
-  "examples/grass-rabbit/public/grass-rabbit.avl"
-);
+const BUNDLE_PATH = resolve("examples/grass-rabbit/public/grass-rabbit");
 const PROJECT_PATH = resolve("examples/grass-rabbit/motion.json");
-const BUILD_REPORT_PATH = resolve(
-  "examples/grass-rabbit/public/grass-rabbit.avl.build.json"
+const SOURCE_PATH = resolve(
+  "examples/grass-rabbit/source/grass-test-with-intro.mp4"
 );
+const INDEX_PATH = resolve("examples/grass-rabbit/index.html");
+const BUILD_REPORT_PATH = resolve(BUNDLE_PATH, "build.json");
+const CODECS = ["av1", "vp9", "h265", "h264"] as const;
 
 test("preserves the authored 1280x720 graph and exact frame ranges", async () => {
   const project = JSON.parse(await readFile(PROJECT_PATH, "utf8")) as {
     sources: { path: string }[];
-    renditions: {
-      encoding: {
-        codec: string;
-        preset: string;
-        rateControl: {
-          mode: string;
-          crf: number;
-          maxBitrate: number;
-        };
-      };
-    }[];
+    encodings: unknown[];
     units: { id: string; range: [number, number] }[];
   };
   const report = JSON.parse(await readFile(BUILD_REPORT_PATH, "utf8")) as {
+    reportVersion: string;
     warnings: string[];
-    buildDetails: {
-      accessUnits: number;
-      sources: {
-        frameCount: number;
-        normalization: { projectFrameCount: number };
-        inputFiles: { bytes: number; path: string; sha256: string }[];
-      }[];
-      continuity: { name: string; status: string }[];
-      invocations: {
-        arguments: string[];
-        operation: string;
-        tool: string;
-      }[];
-    };
+    encodings: unknown[];
+    assets: {
+      bytes: number;
+      codec: typeof CODECS[number];
+      codecString: string;
+      integrity: string;
+      path: string;
+      sha256: string;
+      type: string;
+    }[];
+    sourceMarkup: string;
+    invocations: {
+      arguments: string[];
+      operation: string;
+      tool: string;
+    }[];
   };
-  const assetBytes = new Uint8Array(await readFile(ASSET_PATH));
-  const front = parseFrontIndex(assetBytes);
+  const sourceBytes = new Uint8Array(await readFile(SOURCE_PATH));
+  const html = await readFile(INDEX_PATH, "utf8");
+  const fronts = new Map<typeof CODECS[number], ReturnType<typeof parseFrontIndex>>();
+  const assetLengths = new Map<typeof CODECS[number], number>();
+
+  expect(report.reportVersion).toBe("1.0");
+  expect(report.assets.map(({ codec, path }) => ({ codec, path }))).toEqual(
+    CODECS.map((codec) => ({ codec, path: `${codec}.avl` }))
+  );
+  expect(report.sourceMarkup).toBe(report.assets.map((asset) =>
+    `<source src="${asset.path}" type='${asset.type}' integrity="${asset.integrity}">`
+  ).join("\n"));
+  for (const asset of report.assets) {
+    const bytes = new Uint8Array(await readFile(resolve(BUNDLE_PATH, asset.path)));
+    const frontIndex = parseFrontIndex(bytes);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    const integrity = `sha256-${createHash("sha256")
+      .update(bytes).digest("base64")}`;
+    const sourceElement = `<source src="%BASE_URL%grass-rabbit/${asset.path}" ` +
+      `type='${asset.type}' integrity="${asset.integrity}">`;
+
+    expect(bytes.subarray(0, 4)).toEqual(new Uint8Array([65, 86, 76, 70]));
+    expect(bytes.byteLength).toBe(asset.bytes);
+    expect(digest).toBe(asset.sha256);
+    expect(integrity).toBe(asset.integrity);
+    expect(frontIndex.header.declaredFileLength).toBe(asset.bytes);
+    expect(frontIndex.manifest.codec).toBe(asset.codec);
+    expect(frontIndex.manifest.renditions[0]?.codec).toBe(asset.codecString);
+    expect(asset.type).toBe(
+      `application/vnd.aval; codecs="${asset.codecString}"`
+    );
+    expect(html).toContain(sourceElement);
+    fronts.set(asset.codec, frontIndex);
+    assetLengths.set(asset.codec, bytes.byteLength);
+  }
+
+  const front = fronts.get("h264");
+  if (front === undefined) throw new Error("Missing compiled H.264 asset");
   const manifest = front.manifest;
   const units = new Map(manifest.units.map((unit) => [unit.id, unit]));
   const rendition = manifest.renditions[0];
@@ -61,60 +92,60 @@ test("preserves the authored 1280x720 graph and exact frame ranges", async () =>
   expect("staticFrames" in manifest).toBe(false);
   expect("fallback" in manifest).toBe(false);
   expect("staticBlobs" in front).toBe(false);
-  expect("statics" in report.buildDetails).toBe(false);
-  expect("staticPayloadBytes" in report.buildDetails).toBe(false);
   expect(Math.max(...front.unitBlobs.map(({ offset, length }) =>
     offset + length
-  ))).toBe(assetBytes.byteLength);
+  ))).toBe(assetLengths.get("h264"));
   expect(project.sources.map(({ path }) => path)).toEqual([
     "source/grass-test-with-intro.mp4"
   ]);
-  expect(report.buildDetails.sources[0]?.inputFiles).toEqual([
-    expect.objectContaining({
-      bytes: 7_321_326,
-      path: "source/grass-test-with-intro.mp4",
-      sha256: "546acee64cc36c13f8765e215a0a20fb5742026c57364c59560fa86bb68988b1"
-    })
-  ]);
-  expect(report.buildDetails.sources[0]).toMatchObject({
-    frameCount: 311,
-    normalization: { projectFrameCount: 311 }
-  });
-  expect(report.buildDetails.accessUnits).toBe(311);
-  expect(project.renditions[0]?.encoding).toEqual({
-    codec: "h264",
-    preset: "veryslow",
-    rateControl: {
-      mode: "crf",
-      crf: 30,
-      maxBitrate: 10000000
+  expect(sourceBytes.byteLength).toBe(7_321_326);
+  expect(createHash("sha256").update(sourceBytes).digest("hex")).toBe(
+    "546acee64cc36c13f8765e215a0a20fb5742026c57364c59560fa86bb68988b1"
+  );
+  expect(report.encodings).toEqual([
+    {
+      bitDepth: 8,
+      codec: "av1",
+      cpuUsed: 6,
+      renditions: [{ crf: 36, height: 360, id: "video.1x", width: 640 }],
+      rowMt: true,
+      threads: 8,
+      tiles: { columns: 2, rows: 2 }
+    },
+    {
+      codec: "vp9",
+      cpuUsed: 4,
+      deadline: "good",
+      renditions: [{ crf: 38, height: 360, id: "video.1x", width: 640 }],
+      threads: 8
+    },
+    {
+      codec: "h265",
+      preset: "medium",
+      renditions: [{ crf: 30, height: 360, id: "video.1x", width: 640 }],
+      threads: 8
+    },
+    {
+      codec: "h264",
+      preset: "medium",
+      renditions: [{ crf: 26, height: 360, id: "video.1x", width: 640 }]
     }
-  });
-  const encodeInvocations = report.buildDetails.invocations.filter(
-    ({ operation }) => operation.startsWith("encode:avc.1x:")
+  ]);
+  const encodeInvocations = report.invocations.filter(
+    ({ operation }) => operation.startsWith("h264:video.1x:") &&
+      operation.endsWith(":encode")
   );
   expect(encodeInvocations).toHaveLength(5);
   for (const invocation of encodeInvocations) {
     expect(invocation.tool).toBe("ffmpeg");
     expect(invocation.arguments).toEqual(expect.arrayContaining([
       "-preset",
-      "veryslow",
+      "medium",
       "-crf",
-      "30",
-      "-maxrate",
-      "10000000",
-      "-bufsize",
-      "10000000"
+      "26"
     ]));
     expect(invocation.arguments).not.toContain("-b:v");
   }
-  expect(report.buildDetails.continuity
-    .filter(({ status }) => status === "review")
-    .map(({ name }) => name))
-    .toEqual([]);
-  expect(report.buildDetails.continuity).toEqual(expect.arrayContaining([
-    expect.objectContaining({ name: "intro intro", status: "pass" })
-  ]));
   expect(report.warnings).toEqual([]);
   expect(project.units.map(({ id, range }) => ({ id, range }))).toEqual([
     { id: "intro", range: [0, 30] },
@@ -124,11 +155,12 @@ test("preserves the authored 1280x720 graph and exact frame ranges", async () =>
     { id: "hover-out", range: [263, 311] }
   ]);
   expect(rendition).toMatchObject({
-    id: "avc.1x",
-    profile: "avc-annexb-opaque-v1",
-    codedWidth: 1280,
-    codedHeight: 720,
-    alphaLayout: { colorRect: [0, 0, 1280, 720] }
+    id: "video.1x",
+    codec: "avc1.64001E",
+    bitDepth: 8,
+    codedWidth: 640,
+    codedHeight: 368,
+    alphaLayout: { type: "opaque", colorRect: [0, 0, 640, 360] }
   });
   expect(units.get("idle-loop")).toMatchObject({
     kind: "body",
@@ -215,6 +247,19 @@ test("preserves the authored 1280x720 graph and exact frame ranges", async () =>
     { source: "engagement.off", event: "hover.leave" },
     { source: "engagement.on", event: "hover.enter" }
   ]);
+  for (const codec of CODECS) {
+    const candidate = fronts.get(codec);
+    if (candidate === undefined) throw new Error(`Missing compiled ${codec} asset`);
+    expect(candidate.manifest.canvas).toEqual(manifest.canvas);
+    expect(candidate.manifest.frameRate).toEqual(manifest.frameRate);
+    expect(candidate.manifest.units.map(({ chunks: _chunks, ...unit }) => unit))
+      .toEqual(manifest.units.map(({ chunks: _chunks, ...unit }) => unit));
+    expect(candidate.manifest.states).toEqual(manifest.states);
+    expect(candidate.manifest.edges).toEqual(manifest.edges);
+    expect(candidate.manifest.bindings).toEqual(manifest.bindings);
+    expect(candidate.manifest.readiness).toEqual(manifest.readiness);
+    expect(candidate.graph).toEqual(front.graph);
+  }
 });
 
 test("reports the authored phase that is actually displayed", async ({
@@ -272,7 +317,7 @@ test("keeps the interaction hotspot hidden until the video is rendered", async (
     releaseAsset = resolve;
   });
 
-  await page.route("**/grass-rabbit.avl", async (route) => {
+  await page.route("**/grass-rabbit/*.avl", async (route) => {
     await assetHeld;
     await route.continue();
   });
@@ -620,7 +665,7 @@ test("plays hover-out directly after hover-in when the pointer leaves early", as
   const assetGate = new Promise<void>((resolveGate) => {
     releaseAsset = resolveGate;
   });
-  await page.route("**/grass-rabbit.avl", async (route) => {
+  await page.route("**/grass-rabbit/*.avl", async (route) => {
     await assetGate;
     await route.continue();
   });

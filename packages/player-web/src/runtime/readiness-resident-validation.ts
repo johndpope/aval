@@ -1,7 +1,7 @@
 import type {
-  CompiledManifestV01,
-  ResidencyEndpointV01,
-  UnitV01
+  CompiledManifest,
+  ResidencyEndpoint,
+  Unit
 } from "@pixel-point/aval-format";
 
 import { endpointEvidenceKey } from "./readiness-evidence-index.js";
@@ -14,7 +14,7 @@ import type {
 } from "./readiness-evaluator-types.js";
 
 export function verifyReversibleUnits(
-  manifest: Readonly<CompiledManifestV01>,
+  manifest: Readonly<CompiledManifest>,
   endpoints: ReadonlyMap<string, Readonly<EndpointRecoveryEvidence>>,
   inverses: ReadonlyMap<string, Readonly<InverseReadinessEvidence>>,
   collector: ReadinessFailureCollector
@@ -73,8 +73,8 @@ export function verifyInitialRing(
 }
 
 function verifyEndpoint(
-  unit: Extract<UnitV01, { readonly kind: "reversible" }>,
-  endpoint: Readonly<ResidencyEndpointV01>,
+  unit: Extract<Unit, { readonly kind: "reversible" }>,
+  endpoint: Readonly<ResidencyEndpoint>,
   evidence: Readonly<EndpointRecoveryEvidence> | undefined,
   collector: ReadinessFailureCollector
 ): void {

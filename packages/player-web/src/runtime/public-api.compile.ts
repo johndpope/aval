@@ -6,7 +6,7 @@ import type { ValidatedAssetLayout } from "@pixel-point/aval-format";
 
 import {
   RUNTIME_TRACE_CAPACITY,
-  AvcCandidateFactory,
+  VideoCandidateFactory,
   BrowserContextRecovery,
   BrowserFrameBackend,
   BrowserPresentationPlanes,
@@ -24,25 +24,21 @@ import {
   VisibilityPolicyCoordinator,
   PRESENTATION_FIT_MODES,
   computePresentationGeometry,
-  OpaqueCandidateFactory,
   RendererUploadTimeoutError,
   RuntimeAssetCatalog,
   RuntimePlaybackError,
   StateFallbackStore,
-  createBrowserAvcCandidateComposition,
-  createBrowserOpaqueCandidateComposition,
-  createAvcRenditionCandidates,
+  createBrowserVideoCandidateComposition,
+  createSourceSupportProbe,
   createPlayerRuntimeAssetSessionResources,
   createPlayerWebRuntimeResources,
   createRuntimePageResourcePolicy,
-  createOpaqueRenditionCandidates,
   installRuntimeAssetCatalog,
-  inspectAvcRenditionCandidate,
-  inspectOpaqueRenditionCandidate,
   normalizeRuntimeFailure,
   openRuntimeAsset,
   openRuntimeAssetBytes,
   parseExternalIntegrity,
+  selectVideoSource,
   summarizeStaticReason,
   translateGraphReadiness,
   type DecoderWorkerMetrics,
@@ -63,25 +59,17 @@ import {
   type PresentationGeometry,
   type PresentationGeometryInput,
   type PresentableFrameBackend,
-  type AvcCandidateFactoryOptions,
-  type BrowserAvcCandidateComposition,
-  type BrowserAvcCandidateCompositionOptions,
-  type BrowserAvcCandidateControls,
+  type BrowserVideoCandidateComposition,
+  type BrowserVideoCandidateCompositionOptions,
   type BrowserContextRecoverySnapshot,
   type BrowserFrameBackendOptions,
   type BrowserPresentationPlanesOptions,
   type BrowserCanvasBackingResourceHost,
   type BrowserPresentationPlanesSnapshot,
   type BrowserPresentationResizeInput,
-  type BrowserOpaqueCandidateComposition,
-  type BrowserOpaqueCandidateCompositionOptions,
-  type BrowserOpaqueCandidateControls,
-  type BrowserOpaqueFrameBackendOptions,
   type FrameRendererOptions,
   type FrameRendererSnapshot,
   type FrameRendererTimerHost,
-  type OpaqueFrameRendererTimerHost,
-  type OpaqueCandidateFactoryOptions,
   type NormalizedExternalIntegrity,
   type PageDecoderLeasesSnapshot,
   type PageReclamationSnapshot,
@@ -103,7 +91,7 @@ import {
   type RuntimeByteLease,
   type RuntimeLoaderPolicy,
   type RuntimeCandidateReport,
-  type RuntimeCatalogAccessUnit,
+  type RuntimeCatalogChunk,
   type RuntimeFailure,
   type RuntimeFrameKey,
   type RuntimeMediaPresentation,
@@ -118,10 +106,6 @@ import {
   type RuntimeSessionGenerationContext,
   type RuntimeSessionLifecycleSnapshot,
   type RuntimeSessionPendingWait,
-  type RuntimeAvcRenditionCandidate,
-  type RuntimeAvcRenditionInspection,
-  type RuntimeOpaqueRenditionCandidate,
-  type RuntimeOpaqueRenditionInspection,
   type RuntimeReadiness,
   type RuntimeReadinessReport,
   type RuntimeReadinessResult,
@@ -131,6 +115,12 @@ import {
   type RuntimeVisibilityState,
   type StateFallbackStoreOptions,
   type StaticReason,
+  type AcceptedVideoSource,
+  type CertifiedVideoRendition,
+  type SourceSupportProbeCreationOptions,
+  type VideoSourceDescriptor,
+  type VideoSourceSelectionInput,
+  type VideoSourceSession,
   type VisibilityPolicyTransition
 } from "../index.js";
 
@@ -149,21 +139,24 @@ const graphReadiness: MotionGraphReadiness = "preparing";
 const translation = translateGraphReadiness(graphReadiness);
 const catalogFactory: (bytes: Uint8Array) => RuntimeAssetCatalog =
   installRuntimeAssetCatalog;
-const candidateFactory: typeof createOpaqueRenditionCandidates =
-  createOpaqueRenditionCandidates;
-const inspector: typeof inspectOpaqueRenditionCandidate =
-  inspectOpaqueRenditionCandidate;
-const avcCandidateFactory: typeof createAvcRenditionCandidates =
-  createAvcRenditionCandidates;
-const avcInspector: typeof inspectAvcRenditionCandidate =
-  inspectAvcRenditionCandidate;
-const catalogEntry = null as unknown as RuntimeCatalogAccessUnit;
-const opaqueCandidate = null as unknown as RuntimeOpaqueRenditionCandidate;
-const opaqueInspection = null as unknown as RuntimeOpaqueRenditionInspection;
-const avcCandidate = null as unknown as RuntimeAvcRenditionCandidate;
-const avcInspection = null as unknown as RuntimeAvcRenditionInspection;
+const sourceSelector: typeof selectVideoSource = selectVideoSource;
+const sourceProbeFactory: typeof createSourceSupportProbe =
+  createSourceSupportProbe;
+const catalogEntry = null as unknown as RuntimeCatalogChunk;
+const videoCandidate = null as unknown as CertifiedVideoRendition;
+const sourceDescriptor = null as unknown as VideoSourceDescriptor;
+const sourceSession = null as unknown as VideoSourceSession;
+const sourceSelectionInput = null as unknown as VideoSourceSelectionInput<
+  VideoSourceDescriptor,
+  VideoSourceSession
+>;
+const acceptedSource = null as unknown as AcceptedVideoSource<
+  VideoSourceDescriptor,
+  VideoSourceSession
+>;
+const sourceProbeOptions = null as unknown as SourceSupportProbeCreationOptions;
 const frameKey: RuntimeFrameKey = {
-  rendition: "opaque",
+  rendition: "video",
   unit: "idle",
   localFrame: 0
 };
@@ -176,15 +169,8 @@ const trace = null as unknown as RuntimeTraceRecord;
 const reason = null as unknown as StaticReason;
 const failure: RuntimeFailure = normalizeRuntimeFailure("readiness-failure");
 const error: Error = new RuntimePlaybackError(failure);
-const summarized = summarizeStaticReason({
-  phase: "preparation",
-  staticReady: true,
-  deadlineExpired: false,
-  hasAvcRendition: true,
-  workerAvailable: true,
-  rendererAvailable: true,
-  candidateFailures: [failure]
-});
+const staticReasonSummarizer: typeof summarizeStaticReason =
+  summarizeStaticReason;
 const traceCapacity: 512 = RUNTIME_TRACE_CAPACITY;
 const motionPolicies: readonly MotionPolicy[] = MOTION_POLICIES;
 const motionCoordinatorConstructor: typeof MotionPolicyCoordinator =
@@ -206,36 +192,22 @@ const integratedContextConstructor: typeof IntegratedPlayerContext =
   IntegratedPlayerContext;
 const integratedContextSnapshot =
   null as unknown as IntegratedPlayerContextSnapshot;
-const avcFactoryConstructor: typeof AvcCandidateFactory = AvcCandidateFactory;
-const opaqueFactoryConstructor: typeof OpaqueCandidateFactory =
-  OpaqueCandidateFactory;
-const compatibleOpaqueFactory: typeof AvcCandidateFactory =
-  OpaqueCandidateFactory;
+const videoFactoryConstructor: typeof VideoCandidateFactory =
+  VideoCandidateFactory;
 const integratedOptions = null as unknown as IntegratedPlayerOptions;
 const fallbackStore = null as unknown as IntegratedFallbackStore;
 const fallbackStoreConstructor: typeof StateFallbackStore = StateFallbackStore;
 const fallbackStoreOptions = null as unknown as StateFallbackStoreOptions;
 const integratedRealtimeOptions = null as unknown as IntegratedRealtimeDriverOptions;
-const opaqueFactoryOptions = null as unknown as OpaqueCandidateFactoryOptions;
-const avcFactoryOptions: AvcCandidateFactoryOptions = opaqueFactoryOptions;
-const compatibleOpaqueOptions: OpaqueCandidateFactoryOptions = avcFactoryOptions;
 const tickResult = null as unknown as IntegratedContentTickResult;
-const avcBrowserCompositionFactory:
-  typeof createBrowserAvcCandidateComposition =
-    createBrowserAvcCandidateComposition;
-const browserCompositionFactory: typeof createBrowserOpaqueCandidateComposition =
-  createBrowserOpaqueCandidateComposition;
-const compatibleOpaqueCompositionFactory:
-  typeof createBrowserAvcCandidateComposition =
-    createBrowserOpaqueCandidateComposition;
-const avcBrowserComposition = null as unknown as BrowserAvcCandidateComposition;
-const avcBrowserCompositionOptions =
-  null as unknown as BrowserAvcCandidateCompositionOptions;
-const avcBrowserControls = null as unknown as BrowserAvcCandidateControls;
-const browserComposition = null as unknown as BrowserOpaqueCandidateComposition;
+const browserCompositionFactory:
+  typeof createBrowserVideoCandidateComposition =
+    createBrowserVideoCandidateComposition;
+const browserComposition = null as unknown as BrowserVideoCandidateComposition;
 const browserCompositionOptions =
-  null as unknown as BrowserOpaqueCandidateCompositionOptions;
-const browserControls = null as unknown as BrowserOpaqueCandidateControls;
+  null as unknown as BrowserVideoCandidateCompositionOptions;
+const browserControls =
+  null as unknown as BrowserVideoCandidateComposition["controls"];
 const frameBackendConstructor: typeof BrowserFrameBackend = BrowserFrameBackend;
 const contextRecoveryConstructor: typeof BrowserContextRecovery =
   BrowserContextRecovery;
@@ -251,15 +223,14 @@ const presentationPlanesSnapshot =
 const presentationResizeInput =
   null as unknown as BrowserPresentationResizeInput;
 const presentableBackend = null as unknown as PresentableFrameBackend;
-const browserBackendOptions = null as unknown as BrowserOpaqueFrameBackendOptions;
+const browserBackendOptions = null as unknown as BrowserFrameBackendOptions;
 const rendererOptions = null as unknown as FrameRendererOptions;
 const rendererSnapshot = null as unknown as FrameRendererSnapshot;
 const frameRendererTimer = null as unknown as FrameRendererTimerHost;
-const rendererTimer = null as unknown as OpaqueFrameRendererTimerHost;
 const uploadTimeout: Error = new RendererUploadTimeoutError(1);
 
-// M7's package-root composition surface is sufficient for M8 without access
-// to accounting bridges or manager-owned maps.
+// The package-root composition surface remains sufficient without access to
+// accounting bridges or manager-owned maps.
 const assetOpener: typeof openRuntimeAsset = openRuntimeAsset;
 const byteAssetOpener: typeof openRuntimeAssetBytes = openRuntimeAssetBytes;
 const pagePolicyFactory: (
@@ -378,10 +349,6 @@ void packageApi.createPlayerCandidateResourceAuthority;
 void packageApi.createPlayerCanvasBackingResourceHost;
 // @ts-expect-error sparse-store construction remains session-owned
 void packageApi.VerifiedBlobStore;
-// @ts-expect-error raw catalog borrow/inspection capabilities remain internal
-void packageApi.RUNTIME_CATALOG_AVC_INSPECTION;
-// @ts-expect-error borrowed AVC backing orchestration remains internal
-void packageApi.inspectBorrowedAvcRendition;
 // @ts-expect-error range transport construction remains session-owned
 void packageApi.openRangeAssetSession;
 // @ts-expect-error bounded readers remain behind the asset-session API
@@ -446,15 +413,15 @@ lifecycleSnapshot.pendingWaitCount = 1;
 void readiness;
 void translation;
 void catalogFactory;
-void candidateFactory;
-void inspector;
-void avcCandidateFactory;
-void avcInspector;
+void sourceSelector;
+void sourceProbeFactory;
 void catalogEntry;
-void opaqueCandidate;
-void opaqueInspection;
-void avcCandidate;
-void avcInspection;
+void videoCandidate;
+void sourceDescriptor;
+void sourceSession;
+void sourceSelectionInput;
+void acceptedSource;
+void sourceProbeOptions;
 void frameKey;
 void candidate;
 void report;
@@ -464,7 +431,7 @@ void scheduler;
 void trace;
 void reason;
 void error;
-void summarized;
+void staticReasonSummarizer;
 void traceCapacity;
 void motionPolicies;
 void motionCoordinatorConstructor;
@@ -474,24 +441,14 @@ void motionStaticOrigin;
 void presentationFits;
 void presentation;
 void integratedPlayerConstructor;
-void avcFactoryConstructor;
-void opaqueFactoryConstructor;
-void compatibleOpaqueFactory;
+void videoFactoryConstructor;
 void integratedOptions;
 void fallbackStore;
 void fallbackStoreConstructor;
 void fallbackStoreOptions;
 void integratedRealtimeOptions;
-void opaqueFactoryOptions;
-void avcFactoryOptions;
-void compatibleOpaqueOptions;
 void tickResult;
-void avcBrowserCompositionFactory;
 void browserCompositionFactory;
-void compatibleOpaqueCompositionFactory;
-void avcBrowserComposition;
-void avcBrowserCompositionOptions;
-void avcBrowserControls;
 void browserComposition;
 void browserCompositionOptions;
 void browserControls;
@@ -507,7 +464,6 @@ void browserBackendOptions;
 void rendererOptions;
 void rendererSnapshot;
 void frameRendererTimer;
-void rendererTimer;
 void uploadTimeout;
 void assetRequest;
 void requestWithUnknownField;

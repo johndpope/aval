@@ -16,9 +16,9 @@ import {
   normalizeRuntimeFailure
 } from "./errors.js";
 import type {
-  AvcCandidateResourceAuthority,
-  AvcCandidateResourcePlanLease
-} from "./avc-candidate-factory-model.js";
+  VideoCandidateResourceAuthority,
+  VideoCandidateResourcePlanLease
+} from "./video-candidate-model.js";
 import { PageDecoderLeases } from "./page-decoder-leases.js";
 import type { PlayerResourceAdmission } from "./player-resource-admission.js";
 import {
@@ -51,7 +51,7 @@ export interface RuntimeResourcePlanLeaseSnapshot {
 }
 
 export interface RuntimeResourcePlanLease
-extends AvcCandidateResourcePlanLease {
+extends VideoCandidateResourcePlanLease {
   snapshot(): Readonly<RuntimeResourcePlanLeaseSnapshot>;
   assertAllocation(
     allocation: Readonly<RuntimeResourceAllocationSnapshot>
@@ -216,7 +216,7 @@ export function createPlayerCandidateResourceAuthority(
   account: PlayerResourceAccount,
   decoders: PageDecoderLeases,
   admission?: Readonly<PlayerResourceAdmission>
-): AvcCandidateResourceAuthority {
+): VideoCandidateResourceAuthority {
   const assertGeneration = captureAccountGenerationGuard(account);
   if (!(decoders instanceof PageDecoderLeases)) {
     throw new TypeError("candidate resource authority requires decoder leases");
@@ -256,7 +256,7 @@ export function createPlayerCandidateResourceAuthority(
 }
 
 /**
- * Reserve a frozen M6/M7 candidate peak transactionally before constructing
+ * Reserve a frozen candidate peak transactionally before constructing
  * any worker, decoder, CPU array, GPU store, surface, or canvas backing.
  */
 export function reserveRuntimeResourcePlan(
@@ -476,10 +476,8 @@ const CANDIDATE_PLAN_CATEGORIES: readonly RuntimeByteCategory[] = Object.freeze(
   "frame-staging"
 ]);
 
-const DIRECT_PLAN_CATEGORIES: readonly RuntimeByteCategory[] = Object.freeze([
-  ...CANDIDATE_PLAN_CATEGORIES,
-  "animated-canvas-backing"
-]);
+const INDEPENDENT_PLAN_CATEGORIES: readonly RuntimeByteCategory[] =
+  Object.freeze(["animated-canvas-backing"]);
 
 const UNPLANNED_LIVE_CATEGORIES: readonly RuntimeByteCategory[] = Object.freeze([
   "response-body",
@@ -498,7 +496,7 @@ function assertAccountWithinPlan(
   if (creditedPlanBytes(live, "asset-full") > (target.get("asset-full") ?? 0)) {
     throw resourceInvariantError();
   }
-  for (const category of DIRECT_PLAN_CATEGORIES) {
+  for (const category of CANDIDATE_PLAN_CATEGORIES) {
     if ((live.get(category) ?? 0) > (target.get(category) ?? 0)) {
       throw resourceInvariantError();
     }
@@ -508,8 +506,22 @@ function assertAccountWithinPlan(
       throw resourceInvariantError();
     }
   }
-  const liveTotal = snapshot.reduce((total, { bytes }) => total + bytes, 0);
-  if (liveTotal > totalBytes) throw resourceInvariantError();
+  // Canvas backing is admitted and resized by its own page-accounted owner.
+  // Keep it outside the candidate's frozen peak; the presentation reservation
+  // validates the live canvas together with this plan's non-canvas bytes.
+  const liveTotal = snapshot.reduce((total, { bytes }) => total + bytes, 0) -
+    independentPlanBytes(live);
+  const targetTotal = totalBytes - independentPlanBytes(target);
+  if (liveTotal > targetTotal) throw resourceInvariantError();
+}
+
+function independentPlanBytes(
+  categories: ReadonlyMap<RuntimeByteCategory, number>
+): number {
+  return INDEPENDENT_PLAN_CATEGORIES.reduce(
+    (total, category) => total + (categories.get(category) ?? 0),
+    0
+  );
 }
 
 function creditedPlanBytes(

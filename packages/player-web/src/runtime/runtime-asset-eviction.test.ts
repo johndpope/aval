@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createRuntimeTestAsset } from "./asset-test-support.js";
 import { PageResourceManager } from "./page-resource-manager.js";
 import { PlayerResourceAccount } from "./player-resource-account.js";
 import { openRuntimeAssetBytes } from "./runtime-asset-session.js";
@@ -8,12 +8,11 @@ import { createPlayerRuntimeAssetSessionResources } from "./runtime-asset-resour
 
 describe("runtime rendition residency eviction", () => {
   it("releases a failed rendition exactly and reloads through the same catalog", async () => {
-    const bytes = createOpaqueTestAsset();
+    const bytes = createRuntimeTestAsset();
     const manager = new PageResourceManager();
     const account = new PlayerResourceAccount(manager);
     const session = await openRuntimeAssetBytes(bytes, {
-      resources: createPlayerRuntimeAssetSessionResources(account),
-      digestAdapter: zeroDigestAdapter()
+      resources: createPlayerRuntimeAssetSessionResources(account)
     });
 
     await session.ensureAllUnits("opaque");
@@ -39,12 +38,11 @@ describe("runtime rendition residency eviction", () => {
   });
 
   it("rejects unknown renditions without changing residency", async () => {
-    const bytes = createOpaqueTestAsset();
+    const bytes = createRuntimeTestAsset();
     const manager = new PageResourceManager();
     const account = new PlayerResourceAccount(manager);
     const session = await openRuntimeAssetBytes(bytes, {
-      resources: createPlayerRuntimeAssetSessionResources(account),
-      digestAdapter: zeroDigestAdapter()
+      resources: createPlayerRuntimeAssetSessionResources(account)
     });
 
     let failure: unknown;
@@ -59,13 +57,3 @@ describe("runtime rendition residency eviction", () => {
     account.dispose();
   });
 });
-
-function zeroDigestAdapter(): Readonly<{
-  digestSha256(): Promise<Uint8Array<ArrayBuffer>>;
-}> {
-  return Object.freeze({
-    async digestSha256(): Promise<Uint8Array<ArrayBuffer>> {
-      return new Uint8Array(32);
-    }
-  });
-}

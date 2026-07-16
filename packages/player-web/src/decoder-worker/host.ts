@@ -4,7 +4,6 @@ import {
   type WorkerVideoDecoderFactory,
   type WorkerVideoDecoderSupportProbe
 } from "./core.js";
-import { type WorkerAvcInspectorFactory } from "./avc-inspector-adapter.js";
 import { isDecoderWorkerCommand } from "./protocol-validation.js";
 import { type DecoderWorkerMessagePort } from "./protocol.js";
 
@@ -12,7 +11,6 @@ export interface DecoderWorkerHostOptions {
   readonly decoderFactory?: WorkerVideoDecoderFactory;
   readonly chunkFactory?: WorkerEncodedVideoChunkFactory;
   readonly supportProbe?: WorkerVideoDecoderSupportProbe;
-  readonly inspectorFactory?: WorkerAvcInspectorFactory;
 }
 
 /** Binds the worker-local decoder core to a WorkerGlobalScope-like port. */
@@ -41,10 +39,7 @@ export class DecoderWorkerHost {
         : { chunkFactory: options.chunkFactory }),
       ...(options.supportProbe === undefined
         ? {}
-        : { supportProbe: options.supportProbe }),
-      ...(options.inspectorFactory === undefined
-        ? {}
-        : { inspectorFactory: options.inspectorFactory })
+        : { supportProbe: options.supportProbe })
     });
     this.#messageListener = (event) => {
       this.#commandTail = this.#commandTail.then(async () => {

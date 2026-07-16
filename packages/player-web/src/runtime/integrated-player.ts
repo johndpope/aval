@@ -1,6 +1,12 @@
 import { MotionGraphEngine, type MotionGraphResult } from "@pixel-point/aval-graph";
-import { RuntimeAssetCatalog } from "./asset-catalog.js";
-import { IntegratedPlayerAssetBinding } from "./integrated-player-asset-session.js";
+import {
+  RuntimeAssetCatalog,
+  type CertifiedVideoRendition
+} from "./asset-catalog.js";
+import {
+  IntegratedPlayerAssetBinding,
+  type CapturedIntegratedPlayerAssetSource
+} from "./integrated-player-asset-session.js";
 import { IntegratedPlayerParticipantController } from "./integrated-player-participant-controller.js";
 import { IntegratedPlayerDecoderReentry } from "./integrated-player-decoder-reentry.js";
 import type { IntegratedPlayerParticipantSnapshot } from "./integrated-player-participant.js";
@@ -42,6 +48,7 @@ import { RequestPromises } from "./request-promises.js";
 import { admitIntegratedPlayerAssetSource } from "./integrated-player-resource-admission.js";
 import type { RuntimeCanvasResourceLease } from "./canvas-resource-plan.js";
 import { IntegratedContentTicker } from "./integrated-content-ticker.js";
+import { assertSelectedVideoRenditionCatalogIdentity } from "./video-rendition-inspection.js";
 export * from "./integrated-player-contracts.js";
 export type { RuntimeVisibilitySnapshot, RuntimeVisibilityState } from "./model.js";
 /**
@@ -128,6 +135,14 @@ export class IntegratedPlayer {
     let contextCandidate: IntegratedPlayerContextBinding | null = null;
     let participantCandidate: IntegratedPlayerParticipantController | null = null;
     try {
+      const selectedRendition = resolveSelectedRendition(
+        this.#catalog,
+        assetSource
+      );
+      assertSelectedVideoRenditionCatalogIdentity(
+        this.#catalog,
+        selectedRendition
+      );
       this.#installResult = this.#graph.install(this.#catalog.graph);
       this.#effects = new EffectHost({
         requestPromises: this.#requests,
@@ -217,6 +232,7 @@ export class IntegratedPlayer {
         graph: this.#graph,
         staticPreparation: this.#staticPreparation,
         candidateFactory,
+        selectedRendition,
         availability,
         hostMaxRuntimeBytes,
         residency: this.#assetBinding,
@@ -1026,4 +1042,16 @@ export class IntegratedPlayer {
     }
   }
 
+}
+
+function resolveSelectedRendition(
+  catalog: RuntimeAssetCatalog,
+  source: Readonly<CapturedIntegratedPlayerAssetSource>
+): Readonly<CertifiedVideoRendition> {
+  if (source.kind === "session") return source.selectedRendition;
+  const selected = catalog.videoRenditions[source.selectedRenditionIndex];
+  if (selected === undefined) {
+    throw new RangeError("selectedRenditionIndex is unavailable in the asset catalog");
+  }
+  return selected;
 }

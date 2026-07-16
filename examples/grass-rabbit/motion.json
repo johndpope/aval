@@ -1,6 +1,6 @@
 {
-  "projectVersion": "0.3",
-  "profile": "avc-annexb-opaque-v1",
+  "projectVersion": "1.0",
+  "alpha": "opaque",
   "canvas": {
     "width": 1280,
     "height": 720,
@@ -17,20 +17,41 @@
       "timing": { "mode": "exact" }
     }
   ],
-  "renditions": [
+  "encodings": [
     {
-      "id": "avc.1x",
-      "width": 1280,
-      "height": 720,
-      "encoding": {
-        "codec": "h264",
-        "preset": "veryslow",
-        "rateControl": {
-          "mode": "crf",
-          "crf": 30,
-          "maxBitrate": 10000000
-        }
-      }
+      "codec": "av1",
+      "bitDepth": 8,
+      "cpuUsed": 6,
+      "tiles": { "columns": 2, "rows": 2 },
+      "rowMt": true,
+      "threads": 8,
+      "renditions": [
+        { "id": "video.1x", "width": 640, "height": "auto", "crf": 36 }
+      ]
+    },
+    {
+      "codec": "vp9",
+      "deadline": "good",
+      "cpuUsed": 4,
+      "threads": 8,
+      "renditions": [
+        { "id": "video.1x", "width": 640, "height": "auto", "crf": 38 }
+      ]
+    },
+    {
+      "codec": "h265",
+      "preset": "medium",
+      "threads": 8,
+      "renditions": [
+        { "id": "video.1x", "width": 640, "height": "auto", "crf": 30 }
+      ]
+    },
+    {
+      "codec": "h264",
+      "preset": "medium",
+      "renditions": [
+        { "id": "video.1x", "width": 640, "height": "auto", "crf": 26 }
+      ]
     }
   ],
   "units": [

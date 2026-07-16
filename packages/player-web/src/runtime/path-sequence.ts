@@ -52,6 +52,8 @@ export interface PathSequenceContext {
   readonly sourceBody: GraphBodyDefinition | null;
   readonly route: ScheduledPathRoute | null;
   readonly residentTarget: ResidentPathTarget | null;
+  /** Finish one already-started codec group without presenting past a route. */
+  readonly continueCodecGroup: boolean;
   readonly canSubmitSource: (cursor: Readonly<SourceBodyCursor>) => boolean;
 }
 
@@ -144,15 +146,17 @@ export function buildNextPathFrame(
         }
         continue;
       }
-      if (
+      const pastSourceStop =
         state.sourceStop !== null &&
-        compareSourceCursor(body, current, state.sourceStop) > 0
-      ) {
+        compareSourceCursor(body, current, state.sourceStop) > 0;
+      if (pastSourceStop && !context.continueCodecGroup) {
         switchToEdge(state, context.route);
         continue;
       }
-      const discard = state.sourceDiscardBefore !== null &&
-        compareSourceCursor(body, current, state.sourceDiscardBefore) < 0;
+      const discard = pastSourceStop || (
+        state.sourceDiscardBefore !== null &&
+        compareSourceCursor(body, current, state.sourceDiscardBefore) < 0
+      );
       if (
         context.route === null &&
         !discard &&

@@ -1,14 +1,14 @@
 import {
-  AVC_ENCODER_PRESETS,
   CompilerError,
+  H264_ENCODER_PRESETS,
+  H265_ENCODER_PRESETS,
+  VP9_DEADLINES,
   bt709LimitedAlphaLuma,
   bt709LimitedChroma2x2,
   bt709LimitedLuma,
   compileDirectInput,
   compileProjectFile,
-  dilateTransparentRgba,
   inspectAssetFile,
-  packRgbaToPlanarYuv420,
   parseCliArguments,
   runCli,
   roundSignedRatio,
@@ -19,63 +19,86 @@ import {
   type CliArguments,
   type CliRuntime,
   type AlphaAuditSummary,
-  type AlphaErrorStatistics,
-  type AlphaFrameQualitySummary,
   type AlphaPolicyDecision,
-  type AvcEncoderPreset,
-  type AvcEncodingV03,
-  type AvcRateControlV03,
-  type AvcRenditionSummary,
+  type AssetInspection,
+  type AssetValidationReport,
+  type Av1Encoding,
   type Bt709LimitedChroma,
-  type CompileResult,
-  type CompositeBackground,
-  type CompositeBackgroundQualitySummary,
-  type CompositeQualitySummary,
+  type CompileBundleResult,
   type DevSession,
   type DirectCompileOptions,
+  type H264EncoderPreset,
+  type H264Encoding,
+  type H265Encoding,
+  type InspectedChunkRange,
   type NormalizedSourceProject,
-  type PackedPlanarYuv420Frame,
-  type PlanarYuv420Planes,
   type ProjectCompileOptions,
   type SourceAlphaPolicy,
-  type SourceProjectV02,
-  type SourceProjectV03
+  type SourceProject,
+  type UnpackReport,
+  type VideoEncoding,
+  type VideoRenditionInspection,
+  type Vp9Encoding
 } from "../src/index.js";
 
-const direct: (input: DirectCompileOptions) => Promise<Readonly<CompileResult>> =
+const direct: (input: DirectCompileOptions) => Promise<Readonly<CompileBundleResult>> =
   compileDirectInput;
-const project: (input: ProjectCompileOptions) => Promise<Readonly<CompileResult>> =
+const project: (input: ProjectCompileOptions) => Promise<Readonly<CompileBundleResult>> =
   compileProjectFile;
 const directTimeoutOptions: DirectCompileOptions = {
   inputPath: "input.mov",
-  outputPath: "output.avl",
+  outputPath: "output",
   loop: [0, 1],
+  codec: "h264",
   alpha: "auto",
   probeTimeoutMs: 1_000,
   mediaTimeoutMs: 5_000
 };
-const preset: AvcEncoderPreset = "veryslow";
-const rateControl: AvcRateControlV03 = {
-  mode: "crf",
-  crf: 20,
-  maxBitrate: 10_000_000
-};
-const encoding: AvcEncodingV03 = {
+const preset: H264EncoderPreset = "veryslow";
+const encoding: H264Encoding = {
   codec: "h264",
   preset,
-  rateControl
+  renditions: [{ id: "video.1x", width: 1_920, height: "auto", crf: 20 }]
 };
+const h265Encoding: H265Encoding = {
+  codec: "h265",
+  preset: "veryslow",
+  threads: 8,
+  renditions: [{ id: "video.1x", width: 1_920, height: "auto", crf: 32 }]
+};
+const vp9Encoding: Vp9Encoding = {
+  codec: "vp9",
+  deadline: "best",
+  cpuUsed: 0,
+  threads: 8,
+  renditions: [{ id: "video.1x", width: 1_920, height: "auto", crf: 40 }]
+};
+const av1Encoding: Av1Encoding = {
+  codec: "av1",
+  bitDepth: 10,
+  cpuUsed: 0,
+  tiles: { columns: 4, rows: 2 },
+  rowMt: true,
+  threads: 32,
+  renditions: [{ id: "video.1x", width: 1_920, height: "auto", crf: 15 }]
+};
+const encodings: readonly VideoEncoding[] = [
+  av1Encoding,
+  vp9Encoding,
+  h265Encoding,
+  encoding
+];
 const directCrfOptions: DirectCompileOptions = {
   inputPath: "input.mov",
-  outputPath: "output.avl",
+  outputPath: "output",
   loop: [0, 1],
-  crf: rateControl.crf,
-  maxBitrate: rateControl.maxBitrate,
+  codec: "h264",
+  crf: 20,
   preset
 };
 const projectTimeoutOptions: ProjectCompileOptions = {
   projectPath: "project.json",
-  outputPath: "output.avl",
+  outputPath: "output",
   probeTimeoutMs: 1_000,
   mediaTimeoutMs: 5_000
 };
@@ -94,38 +117,29 @@ const cancelledUnpack = unpackAssetFile("asset.avl", "output", controller.signal
 const error: Error = new CompilerError("CLI_USAGE", "test");
 const policy: SourceAlphaPolicy = "auto";
 const normalized = null as unknown as Readonly<NormalizedSourceProject>;
-const modern = null as unknown as Readonly<SourceProjectV02>;
-const current = null as unknown as Readonly<SourceProjectV03>;
+const sourceProject = null as unknown as Readonly<SourceProject>;
 const audit = null as unknown as Readonly<AlphaAuditSummary>;
-const avcSummary = null as unknown as Readonly<AvcRenditionSummary>;
+const assetInspection = null as unknown as Readonly<AssetInspection>;
+const assetValidationReport = null as unknown as Readonly<AssetValidationReport>;
+const inspectedChunk = null as unknown as Readonly<InspectedChunkRange>;
+const videoInspection = null as unknown as Readonly<VideoRenditionInspection>;
+const unpackReport = null as unknown as Readonly<UnpackReport>;
 const decision = null as unknown as Readonly<AlphaPolicyDecision>;
-const qualityStatistics = null as unknown as Readonly<AlphaErrorStatistics>;
-const frameQuality = null as unknown as Readonly<AlphaFrameQualitySummary>;
-const compositeBackground: CompositeBackground = "black";
-const compositeStatistics = null as unknown as Readonly<
-  CompositeBackgroundQualitySummary
->;
-const compositeQuality = null as unknown as Readonly<CompositeQualitySummary>;
 const rounded: number = roundSignedRatio(-3, 2);
 const luma: number = bt709LimitedLuma(1, 2, 3);
 const alphaLuma: number = bt709LimitedAlphaLuma(128);
 const chroma: Readonly<Bt709LimitedChroma> = bt709LimitedChroma2x2(
   new Uint8Array(12)
 );
-const dilated: Uint8Array = dilateTransparentRgba({
-  width: 1,
-  height: 1,
-  rgba: Uint8Array.of(0, 0, 0, 0)
-});
-const packed = null as unknown as Readonly<PackedPlanarYuv420Frame>;
-const planes: Readonly<PlanarYuv420Planes> = packed.planes;
-const packer: typeof packRgbaToPlanarYuv420 = packRgbaToPlanarYuv420;
 
 void direct;
 void project;
 void directTimeoutOptions;
-void AVC_ENCODER_PRESETS;
+void H264_ENCODER_PRESETS;
+void H265_ENCODER_PRESETS;
+void VP9_DEADLINES;
 void encoding;
+void encodings;
 void directCrfOptions;
 void projectTimeoutOptions;
 void parsed;
@@ -141,23 +155,18 @@ void cancelledUnpack;
 void error;
 void policy;
 void normalized;
-void modern;
-void current;
+void sourceProject;
 void audit;
-void avcSummary;
+void assetInspection;
+void assetValidationReport;
+void inspectedChunk;
+void videoInspection;
+void unpackReport;
 void decision;
-void qualityStatistics;
-void frameQuality;
-void compositeBackground;
-void compositeStatistics;
-void compositeQuality;
 void rounded;
 void luma;
 void alphaLuma;
 void chroma;
-void dilated;
-void planes;
-void packer;
 
 // Verify the public session shape without starting a watcher.
 const sessionFactory: typeof startDevCommand = startDevCommand;

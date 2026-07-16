@@ -1,6 +1,11 @@
 import {
-  isAvcCodec,
-  type AvcCodecV01
+  isVideoCodecString,
+  PACKED_ALPHA_GUTTER,
+  VIDEO_CODECS,
+  type AlphaLayout,
+  type Rect,
+  type VideoBitDepth,
+  type VideoCodec
 } from "@pixel-point/aval-format";
 
 import { SHA256_PATTERN } from "./model.js";
@@ -31,14 +36,12 @@ export interface DecoderThroughputLedger {
   readonly fixtureDigest: string;
   readonly selectedRendition: Readonly<{
     readonly id: string;
-    readonly profile:
-      | "avc-annexb-packed-alpha-v0"
-      | "avc-annexb-opaque-v0"
-      | "avc-annexb-packed-alpha-v1"
-      | "avc-annexb-opaque-v1";
-    readonly codec: AvcCodecV01;
+    readonly codecFamily: VideoCodec;
+    readonly codec: string;
+    readonly bitDepth: VideoBitDepth;
     readonly codedWidth: number;
     readonly codedHeight: number;
+    readonly alphaLayout: AlphaLayout;
     readonly frameRateNumerator: number;
     readonly frameRateDenominator: number;
   }>;
@@ -87,7 +90,7 @@ export interface DecoderThroughputEvaluation {
 const IDENTIFIER = /^[a-z0-9](?:[a-z0-9._-]{0,126}[a-z0-9])?$/u;
 const EXACT_KEYS = Object.freeze({
   root: ["schemaVersion", "ledgerKind", "candidateManifestDigest", "fixtureDigest", "selectedRendition", "outputs", "events", "terminal"],
-  rendition: ["id", "profile", "codec", "codedWidth", "codedHeight", "frameRateNumerator", "frameRateDenominator"],
+  rendition: ["id", "codecFamily", "codec", "bitDepth", "codedWidth", "codedHeight", "alphaLayout", "frameRateNumerator", "frameRateDenominator"],
   output: ["outputOrdinal", "phase", "mediaTimestampMicroseconds", "mediaDurationMicroseconds", "callbackMicroseconds", "renditionId", "unitId", "unitInstance", "localFrame"],
   event: ["eventOrdinal", "kind", "atMicroseconds", "outputOrdinal"],
   terminal: ["decoderClosed", "configureCalls", "resetCalls", "flushCalls", "boundaryFlushCalls", "acceptedSamples", "submittedChunks", "outputFrames", "deliveredFrames", "releasedFrames", "staleFrames", "workerClosedFrames", "errors", "openFrames", "pendingFrames", "decodeQueueSize"]
@@ -108,21 +111,40 @@ export function evaluateDecoderThroughputLedger(input: unknown, expected?: Reado
   const candidateManifestDigest = digest(root.candidateManifestDigest, "$throughput.candidateManifestDigest");
   const fixtureDigest = digest(root.fixtureDigest, "$throughput.fixtureDigest");
   const renditionInput = exactRecord(root.selectedRendition, EXACT_KEYS.rendition, "$throughput.selectedRendition");
-  const profile = enumeration(renditionInput.profile, [
-    "avc-annexb-packed-alpha-v0",
-    "avc-annexb-opaque-v0",
-    "avc-annexb-packed-alpha-v1",
-    "avc-annexb-opaque-v1"
-  ] as const, "$throughput.selectedRendition.profile");
+  const codecFamily = enumeration(
+    renditionInput.codecFamily,
+    VIDEO_CODECS,
+    "$throughput.selectedRendition.codecFamily"
+  );
+  const bitDepth = supportedBitDepth(
+    renditionInput.bitDepth,
+    codecFamily,
+    "$throughput.selectedRendition.bitDepth"
+  );
+  const codec = supportedVideoCodec(
+    renditionInput.codec,
+    codecFamily,
+    bitDepth,
+    "$throughput.selectedRendition.codec"
+  );
+  const codedWidth = positiveInteger(renditionInput.codedWidth, "$throughput.selectedRendition.codedWidth");
+  const codedHeight = positiveInteger(renditionInput.codedHeight, "$throughput.selectedRendition.codedHeight");
+  if (codedWidth % 2 !== 0 || codedHeight % 2 !== 0) {
+    throw new TypeError("$throughput.selectedRendition coded dimensions must be even");
+  }
   const selectedRendition = Object.freeze({
     id: identifier(renditionInput.id, "$throughput.selectedRendition.id"),
-    profile,
-    codec: supportedAvcCodec(
-      renditionInput.codec,
-      "$throughput.selectedRendition.codec"
+    codecFamily,
+    codec,
+    bitDepth,
+    codedWidth,
+    codedHeight,
+    alphaLayout: supportedAlphaLayout(
+      renditionInput.alphaLayout,
+      codedWidth,
+      codedHeight,
+      "$throughput.selectedRendition.alphaLayout"
     ),
-    codedWidth: positiveInteger(renditionInput.codedWidth, "$throughput.selectedRendition.codedWidth"),
-    codedHeight: positiveInteger(renditionInput.codedHeight, "$throughput.selectedRendition.codedHeight"),
     frameRateNumerator: positiveInteger(renditionInput.frameRateNumerator, "$throughput.selectedRendition.frameRateNumerator"),
     frameRateDenominator: positiveInteger(renditionInput.frameRateDenominator, "$throughput.selectedRendition.frameRateDenominator")
   });
@@ -234,8 +256,9 @@ function evaluateParsedLedger(ledger: DecoderThroughputLedger): DecoderThroughpu
   if (ledger.terminal.resetCalls !== counters.reset) failures.push("terminal-reset-count-mismatch");
   if (ledger.terminal.flushCalls !== counters.flush) failures.push("terminal-flush-count-mismatch");
   if (ledger.terminal.boundaryFlushCalls !== 0) failures.push("terminal-boundary-flush");
-  for (const name of ["acceptedSamples", "submittedChunks", "outputFrames", "deliveredFrames", "releasedFrames"] as const) {
-    if (ledger.terminal[name] !== ledger.outputs.length) failures.push(`terminal-frame-count:${name}`);
+  if (ledger.terminal.acceptedSamples !== ledger.terminal.submittedChunks) failures.push("terminal-accepted-sample-count-mismatch");
+  for (const name of ["outputFrames", "deliveredFrames", "releasedFrames"] as const) {
+    if (ledger.terminal[name] !== ledger.outputs.length) failures.push(`terminal-output-count:${name}`);
   }
   if (ledger.terminal.staleFrames !== 0) failures.push("terminal-stale-frames");
   if (ledger.terminal.workerClosedFrames !== 0) failures.push("terminal-worker-closed-frames");
@@ -324,13 +347,82 @@ function enumeration<const T extends readonly string[]>(value: unknown, values: 
   return value as T[number];
 }
 
-function supportedAvcCodec(value: unknown, path: string): AvcCodecV01 {
-  if (!isAvcCodec(value)) {
-    throw new TypeError(
-      `${path} must be a supported Constrained Baseline codec`
-    );
+function supportedBitDepth(
+  value: unknown,
+  family: VideoCodec,
+  path: string
+): VideoBitDepth {
+  if (value !== 8 && value !== 10) {
+    throw new TypeError(`${path} must be 8 or 10`);
+  }
+  if (family !== "av1" && value !== 8) {
+    throw new TypeError(`${path} must be 8 for ${family}`);
   }
   return value;
+}
+
+function supportedVideoCodec(
+  value: unknown,
+  family: VideoCodec,
+  bitDepth: VideoBitDepth,
+  path: string
+): string {
+  if (!isVideoCodecString(value, family, bitDepth)) {
+    throw new TypeError(`${path} must be a canonical ${family} codec string matching bit depth`);
+  }
+  return value;
+}
+
+function supportedAlphaLayout(
+  value: unknown,
+  codedWidth: number,
+  codedHeight: number,
+  path: string
+): AlphaLayout {
+  const input = exactRecord(
+    value,
+    value !== null && typeof value === "object" && !Array.isArray(value) &&
+      (value as Record<string, unknown>).type === "stacked"
+      ? ["type", "colorRect", "alphaRect"]
+      : ["type", "colorRect"],
+    path
+  );
+  const type = enumeration(input.type, ["opaque", "stacked"] as const, `${path}.type`);
+  const colorRect = supportedRect(input.colorRect, codedWidth, codedHeight, `${path}.colorRect`);
+  if (colorRect[0] !== 0 || colorRect[1] !== 0) {
+    throw new TypeError(`${path}.colorRect must begin at the decoded surface origin`);
+  }
+  if (type === "opaque") return Object.freeze({ type, colorRect });
+  const alphaRect = supportedRect(input.alphaRect, codedWidth, codedHeight, `${path}.alphaRect`);
+  const paneHeight = colorRect[3] % 2 === 0 ? colorRect[3] : colorRect[3] + 1;
+  if (
+    alphaRect[0] !== 0 ||
+    alphaRect[1] !== paneHeight + PACKED_ALPHA_GUTTER ||
+    alphaRect[2] !== colorRect[2] ||
+    alphaRect[3] !== colorRect[3]
+  ) {
+    throw new TypeError(`${path}.alphaRect must be the matching pane after the fixed gutter`);
+  }
+  return Object.freeze({ type, colorRect, alphaRect });
+}
+
+function supportedRect(
+  value: unknown,
+  codedWidth: number,
+  codedHeight: number,
+  path: string
+): Rect {
+  if (!Array.isArray(value) || value.length !== 4) {
+    throw new TypeError(`${path} must be a four-number rectangle`);
+  }
+  const x = nonnegativeInteger(value[0], `${path}[0]`);
+  const y = nonnegativeInteger(value[1], `${path}[1]`);
+  const width = positiveInteger(value[2], `${path}[2]`);
+  const height = positiveInteger(value[3], `${path}[3]`);
+  if (x > codedWidth - width || y > codedHeight - height) {
+    throw new TypeError(`${path} must fit inside the coded surface`);
+  }
+  return Object.freeze([x, y, width, height]);
 }
 
 function identifier(value: unknown, path: string): string {

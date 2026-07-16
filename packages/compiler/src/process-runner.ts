@@ -73,6 +73,7 @@ function runSpawnedProcess(
     let settled = false;
     let forcedError: CompilerError | undefined;
     let escalation: ReturnType<typeof setTimeout> | undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     let inputStream: ReturnType<typeof createReadStream> | undefined;
     let streamedInputBytes = 0;
     let processClosed = false;
@@ -86,7 +87,7 @@ function runSpawnedProcess(
     ): void => {
       if (settled) return;
       settled = true;
-      clearTimeout(timeout);
+      if (timeout !== undefined) clearTimeout(timeout);
       if (escalation !== undefined) clearTimeout(escalation);
       input.signal?.removeEventListener("abort", abort);
       inputStream?.destroy();
@@ -107,14 +108,16 @@ function runSpawnedProcess(
       escalation.unref();
     };
     const abort = (): void => stop(cancelled(input.signal?.reason));
-    const timeout = setTimeout(() => {
-      stop(new CompilerError(
-        "PROCESS_TIMEOUT",
-        `Process exceeded ${String(input.limits.timeoutMs)} ms`,
-        { hint: "Increase the operation timeout when the authored media requires more processing time." }
-      ));
-    }, input.limits.timeoutMs);
-    timeout.unref();
+    if (input.limits.timeoutMs !== undefined) {
+      timeout = setTimeout(() => {
+        stop(new CompilerError(
+          "PROCESS_TIMEOUT",
+          `Process exceeded ${String(input.limits.timeoutMs)} ms`,
+          { hint: "Increase the operation timeout when the authored media requires more processing time." }
+        ));
+      }, input.limits.timeoutMs);
+      timeout.unref();
+    }
     input.signal?.addEventListener("abort", abort, { once: true });
 
     child.stdout.on("data", (chunk: Buffer) => {

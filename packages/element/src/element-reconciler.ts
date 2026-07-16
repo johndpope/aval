@@ -1,6 +1,6 @@
 import type {
-  BindingSourceV01,
-  BindingV01,
+  BindingSource,
+  Binding,
   RuntimeReadiness,
   RuntimeReadinessResult,
   StaticReason
@@ -49,6 +49,7 @@ import {
   applyElementSourceEffect,
   beginElementSourceInvalidation
 } from "./element-source-effects.js";
+import { ElementSourceObserver } from "./element-source-observer.js";
 import { ElementSourceGenerationPublication } from "./element-source-generation-publication.js";
 import {
   ElementReconcilerOwners,
@@ -73,8 +74,6 @@ import type {
 } from "./public-types.js";
 
 const SOURCE_ATTRIBUTES: ReadonlySet<string> = new Set([
-  "src",
-  "integrity",
   "crossorigin"
 ]);
 
@@ -99,6 +98,7 @@ export class ElementReconciler implements ElementOwnerAuthority {
   readonly #runtimeAuthority: ElementRuntimeEffectAuthorityView;
   readonly #diagnostics: ElementReconcilerDiagnosticsView;
   readonly #eventMutations: ElementEventMutationGate;
+  readonly #sourceObserver: ElementSourceObserver;
   readonly #configurationApplication = new ElementConfigurationApplication(this.#desired);
   readonly #source = new ElementSourceEffectState();
   readonly #publishedGeneration = new ElementSourceGenerationPublication();
@@ -148,6 +148,10 @@ export class ElementReconciler implements ElementOwnerAuthority {
       trace: this.#trace
     });
     this.#eventMutations = new ElementEventMutationGate(this.#owners.events);
+    this.#sourceObserver = new ElementSourceObserver({
+      host,
+      changed: () => this.#sourceCandidatesChanged()
+    });
   }
   public get connected(): boolean { return this.#owners.lifecycle.connected; }
   public get terminal(): boolean { return this.#owners.lifecycle.terminal; }
@@ -162,7 +166,7 @@ export class ElementReconciler implements ElementOwnerAuthority {
   public get effectivelyVisible(): boolean { return this.#desired.snapshot().effectivelyVisible; }
   public get stateNames(): readonly string[] { return this.#publicState.stateNames; }
   public get eventNames(): readonly string[] { return this.#publicState.eventNames; }
-  public get inputBindings(): readonly Readonly<BindingV01>[] { return this.#publicState.inputBindings; }
+  public get inputBindings(): readonly Readonly<Binding>[] { return this.#publicState.inputBindings; }
   public get interactionTarget(): Element | null { return this.#desired.snapshot().interactionTarget; }
   public ownerFailureContext() { return elementFailureContext(
     this.#owners.lifecycle.terminal,
@@ -189,22 +193,33 @@ export class ElementReconciler implements ElementOwnerAuthority {
     if (before.effectivelyVisible !== next.effectivelyVisible) this.#visibilityChanged(next);
     this.#submit(next);
   }
-  public automaticInput(source: BindingSourceV01): void {
+  public automaticInput(source: BindingSource): void {
     this.#trace.record(`input-${source.replace(".", "-")}`, this.#publishedGeneration.value);
     this.#owners.automation.router.route(source);
   }
-  public connect(): void { this.#owners.lifecycle.connect(); }
-  public disconnect(): void { this.#owners.lifecycle.disconnect(); }
+  public connect(): void {
+    if (this.#owners.lifecycle.terminal) return;
+    this.#sourceObserver.connect();
+    try { this.#owners.lifecycle.connect(); }
+    catch (error) {
+      this.#sourceObserver.disconnect();
+      throw error;
+    }
+  }
+  public disconnect(): void {
+    this.#sourceObserver.disconnect();
+    this.#owners.lifecycle.disconnect();
+  }
   public configurationChanged(name: string | null): void {
     if (this.#eventMutations.defer(() => this.configurationChanged(name))) return;
     if (this.#owners.lifecycle.terminal) return;
     if (name !== null && SOURCE_ATTRIBUTES.has(name)) {
-      this.#configurationApplication.markIdentityInvalidated();
+      const newlyInvalidated = this.#configurationApplication.markIdentityInvalidated();
       // Retire the old identity immediately, but let the coalesced
       // configuration read publish the only successor snapshot. Submitting
       // here would briefly recreate the stale source captured by the prior
       // configuration when several attributes change in one task.
-      this.#invalidateSource(false);
+      if (newlyInvalidated) this.#invalidateSource(false);
     }
     this.#owners.configuration.schedule();
   }
@@ -226,6 +241,7 @@ export class ElementReconciler implements ElementOwnerAuthority {
     let ownership: ReturnType<ElementOwnershipLedger["acquire"]> | null = null;
     try {
       ownership = this.#ownership.acquire("command");
+      this.#sourceObserver.flushRecords();
       this.#owners.configuration.flush();
       const invocationSourceToken = this.#desired.snapshot().sourceToken;
       const asset = await capturePreparedSource({
@@ -352,6 +368,7 @@ export class ElementReconciler implements ElementOwnerAuthority {
     const deferred = this.#eventMutations.deferPromise(() => this.dispose());
     if (deferred !== null) return deferred;
     if (!this.#owners.lifecycle.terminal) {
+      this.#sourceObserver.disconnect();
       this.#owners.configuration.close();
       this.#stateCommand.abort();
       this.#resumeCommand.abort();
@@ -375,7 +392,7 @@ export class ElementReconciler implements ElementOwnerAuthority {
         this.#owners.effects.resetAsset();
         const supported = this.#owners.layers.rebindStyles(this.#host.ownerDocument);
         this.#pendingRealmRebind = false;
-        if (!supported && configuration?.src !== "") {
+        if (!supported && (configuration?.sourceCandidates.length ?? 0) > 0) {
           this.#reportFailure("unsupported-browser", false);
         }
       }
@@ -506,6 +523,7 @@ export class ElementReconciler implements ElementOwnerAuthority {
   }
 
   public ownerConnect(): void {
+    this.#owners.configuration.schedule();
     this.#owners.configuration.flush();
     const change = this.#owners.automation.enterCurrentRealm();
     if (change.rootChanged || change.documentChanged) {
@@ -533,6 +551,10 @@ export class ElementReconciler implements ElementOwnerAuthority {
     this.#trace.record("dispose", Math.max(1, this.#publishedGeneration.value));
     const mechanicsCompleted = await aggregateElementTerminalCleanup([
       () => this.#owners.configuration.close(),
+      () => {
+        this.#sourceObserver.disconnect();
+        return true;
+      },
       () => this.#stopAutomation(),
       () => this.#owners.lane.dispose(),
       () => this.#owners.controller.dispose(),
@@ -566,6 +588,15 @@ export class ElementReconciler implements ElementOwnerAuthority {
     const result = this.#owners.automation.interaction(snapshot, configuration);
     this.#observeCleanup(result.complete);
     if (result.reportMissing) this.#reportFailure("interaction-target-unavailable", false);
+  }
+
+  #sourceCandidatesChanged(): void {
+    if (this.#eventMutations.defer(() => this.#sourceCandidatesChanged())) return;
+    if (this.#owners.lifecycle.terminal || !this.#owners.lifecycle.connected) return;
+    if (this.#configurationApplication.markIdentityInvalidated()) {
+      this.#invalidateSource(false);
+    }
+    this.#owners.configuration.schedule();
   }
 
   #stopAutomation(): void {

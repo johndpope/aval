@@ -29,7 +29,7 @@ const RUNTIME_CODE_RECORD: Readonly<Record<RuntimeFailureCode, true>> = Object.f
 });
 const STATIC_REASON_RECORD: Readonly<Record<StaticReason, true>> = Object.freeze({
   "reduced-motion": true,
-  "no-avc-rendition": true,
+  "no-video-rendition": true,
   "worker-unavailable": true,
   "renderer-unavailable": true,
   "codec-unsupported": true,

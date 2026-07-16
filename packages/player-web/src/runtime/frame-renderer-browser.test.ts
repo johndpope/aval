@@ -1,4 +1,4 @@
-import { deriveAvcRenditionGeometry } from "@pixel-point/aval-format";
+import { deriveVideoRenditionGeometry } from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -15,14 +15,13 @@ import {
 import { computePresentationGeometry } from "./presentation-geometry.js";
 
 const PACKED_LAYOUT: FrameTextureLayout = {
-  geometry: deriveAvcRenditionGeometry({
-    profile: "avc-annexb-packed-alpha-v0",
+  geometry: deriveVideoRenditionGeometry({
     canvasWidth: 3,
     canvasHeight: 1,
-    colorRect: [0, 0, 3, 1],
-    alphaRect: [0, 10, 3, 1],
-    codedWidth: 16,
-    codedHeight: 16
+    layout: "packed-alpha",
+    visibleWidth: 3,
+    visibleHeight: 1,
+    storage: { widthAlignment: 16, heightAlignment: 16 }
   }),
   logicalWidth: 6,
   logicalHeight: 2,
@@ -30,14 +29,13 @@ const PACKED_LAYOUT: FrameTextureLayout = {
 };
 
 const FULL_PACKED_LAYOUT: FrameTextureLayout = {
-  geometry: deriveAvcRenditionGeometry({
-    profile: "avc-annexb-packed-alpha-v0",
+  geometry: deriveVideoRenditionGeometry({
     canvasWidth: 6,
     canvasHeight: 2,
-    colorRect: [0, 0, 6, 2],
-    alphaRect: [0, 10, 6, 2],
-    codedWidth: 16,
-    codedHeight: 16
+    layout: "packed-alpha",
+    visibleWidth: 6,
+    visibleHeight: 2,
+    storage: { widthAlignment: 16, heightAlignment: 16 }
   }),
   logicalWidth: 6,
   logicalHeight: 2,
@@ -45,14 +43,13 @@ const FULL_PACKED_LAYOUT: FrameTextureLayout = {
 };
 
 const ODD_PACKED_LAYOUT: FrameTextureLayout = {
-  geometry: deriveAvcRenditionGeometry({
-    profile: "avc-annexb-packed-alpha-v0",
+  geometry: deriveVideoRenditionGeometry({
     canvasWidth: 7,
     canvasHeight: 5,
-    colorRect: [0, 0, 7, 5],
-    alphaRect: [0, 14, 7, 5],
-    codedWidth: 16,
-    codedHeight: 32
+    layout: "packed-alpha",
+    visibleWidth: 7,
+    visibleHeight: 5,
+    storage: { widthAlignment: 16, heightAlignment: 16 }
   }),
   logicalWidth: 7,
   logicalHeight: 5,
@@ -237,13 +234,13 @@ describe("browser profile-neutral frame backend", () => {
     const fixture = createRecordingCanvas();
     const backend = new BrowserFrameBackend(fixture.canvas);
     const opaque: FrameTextureLayout = {
-      geometry: deriveAvcRenditionGeometry({
-        profile: "avc-annexb-opaque-v0",
+      geometry: deriveVideoRenditionGeometry({
         canvasWidth: 3,
         canvasHeight: 1,
-        colorRect: [0, 0, 3, 1],
-        codedWidth: 16,
-        codedHeight: 16
+        layout: "opaque",
+        visibleWidth: 3,
+        visibleHeight: 1,
+        storage: { widthAlignment: 16, heightAlignment: 16 }
       }),
       logicalWidth: 3,
       logicalHeight: 1,

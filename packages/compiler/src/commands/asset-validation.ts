@@ -1,12 +1,22 @@
 import {
   FORMAT_DEFAULT_BUDGETS,
   FormatError,
-  deriveAvcRenditionGeometry,
-  inspectAvcAnnexBRendition,
+  h264CodecForLevel,
+  inspectAv1Rendition,
+  inspectH264AnnexBRendition,
+  inspectH265AnnexBRendition,
+  inspectVp9Rendition,
   validateCompleteAsset,
-  type AvcRenditionInspection,
+  type Av1RenditionInspection,
+  type H264RenditionInspection,
+  type EncodedChunkRecord,
+  type H265RenditionInspection,
   type ParsedFrontIndex,
-  type ValidatedAssetLayout
+  type ProductionRendition,
+  type Unit,
+  type ValidatedAssetLayout,
+  type VideoCodec,
+  type Vp9RenditionInspection
 } from "@pixel-point/aval-format";
 
 import { readBoundedRegularFile } from "../bounded-file.js";
@@ -14,26 +24,58 @@ import { throwIfAborted } from "../cancellation.js";
 import { createSha256Accumulator } from "../compile/hash.js";
 import { CompilerError } from "../diagnostics.js";
 
+export type VideoRenditionInspection =
+  | Readonly<{
+      codec: "h264";
+      rendition: string;
+      codecString: string;
+      inspection: Readonly<H264RenditionInspection>;
+    }>
+  | Readonly<{
+      codec: "h265";
+      rendition: string;
+      codecString: string;
+      inspection: Readonly<H265RenditionInspection>;
+    }>
+  | Readonly<{
+      codec: "vp9";
+      rendition: string;
+      codecString: string;
+      inspection: Readonly<Vp9RenditionInspection>;
+    }>
+  | Readonly<{
+      codec: "av1";
+      rendition: string;
+      codecString: string;
+      inspection: Readonly<Av1RenditionInspection>;
+    }>;
+
 export interface ValidatedAsset {
   readonly bytes: Uint8Array;
   readonly layout: Readonly<ValidatedAssetLayout>;
-  readonly avc: readonly {
-    readonly rendition: string;
-    readonly inspection: AvcRenditionInspection;
-  }[];
+  readonly video: readonly VideoRenditionInspection[];
 }
 
-export interface InspectedAccessUnitRange {
+export interface InspectedChunkRange {
   readonly rendition: string;
   readonly unit: string;
-  readonly frameIndex: number;
-  readonly key: boolean;
-  readonly offset: number;
-  readonly length: number;
+  readonly decodeIndex: number;
+  readonly presentationTimestamp: number;
+  readonly duration: number;
+  readonly randomAccess: boolean;
+  readonly displayedFrameCount: number;
+  readonly byteOffset: number;
+  readonly byteLength: number;
   readonly sha256: string;
 }
 
-/** Read once, validate M4 layout, verify digests, then inspect every AVC unit. */
+interface RoutedUnitChunks {
+  readonly unit: Unit;
+  readonly records: readonly EncodedChunkRecord[];
+  readonly bytes: readonly Uint8Array[];
+}
+
+/** Read once, validate the complete layout/digests, then inspect every rendition. */
 export async function readValidatedAsset(
   file: string,
   signal?: AbortSignal
@@ -50,23 +92,17 @@ export async function readValidatedAsset(
     const layout = validateCompleteAsset({ bytes });
     throwIfAborted(signal);
     verifyBlobDigests(bytes, layout, signal);
-    const avc = inspectAvcRenditions(bytes, layout.frontIndex, signal);
+    const video = inspectVideoRenditions(bytes, layout.frontIndex, signal);
     throwIfAborted(signal);
-    return Object.freeze({ bytes, layout, avc });
+    return Object.freeze({ bytes, layout, video });
   } catch (error) {
     throwIfAborted(signal);
     if (error instanceof CompilerError) throw error;
     if (error instanceof FormatError) {
-      throw new CompilerError(
-        error.code === "PROFILE_INVALID"
-          ? "AVC_PROFILE_INVALID"
-          : "ASSET_INVALID",
-        error.message,
-        {
-          path: file,
-          cause: error
-        }
-      );
+      throw new CompilerError("ASSET_INVALID", error.message, {
+        path: file,
+        cause: error
+      });
     }
     throw new CompilerError("ASSET_INVALID", "Compiled asset is invalid", {
       path: file,
@@ -75,31 +111,49 @@ export async function readValidatedAsset(
   }
 }
 
-export function describeAccessUnits(
+/** Map fixed records back to their rendition/unit identity through canonical spans. */
+export function describeChunks(
   bytes: Uint8Array,
   front: ParsedFrontIndex,
   signal?: AbortSignal
-): readonly InspectedAccessUnitRange[] {
-  const ranges: InspectedAccessUnitRange[] = [];
-  for (const record of front.records) {
-    throwIfAborted(signal);
-    const rendition = front.manifest.renditions[record.renditionIndex];
-    const unit = front.manifest.units[record.unitIndex];
-    if (rendition === undefined || unit === undefined) {
-      throw new CompilerError("ASSET_INVALID", "Access-unit identity is missing");
+): readonly InspectedChunkRange[] {
+  const ranges: InspectedChunkRange[] = [];
+  const visited = new Set<number>();
+  for (const rendition of front.manifest.renditions) {
+    for (const unit of front.manifest.units) {
+      throwIfAborted(signal);
+      const span = unit.chunks.find(({ rendition: id }) => id === rendition.id);
+      if (span === undefined) {
+        throw new CompilerError("ASSET_INVALID", "Encoded-chunk span is missing");
+      }
+      for (let decodeIndex = 0; decodeIndex < span.chunkCount; decodeIndex += 1) {
+        throwIfAborted(signal);
+        const ordinal = span.chunkStart + decodeIndex;
+        const record = front.records[ordinal];
+        if (record === undefined || visited.has(ordinal)) {
+          throw new CompilerError("ASSET_INVALID", "Encoded-chunk identity is invalid");
+        }
+        visited.add(ordinal);
+        ranges.push(Object.freeze({
+          rendition: rendition.id,
+          unit: unit.id,
+          decodeIndex,
+          presentationTimestamp: record.presentationTimestamp,
+          duration: record.duration,
+          randomAccess: record.randomAccess,
+          displayedFrameCount: record.displayedFrameCount,
+          byteOffset: record.byteOffset,
+          byteLength: record.byteLength,
+          sha256: sha256AssetBytes(bytes.subarray(
+            record.byteOffset,
+            record.byteOffset + record.byteLength
+          ), signal)
+        }));
+      }
     }
-    ranges.push(Object.freeze({
-      rendition: rendition.id,
-      unit: unit.id,
-      frameIndex: record.frameIndex,
-      key: record.key,
-      offset: record.payloadOffset,
-      length: record.payloadLength,
-      sha256: sha256AssetBytes(bytes.subarray(
-        record.payloadOffset,
-        record.payloadOffset + record.payloadLength
-      ), signal)
-    }));
+  }
+  if (visited.size !== front.records.length) {
+    throw new CompilerError("ASSET_INVALID", "Encoded-chunk routing is incomplete");
   }
   throwIfAborted(signal);
   return Object.freeze(ranges);
@@ -123,86 +177,343 @@ export function sha256AssetBytes(
   return digest.digestHex();
 }
 
-function inspectAvcRenditions(
+function inspectVideoRenditions(
   bytes: Uint8Array,
   front: ParsedFrontIndex,
   signal?: AbortSignal
-): ValidatedAsset["avc"] {
-  const results: Array<ValidatedAsset["avc"][number]> = [];
-  for (
-    let renditionIndex = 0;
-    renditionIndex < front.manifest.renditions.length;
-    renditionIndex += 1
-  ) {
+): readonly VideoRenditionInspection[] {
+  const results: VideoRenditionInspection[] = [];
+  for (const rendition of front.manifest.renditions) {
     throwIfAborted(signal);
-    const rendition = front.manifest.renditions[renditionIndex];
-    if (
-      rendition?.profile !== "avc-annexb-opaque-v0" &&
-      rendition?.profile !== "avc-annexb-packed-alpha-v0" &&
-      rendition?.profile !== "avc-annexb-opaque-v1" &&
-      rendition?.profile !== "avc-annexb-packed-alpha-v1"
-    ) continue;
-    const geometry = deriveAvcRenditionGeometry(
-      rendition.profile === "avc-annexb-opaque-v0" ||
-        rendition.profile === "avc-annexb-opaque-v1"
-        ? {
-            canvasWidth: front.manifest.canvas.width,
-            canvasHeight: front.manifest.canvas.height,
-            profile: rendition.profile,
-            codedWidth: rendition.codedWidth,
-            codedHeight: rendition.codedHeight,
-            colorRect: rendition.alphaLayout.colorRect
-          }
-        : {
-            canvasWidth: front.manifest.canvas.width,
-            canvasHeight: front.manifest.canvas.height,
-            profile: rendition.profile,
-            codedWidth: rendition.codedWidth,
-            codedHeight: rendition.codedHeight,
-            colorRect: rendition.alphaLayout.colorRect,
-            alphaRect: rendition.alphaLayout.alphaRect
-          }
+    const units = routeRenditionChunks(bytes, front, rendition, signal);
+    const result = inspectVideoRendition(
+      front.manifest.codec,
+      rendition,
+      units,
+      front,
+      signal
     );
-    const units = front.manifest.units.map((unit, unitIndex) => {
-      const accessUnits: Array<{ readonly key: boolean; readonly bytes: Uint8Array }> = [];
-      for (const record of front.records) {
-        throwIfAborted(signal);
-        if (
-          record.renditionIndex === renditionIndex &&
-          record.unitIndex === unitIndex
-        ) {
-          accessUnits.push({
-            key: record.key,
-            bytes: bytes.subarray(
-              record.payloadOffset,
-              record.payloadOffset + record.payloadLength
-            )
-          });
-        }
-      }
-      return { id: unit.id, accessUnits };
-    });
-    throwIfAborted(signal);
-    const inspection = inspectAvcAnnexBRendition({
-      profile: {
-        codedWidth: rendition.codedWidth,
-        codedHeight: rendition.codedHeight,
-        expectedDecodedStorageRect: geometry.decodedStorageRect,
-        frameRate: front.manifest.frameRate,
-        averageBitrate: rendition.bitrate.average,
-        peakBitrate: rendition.bitrate.peak,
-        cpbBufferBits: rendition.bitrate.peak,
-        quantizationPolicy: rendition.profile.endsWith("-v1")
-          ? "bounded-qp-v1"
-          : "fixed-qp26-v0",
-        requireBt709LimitedRange: true
-      },
-      units
-    });
-    throwIfAborted(signal);
-    results.push(Object.freeze({ rendition: rendition.id, inspection }));
+    results.push(result);
   }
   return Object.freeze(results);
+}
+
+function inspectVideoRendition(
+  codec: VideoCodec,
+  rendition: ProductionRendition,
+  units: readonly RoutedUnitChunks[],
+  front: ParsedFrontIndex,
+  signal?: AbortSignal
+): VideoRenditionInspection {
+  switch (codec) {
+    case "h264": {
+      const inspection = inspectH264AnnexBRendition({
+        profile: {
+          codedWidth: rendition.codedWidth,
+          codedHeight: rendition.codedHeight,
+          expectedVisibleRect: decodedStorageRect(rendition),
+          frameRate: front.manifest.frameRate,
+          requireBt709LimitedRange: true
+        },
+        units: units.map(({ unit, records, bytes: chunks }) => ({
+          id: unit.id,
+          accessUnits: chunks.map((chunk, index) => ({
+            bytes: chunk,
+            key: records[index]!.randomAccess
+          }))
+        }))
+      });
+      assertCodecString(
+        rendition,
+        h264CodecForLevel(inspection.parameterSet.levelIdc)
+      );
+      assertH264Timeline(units, inspection);
+      throwIfAborted(signal);
+      return Object.freeze({
+        codec,
+        rendition: rendition.id,
+        codecString: rendition.codec,
+        inspection
+      });
+    }
+    case "h265": {
+      const inspection = inspectH265AnnexBRendition({
+        profile: {
+          codedWidth: rendition.codedWidth,
+          codedHeight: rendition.codedHeight,
+          expectedVisibleRect: decodedStorageRect(rendition),
+          frameRate: front.manifest.frameRate,
+          requireBt709LimitedRange: true
+        },
+        units: units.map(({ unit, records, bytes: chunks }) => ({
+          id: unit.id,
+          accessUnits: chunks.map((chunk, index) => ({
+            bytes: chunk,
+            key: records[index]!.randomAccess
+          }))
+        }))
+      });
+      assertCodecString(rendition, inspection.parameterSet.codec);
+      assertH265Timeline(units, inspection);
+      throwIfAborted(signal);
+      return Object.freeze({
+        codec,
+        rendition: rendition.id,
+        codecString: rendition.codec,
+        inspection
+      });
+    }
+    case "vp9": {
+      const inspection = inspectVp9Rendition({
+        width: rendition.codedWidth,
+        height: rendition.codedHeight,
+        frameRate: front.manifest.frameRate,
+        averageBitrate: rendition.bitrate.average,
+        units: units.map(({ unit, records, bytes: chunks }) => ({
+          id: unit.id,
+          expectedDisplayedFrames: unit.frameCount,
+          packets: chunks.map((chunk, index) => ({
+            bytes: chunk,
+            key: records[index]!.randomAccess,
+            timestamp: records[index]!.presentationTimestamp
+          }))
+        }))
+      });
+      assertCodecString(rendition, inspection.codec);
+      assertVp9Timeline(units, inspection);
+      throwIfAborted(signal);
+      return Object.freeze({
+        codec,
+        rendition: rendition.id,
+        codecString: rendition.codec,
+        inspection
+      });
+    }
+    case "av1": {
+      const inspection = inspectAv1Rendition({
+        width: rendition.codedWidth,
+        height: rendition.codedHeight,
+        bitDepth: rendition.bitDepth,
+        units: units.map(({ unit, records, bytes: chunks }) => ({
+          id: unit.id,
+          expectedDisplayedFrames: unit.frameCount,
+          chunks: chunks.map((chunk, index) => ({
+            bytes: chunk,
+            key: records[index]!.randomAccess,
+            timestamp: records[index]!.presentationTimestamp
+          }))
+        }))
+      });
+      assertCodecString(rendition, inspection.codec);
+      assertAv1Timeline(units, inspection);
+      throwIfAborted(signal);
+      return Object.freeze({
+        codec,
+        rendition: rendition.id,
+        codecString: rendition.codec,
+        inspection
+      });
+    }
+  }
+}
+
+function routeRenditionChunks(
+  bytes: Uint8Array,
+  front: ParsedFrontIndex,
+  rendition: ProductionRendition,
+  signal?: AbortSignal
+): readonly RoutedUnitChunks[] {
+  return Object.freeze(front.manifest.units.map((unit) => {
+    throwIfAborted(signal);
+    const span = unit.chunks.find(({ rendition: id }) => id === rendition.id);
+    if (span === undefined || span.frameCount !== unit.frameCount) {
+      throw new CompilerError("ASSET_INVALID", "Rendition chunk span is invalid");
+    }
+    const records = front.records.slice(
+      span.chunkStart,
+      span.chunkStart + span.chunkCount
+    );
+    if (records.length !== span.chunkCount) {
+      throw new CompilerError("ASSET_INVALID", "Rendition chunk records are missing");
+    }
+    return Object.freeze({
+      unit,
+      records: Object.freeze(records),
+      bytes: Object.freeze(records.map((record) => bytes.subarray(
+        record.byteOffset,
+        record.byteOffset + record.byteLength
+      )))
+    });
+  }));
+}
+
+function decodedStorageRect(
+  rendition: ProductionRendition
+): readonly [0, 0, number, number] {
+  const color = rendition.alphaLayout.colorRect;
+  const width = color[2] + color[2] % 2;
+  const height = rendition.alphaLayout.type === "opaque"
+    ? color[3] + color[3] % 2
+    : rendition.alphaLayout.alphaRect[1] +
+      rendition.alphaLayout.alphaRect[3] +
+      rendition.alphaLayout.alphaRect[3] % 2;
+  if (width > rendition.codedWidth || height > rendition.codedHeight) {
+    throw new CompilerError("ASSET_INVALID", "Decoded storage rectangle is invalid");
+  }
+  return Object.freeze([0, 0, width, height]);
+}
+
+function assertCodecString(
+  rendition: ProductionRendition,
+  inspectedCodec: string
+): void {
+  if (rendition.codec === inspectedCodec) return;
+  const permitsExtendedForm =
+    (rendition.codec.startsWith("vp09.") || rendition.codec.startsWith("av01.")) &&
+    inspectedCodec.startsWith(`${rendition.codec}.`);
+  if (permitsExtendedForm) return;
+  throw new CompilerError(
+    "ASSET_INVALID",
+    `Rendition ${rendition.id} codec string disagrees with its bitstream`
+  );
+}
+
+function assertH264Timeline(
+  routed: readonly RoutedUnitChunks[],
+  inspection: Readonly<H264RenditionInspection>
+): void {
+  for (let unitIndex = 0; unitIndex < routed.length; unitIndex += 1) {
+    const source = routed[unitIndex]!;
+    const inspected = inspection.units[unitIndex];
+    assertUnitIdentity(source, inspected?.id, inspected?.accessUnits.length);
+    for (let index = 0; index < source.records.length; index += 1) {
+      const record = source.records[index]!;
+      const accessUnit = inspected!.accessUnits[index]!;
+      assertChunkAgreement(record, accessUnit.key, 1, source.unit.id, index);
+    }
+    const byTimestamp = source.records
+      .map((record, decodeIndex) => ({ decodeIndex, timestamp: record.presentationTimestamp }))
+      .sort((left, right) => left.timestamp - right.timestamp || left.decodeIndex - right.decodeIndex)
+      .map(({ decodeIndex }) => decodeIndex);
+    const byInspection = [...inspected!.accessUnits]
+      .sort((left, right) => left.presentationIndex - right.presentationIndex)
+      .map(({ decodeIndex }) => decodeIndex);
+    if (!sameNumbers(byTimestamp, byInspection)) {
+      throw new CompilerError(
+        "ASSET_INVALID",
+        `Unit ${source.unit.id} presentation timeline disagrees with its H.264 bitstream`
+      );
+    }
+  }
+}
+
+function assertH265Timeline(
+  routed: readonly RoutedUnitChunks[],
+  inspection: Readonly<H265RenditionInspection>
+): void {
+  for (let unitIndex = 0; unitIndex < routed.length; unitIndex += 1) {
+    const source = routed[unitIndex]!;
+    const inspected = inspection.units[unitIndex];
+    assertUnitIdentity(source, inspected?.id, inspected?.accessUnits.length);
+    for (let index = 0; index < source.records.length; index += 1) {
+      const record = source.records[index]!;
+      const accessUnit = inspected!.accessUnits[index]!;
+      assertChunkAgreement(record, accessUnit.key, 1, source.unit.id, index);
+    }
+    const byTimestamp = source.records
+      .map((record, decodeIndex) => ({ decodeIndex, timestamp: record.presentationTimestamp }))
+      .sort((left, right) => left.timestamp - right.timestamp || left.decodeIndex - right.decodeIndex)
+      .map(({ decodeIndex }) => decodeIndex);
+    const byInspection = [...inspected!.accessUnits]
+      .sort((left, right) => left.presentationIndex - right.presentationIndex)
+      .map(({ decodeIndex }) => decodeIndex);
+    if (!sameNumbers(byTimestamp, byInspection)) {
+      throw new CompilerError(
+        "ASSET_INVALID",
+        `Unit ${source.unit.id} presentation timeline disagrees with its HEVC bitstream`
+      );
+    }
+  }
+}
+
+function assertVp9Timeline(
+  routed: readonly RoutedUnitChunks[],
+  inspection: Readonly<Vp9RenditionInspection>
+): void {
+  for (let unitIndex = 0; unitIndex < routed.length; unitIndex += 1) {
+    const source = routed[unitIndex]!;
+    const inspected = inspection.units[unitIndex];
+    assertUnitIdentity(source, inspected?.id, inspected?.packets.length);
+    for (let index = 0; index < source.records.length; index += 1) {
+      const packet = inspected!.packets[index]!;
+      assertChunkAgreement(
+        source.records[index]!,
+        packet.chunkType === "key",
+        packet.displayedFrameCount,
+        source.unit.id,
+        index
+      );
+    }
+  }
+}
+
+function assertAv1Timeline(
+  routed: readonly RoutedUnitChunks[],
+  inspection: Readonly<Av1RenditionInspection>
+): void {
+  for (let unitIndex = 0; unitIndex < routed.length; unitIndex += 1) {
+    const source = routed[unitIndex]!;
+    const inspected = inspection.units[unitIndex];
+    assertUnitIdentity(source, inspected?.id, inspected?.chunks.length);
+    for (let index = 0; index < source.records.length; index += 1) {
+      const chunk = inspected!.chunks[index]!;
+      assertChunkAgreement(
+        source.records[index]!,
+        chunk.chunkType === "key",
+        chunk.displayedFrameCount,
+        source.unit.id,
+        index
+      );
+    }
+  }
+}
+
+function assertUnitIdentity(
+  source: RoutedUnitChunks,
+  inspectedId: string | undefined,
+  inspectedChunkCount: number | undefined
+): void {
+  if (
+    inspectedId !== source.unit.id ||
+    inspectedChunkCount !== source.records.length
+  ) {
+    throw new CompilerError(
+      "ASSET_INVALID",
+      `Unit ${source.unit.id} inspection does not match its encoded chunks`
+    );
+  }
+}
+
+function assertChunkAgreement(
+  record: EncodedChunkRecord,
+  randomAccess: boolean,
+  displayedFrameCount: number,
+  unit: string,
+  decodeIndex: number
+): void {
+  if (
+    record.randomAccess !== randomAccess ||
+    record.displayedFrameCount !== displayedFrameCount
+  ) {
+    throw new CompilerError(
+      "ASSET_INVALID",
+      `Unit ${unit} chunk ${String(decodeIndex)} metadata disagrees with its bitstream`
+    );
+  }
+}
+
+function sameNumbers(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
 function verifyBlobDigests(

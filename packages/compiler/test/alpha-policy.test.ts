@@ -124,18 +124,6 @@ describe("asset-wide canonical alpha policy", () => {
     }
   });
 
-  it("retains the deprecated 0.1 opaque diagnostic mapping without a second policy", () => {
-    const audit = auditCanonicalAlphaFrames([
-      frame("legacy", 0, [255, 1])
-    ]);
-    expect(() => resolveAlphaPolicy("opaque", audit, {
-      rejectionCode: "OPAQUE_ONLY_M5"
-    })).toThrow(expect.objectContaining({
-      code: "OPAQUE_ONLY_M5",
-      phase: "classification"
-    }));
-  });
-
   it("warns only once when explicit packed is unnecessary", () => {
     const audit = auditCanonicalAlphaFrames([
       frame("source", 0, [255, 255])

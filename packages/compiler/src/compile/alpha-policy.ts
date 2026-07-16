@@ -113,10 +113,7 @@ export function createCanonicalAlphaAuditor(
 /** Resolve the one asset-wide encoder profile from a completed byte audit. */
 export function resolveAlphaPolicy(
   requested: SourceAlphaPolicy,
-  audit: Readonly<AlphaAuditSummary>,
-  options: {
-    readonly rejectionCode?: "ALPHA_POLICY_REJECTED" | "OPAQUE_ONLY_M5";
-  } = {}
+  audit: Readonly<AlphaAuditSummary>
 ): Readonly<AlphaPolicyDecision> {
   if (requested !== "auto" && requested !== "opaque" && requested !== "packed") {
     throw new CompilerError("INPUT_INVALID", "Alpha policy is invalid");
@@ -125,7 +122,7 @@ export function resolveAlphaPolicy(
   if (requested === "opaque" && !audit.allOpaque) {
     const first = audit.firstNonopaque!;
     throw new CompilerError(
-      options.rejectionCode ?? "ALPHA_POLICY_REJECTED",
+      "ALPHA_POLICY_REJECTED",
       "Explicit opaque alpha policy rejected a nonopaque canonical pixel",
       {
         source: first.source,

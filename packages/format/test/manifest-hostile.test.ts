@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { FormatError } from "../src/errors.js";
-import { validateCompiledManifestV01 } from "../src/manifest-schema.js";
+import { validateCompiledManifest } from "../src/manifest-schema.js";
 import { validManifest } from "./manifest-fixture.js";
 
 describe("hostile compiled manifests", () => {
@@ -9,8 +9,8 @@ describe("hostile compiled manifests", () => {
     const cases: readonly [string, (manifest: any) => void][] = [
       ["manifest", (m) => { m.unknown = true; }],
       ["canvas", (m) => { m.canvas.unknown = true; }],
-      ["renditions[0]", (m) => { m.renditions[0].bitrate = { average: 1, peak: 1 }; }],
-      ["renditions[0].alphaLayout", (m) => { m.renditions[0].alphaLayout.colorRect = [0, 0, 1, 1]; }],
+      ["renditions[0]", (m) => { m.renditions[0].profile = "legacy"; }],
+      ["renditions[0].alphaLayout.colorRect", (m) => { m.renditions[0].alphaLayout.colorRect = [1, 0, 1, 1]; }],
       ["units[0]", (m) => { m.units[0].residency = { endpoints: [] }; }],
       ["units[3]", (m) => { m.units[3].ports = []; }],
       ["states[1]", (m) => { m.states[1].mystery = "x"; }],
@@ -39,9 +39,9 @@ describe("hostile compiled manifests", () => {
       ["canvas.pixelAspect", (m) => { m.canvas.pixelAspect = [1]; }],
       ["canvas.width", (m) => { m.canvas.width = Number.MAX_SAFE_INTEGER + 1; }],
       ["frameRate.numerator", (m) => { m.frameRate.numerator = 61; }],
-      ["renditions[0].capabilities", (m) => { m.renditions[0].capabilities = ["webgl2"]; }],
+      ["renditions[0]", (m) => { m.renditions[0].capabilities = ["webgl2"]; }],
       ["units[0].ports[0].portalFrames[0]", (m) => { m.units[0].ports[0].portalFrames[0] = -1; }],
-      ["units[0].samples[0].sampleStart", (m) => { m.units[0].samples[0].sampleStart = 0.5; }],
+      ["units[0].chunks[0].chunkStart", (m) => { m.units[0].chunks[0].chunkStart = 0.5; }],
       ["states[0]", (m) => { m.states = Array(1); }],
       ["edges[0].start.maxWaitFrames", (m) => { m.edges[0].start.maxWaitFrames = -1; }],
       ["readiness.bootstrapUnits", (m) => { m.readiness.bootstrapUnits = ["body-a", "body-a"]; }]
@@ -62,7 +62,7 @@ describe("hostile compiled manifests", () => {
       }
     });
 
-    expect(() => validateCompiledManifestV01(manifest)).toThrowError(
+    expect(() => validateCompiledManifest(manifest)).toThrowError(
       expect.objectContaining({ name: "FormatError", code: "MANIFEST_INVALID" })
     );
   });
@@ -110,12 +110,12 @@ describe("hostile compiled manifests", () => {
     expectInvalid(manifest, "canvas");
 
     expect(() =>
-      validateCompiledManifestV01(validManifest(), {
+      validateCompiledManifest(validManifest(), {
         budgets: { maxStates: 33 }
       })
     ).toThrowError(expect.objectContaining({ code: "INPUT_INVALID" }));
     expect(() =>
-      validateCompiledManifestV01(validManifest(), {
+      validateCompiledManifest(validManifest(), {
         budgets: { maxStates: -1 }
       })
     ).toThrowError(expect.objectContaining({ code: "INPUT_INVALID" }));
@@ -128,7 +128,7 @@ function mutableManifest(): any {
 
 function expectInvalid(value: unknown, path: string): void {
   try {
-    validateCompiledManifestV01(value);
+    validateCompiledManifest(value);
     throw new Error(`expected manifest validation to fail at ${path}`);
   } catch (error) {
     expect(error).toBeInstanceOf(FormatError);

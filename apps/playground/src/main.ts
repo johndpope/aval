@@ -1,436 +1,251 @@
-import {
-  LoopCanvasPlayer,
-  runContinuousLoopStress,
-  type ContinuousLoopStressReport,
-  type LoopCanvasPlayerSnapshot
-} from "@pixel-point/aval-player-web";
-
 import "./style.css";
 import {
-  createSyntheticOrbitLoop,
-  createSyntheticStressLoop,
-  type SyntheticCodecEvidence,
-  type SyntheticLoopFixture
-} from "./spike/create-synthetic-loop";
-import { readFrameTagFromVideoFrame } from "./spike/frame-tag";
-import { mountM2Playground } from "./m2-playground";
+  parseCompileBundleReport,
+  VIDEO_CODECS,
+  type VideoCodec
+} from "@pixel-point/aval-format";
 
-interface BrowserStressResult {
-  readonly fixture: SyntheticCodecEvidence;
-  readonly report: ContinuousLoopStressReport;
+type Codec = VideoCodec;
+
+interface SourcePlaygroundApi {
+  readonly ready: Promise<void>;
+  readonly player: HTMLElement;
+  sourceSnapshot(): readonly Readonly<{
+    codec: string | null;
+    src: string | null;
+    type: string | null;
+    integrity: string | null;
+  }>[];
 }
 
-interface BrowserPlayerSnapshot {
-  readonly state: LoopCanvasPlayerSnapshot["state"];
-  readonly virtualFrame: string | null;
-  readonly contentFrame: number | null;
-  readonly canvasSeams: number;
-  readonly underflows: number;
-  readonly lateContentFrames: number;
-  readonly canvasDrawnFrames: number;
-  readonly queuedFrames: number;
-  readonly decodeQueueSize: number;
-  readonly configureCalls: number;
-  readonly boundaryFlushCalls: number;
-  readonly openFrames: number;
-  readonly error: string | null;
+interface PlayerDiagnostics {
+  readonly runtime: Readonly<{
+    readonly selectedCodec: string | null;
+    readonly selectedRendition: string | null;
+  }>;
 }
 
-interface AvalSpikeApi {
-  readonly ready: Promise<SyntheticCodecEvidence>;
-  runStress(): Promise<BrowserStressResult>;
-  snapshot(): BrowserPlayerSnapshot | null;
-  pause(): void;
-  resume(): Promise<void>;
-  dispose(): void;
-}
+type PlaygroundPlayer = HTMLElement & {
+  readonly readiness?: string;
+  prepare?(options?: Readonly<{ timeoutMs?: number }>): Promise<unknown>;
+  getDiagnostics?(): Readonly<PlayerDiagnostics>;
+};
 
 declare global {
   interface Window {
-    __avalSpike: AvalSpikeApi;
+    readonly avalSourcePlayground: SourcePlaygroundApi;
   }
 }
 
-const app = requireElement<HTMLElement>("#app");
+const CODEC_ORDER = Object.freeze([...VIDEO_CODECS].reverse());
+const player = requireElement<HTMLElement>("#motion");
+const status = requireElement<HTMLElement>("#status");
+const codecList = requireElement<HTMLOListElement>("#codec-list");
+const codecButtons = new Map<Codec, HTMLButtonElement>(CODEC_ORDER.map((codec) => [
+  codec,
+  requireElement<HTMLButtonElement>(`#codec-list button[data-codec="${codec}"]`)
+]));
+const query = new URLSearchParams(location.search);
+const session = boundedSession(query.get("session") ?? "playground");
+const includeIntegrity = query.get("integrity") !== "0";
+let requestedCodec: Codec = "av1";
+let switching = false;
 
-app.innerHTML = `
-  <div class="page-shell">
-    <header class="hero">
-      <div>
-        <p class="eyebrow">Open AVAL lab · M1 + M2</p>
-        <h1>Motion that keeps its momentum</h1>
-        <p class="lede">
-          Continuous loops and interaction clips are scheduled as frames—not
-          opaque video seeks—so a new intent can reverse without deliberately
-          holding or repeating a content frame.
-        </p>
-      </div>
-      <div class="status-cluster" aria-live="polite">
-        <span class="status-dot" aria-hidden="true"></span>
-        <span id="runtime-status">Preparing codec fixture…</span>
-      </div>
-    </header>
-
-    <main class="page-content">
-      <div id="m2-playground-root"></div>
-
-      <div class="milestone-heading">
-        <p class="eyebrow">Continuous loop experiment · M1</p>
-        <h2>Prove the seam before freezing the format</h2>
-      </div>
-
-      <div class="experiment-grid">
-      <section class="stage-card" aria-labelledby="stage-title">
-        <div class="card-heading">
-          <div>
-            <p class="section-label">Realtime path</p>
-            <h2 id="stage-title">Decoded ahead of the seam</h2>
-          </div>
-          <span id="codec-pill" class="codec-pill">probing</span>
-        </div>
-
-        <div class="canvas-wrap">
-          <canvas id="motion-canvas" width="256" height="256" aria-label="Synthetic orbit animation"></canvas>
-          <div class="frame-chip">
-            <span>content frame</span>
-            <strong id="overlay-frame">—</strong>
-          </div>
-        </div>
-
-        <div class="controls" aria-label="Playback controls">
-          <button id="pause-button" type="button" disabled>Pause</button>
-          <button id="resume-button" type="button" disabled>Resume</button>
-          <button id="restart-button" type="button" disabled>Restart</button>
-        </div>
-      </section>
-
-      <section class="telemetry-card" aria-labelledby="telemetry-title">
-        <div class="card-heading">
-          <div>
-            <p class="section-label">Live telemetry</p>
-            <h2 id="telemetry-title">The seam is just another frame</h2>
-          </div>
-        </div>
-
-        <dl class="metric-grid">
-          <div><dt>State</dt><dd id="metric-state">idle</dd></div>
-          <div><dt>Virtual frame</dt><dd id="metric-virtual">—</dd></div>
-          <div><dt>Canvas seams drawn</dt><dd id="metric-seams">0</dd></div>
-          <div><dt>Decoded lead</dt><dd id="metric-queued">0</dd></div>
-          <div><dt>Decoder queue</dt><dd id="metric-decode-queue">0</dd></div>
-          <div><dt>Underflows</dt><dd id="metric-underflows">0</dd></div>
-          <div><dt>Late content frames</dt><dd id="metric-late">0</dd></div>
-          <div><dt>Configure calls</dt><dd id="metric-configure">0</dd></div>
-          <div><dt>Boundary flush/reset</dt><dd id="metric-boundary">0</dd></div>
-          <div><dt>Open VideoFrames</dt><dd id="metric-open">0</dd></div>
-        </dl>
-
-        <div class="evidence-block">
-          <p class="section-label">Codec evidence</p>
-          <p id="codec-evidence">Waiting for a real encoder and decoder allocation.</p>
-        </div>
-      </section>
-
-      <section class="stress-card" aria-labelledby="stress-title">
-        <div>
-          <p class="section-label">Deterministic fast path</p>
-          <h2 id="stress-title">Prove 1,000 seams without waiting in realtime</h2>
-          <p>
-            The burst test replays a two-frame key/delta unit 1,001 times,
-            reads every decoded frame tag, and audits every lifecycle counter.
-          </p>
-        </div>
-        <div class="stress-actions">
-          <button id="stress-button" class="primary-button" type="button" disabled>
-            Run 1,000-seam test
-          </button>
-          <progress id="stress-progress" max="2002" value="0" aria-label="Stress frames validated"></progress>
-          <output id="stress-result">Not run yet</output>
-        </div>
-      </section>
-
-      <aside class="contract-card">
-        <p class="section-label">What this milestone proves</p>
-        <ul>
-          <li>Global timestamps come from exact rational frame ordinals.</li>
-          <li>The next key access unit is submitted before the current loop ends.</li>
-          <li>Every decoded frame has explicit, testable ownership.</li>
-          <li>Headless results prove ordering—not physical display scan-out.</li>
-        </ul>
-      </aside>
-      </div>
-    </main>
-  </div>
-`;
-
-const canvas = requireElement<HTMLCanvasElement>("#motion-canvas");
-const status = requireElement<HTMLElement>("#runtime-status");
-const codecPill = requireElement<HTMLElement>("#codec-pill");
-const codecEvidence = requireElement<HTMLElement>("#codec-evidence");
-const pauseButton = requireElement<HTMLButtonElement>("#pause-button");
-const resumeButton = requireElement<HTMLButtonElement>("#resume-button");
-const restartButton = requireElement<HTMLButtonElement>("#restart-button");
-const stressButton = requireElement<HTMLButtonElement>("#stress-button");
-const stressProgress = requireElement<HTMLProgressElement>("#stress-progress");
-const stressResult = requireElement<HTMLOutputElement>("#stress-result");
-const m2Root = requireElement<HTMLElement>("#m2-playground-root");
-
-let orbitFixture: SyntheticLoopFixture | null = null;
-let player: LoopCanvasPlayer | null = null;
-let latestSnapshot: LoopCanvasPlayerSnapshot | null = null;
-let stressPromise: Promise<BrowserStressResult> | null = null;
-let lastTelemetryPaint = 0;
-
-let resolveReady: (evidence: SyntheticCodecEvidence) => void;
-let rejectReady: (reason: unknown) => void;
-const ready = new Promise<SyntheticCodecEvidence>((resolve, reject) => {
-  resolveReady = resolve;
-  rejectReady = reject;
-});
-void ready.catch(() => undefined);
-mountM2Playground(m2Root, ready);
-
-window.__avalSpike = {
+const ready = initialize();
+const api: SourcePlaygroundApi = Object.freeze({
   ready,
-  runStress,
-  snapshot: () =>
-    latestSnapshot === null ? null : serializeSnapshot(latestSnapshot),
-  pause: () => {
-    player?.pause();
-  },
-  resume: async () => {
-    await player?.resume();
-  },
-  dispose: () => {
-    player?.dispose();
-    player = null;
-  }
-};
-
-pauseButton.addEventListener("click", () => {
-  player?.pause();
+  player,
+  sourceSnapshot: () => Object.freeze(
+    [...player.querySelectorAll<HTMLSourceElement>(":scope > source")].map((source) =>
+      Object.freeze({
+        codec: source.dataset.avalCodec ?? null,
+        src: source.getAttribute("src"),
+        type: source.getAttribute("type"),
+        integrity: source.getAttribute("integrity")
+      })
+    )
+  )
 });
-resumeButton.addEventListener("click", () => {
-  void player?.resume().catch(showRuntimeError);
-});
-restartButton.addEventListener("click", () => {
-  void restartRealtimePlayer().catch(showRuntimeError);
-});
-stressButton.addEventListener("click", () => {
-  void runStress().catch((error: unknown) => {
-    stressResult.dataset.state = "failed";
-    stressResult.textContent = normalizeError(error).message;
-  });
-});
-
-void initialize().catch((error: unknown) => {
-  const normalized = normalizeError(error);
-  rejectReady(normalized);
-  showRuntimeError(normalized);
+Object.defineProperty(window, "avalSourcePlayground", {
+  value: api,
+  configurable: false,
+  enumerable: false,
+  writable: false
 });
 
 async function initialize(): Promise<void> {
-  assertSecureBrowserContext();
-  orbitFixture = await createSyntheticOrbitLoop({
-    frameCount: 24,
-    frameRate: { numerator: 30, denominator: 1 },
-    width: 256,
-    height: 256
-  });
-  renderCodecEvidence(orbitFixture.evidence);
-  await createAndStartPlayer(orbitFixture);
-  stressButton.disabled = false;
-  restartButton.disabled = false;
-  resolveReady(orbitFixture.evidence);
-}
-
-async function createAndStartPlayer(
-  fixture: SyntheticLoopFixture
-): Promise<void> {
-  player?.dispose();
-  player = new LoopCanvasPlayer(canvas, fixture.unit, {
-    prebufferFrames: 8,
-    onSnapshot: renderPlayerSnapshot
-  });
-  await player.start();
-}
-
-async function restartRealtimePlayer(): Promise<void> {
-  if (orbitFixture === null) {
-    throw new Error("The realtime fixture is not ready");
-  }
-  await createAndStartPlayer(orbitFixture);
-}
-
-async function runStress(): Promise<BrowserStressResult> {
-  await ready;
-  if (stressPromise !== null) {
-    return stressPromise;
-  }
-
-  stressPromise = runStressOnce();
-  return stressPromise;
-}
-
-async function runStressOnce(): Promise<BrowserStressResult> {
-  const shouldResume = player?.state === "running";
-  player?.pause();
-  stressButton.disabled = true;
-  stressProgress.value = 0;
-  stressResult.dataset.state = "running";
-  stressResult.textContent = "Encoding the two-frame unit…";
-
+  status.textContent = "Loading the AVAL 1.0 bundle report…";
   try {
-    const fixture = await createSyntheticStressLoop({
-      frameRate: { numerator: 30, denominator: 1 },
-      width: 256,
-      height: 256
+    const response = await fetch("/__aval_v1__/build.json", {
+      cache: "no-store",
+      headers: { "X-Aval-Session": session }
     });
-    stressResult.textContent = "Decoding and checking 2,002 frames…";
-    const report = await runContinuousLoopStress(fixture.unit, {
-      readTag: async (frame) => (await readFrameTagFromVideoFrame(frame)).value,
-      onValidatedFrame: (_expected, count) => {
-        if (count % 50 === 0 || count === 2_002) {
-          stressProgress.value = count;
-          stressResult.textContent = `${count.toLocaleString()} / 2,002 frames validated`;
-        }
+    if (!response.ok) throw new Error(`bundle report request failed (${String(response.status)})`);
+    const report = parseCompileBundleReport(await response.json());
+    const assets = new Map(report.assets.map((asset) => [asset.codec, asset]));
+    for (const codec of CODEC_ORDER) {
+      const source = player.querySelector<HTMLSourceElement>(
+        `:scope > source[data-aval-codec="${codec}"]`
+      );
+      const asset = assets.get(codec);
+      if (source === null || asset === undefined) {
+        throw new Error(`bundle report is missing the ordered ${codec} source`);
       }
-    });
-
-    stressResult.dataset.state = "passed";
-    stressResult.textContent = [
-      `${report.seams.toLocaleString()} seams passed`,
-      `${report.throughputMultiple.toFixed(1)}× realtime`,
-      `${report.metrics.boundaryFlushCalls} boundary flushes`,
-      `${report.metrics.openFrames} leaked frames`
-    ].join(" · ");
-
-    return { fixture: fixture.evidence, report };
-  } catch (error) {
-    stressResult.dataset.state = "failed";
-    stressResult.textContent = normalizeError(error).message;
-    stressPromise = null;
-    throw error;
-  } finally {
-    stressButton.disabled = false;
-    if (shouldResume && player?.state === "paused") {
-      await player.resume();
+      const url = new URL(`/__aval_v1__/${asset.path}`, location.href);
+      url.searchParams.set("session", session);
+      source.src = url.href;
+      source.type = asset.type;
+      if (includeIntegrity) source.setAttribute("integrity", asset.integrity);
     }
+    await import("@pixel-point/aval-element/auto");
+    const motion = player as PlaygroundPlayer;
+    bindCodecControls(motion);
+    player.addEventListener("readinesschange", () => {
+      publishRuntimeStatus(motion);
+    });
+    player.addEventListener("error", () => {
+      if (!switching) publishRuntimeStatus(motion);
+    });
+    await motion.prepare?.({ timeoutMs: 30_000 });
+    publishRuntimeStatus(motion);
+    setControlsDisabled(false);
+  } catch (error) {
+    status.textContent = error instanceof Error ? error.message : "playground initialization failed";
+    status.dataset.state = "error";
+    throw error;
   }
 }
 
-function renderPlayerSnapshot(snapshot: LoopCanvasPlayerSnapshot): void {
-  latestSnapshot = snapshot;
-  const now = performance.now();
-  const stateChanged =
-    requireElement<HTMLElement>("#metric-state").textContent !== snapshot.state;
-  if (!stateChanged && now - lastTelemetryPaint < 100) {
+function bindCodecControls(motion: PlaygroundPlayer): void {
+  for (const [codec, button] of codecButtons) {
+    button.addEventListener("click", () => {
+      void switchPreferredCodec(motion, codec);
+    });
+  }
+}
+
+async function switchPreferredCodec(
+  motion: PlaygroundPlayer,
+  codec: Codec
+): Promise<void> {
+  if (switching) return;
+  requestedCodec = codec;
+  switching = true;
+  setControlsDisabled(true);
+  publishControlState(null);
+  codecList.setAttribute("aria-busy", "true");
+  status.textContent = `Trying ${codecLabel(codec)} first…`;
+  status.dataset.state = "switching";
+  let prepared = false;
+  try {
+    reorderSources(codec);
+    await motion.prepare?.({ timeoutMs: 30_000 });
+    prepared = true;
+  } catch (error) {
+    status.textContent = error instanceof Error
+      ? `Could not try ${codecLabel(codec)}: ${error.message}`
+      : `Could not try ${codecLabel(codec)}.`;
+    status.dataset.state = "error";
+  } finally {
+    switching = false;
+    codecList.removeAttribute("aria-busy");
+    setControlsDisabled(false);
+    if (prepared) publishRuntimeStatus(motion);
+  }
+}
+
+function reorderSources(codec: Codec): void {
+  const sources = new Map<Codec, HTMLSourceElement>();
+  for (const source of player.querySelectorAll<HTMLSourceElement>(":scope > source")) {
+    const family = source.dataset.avalCodec as Codec | undefined;
+    if (family !== undefined && CODEC_ORDER.includes(family)) sources.set(family, source);
+  }
+  if (sources.size !== CODEC_ORDER.length) {
+    throw new Error("the player does not contain all four codec sources");
+  }
+  const fragment = document.createDocumentFragment();
+  for (const family of [codec, ...CODEC_ORDER.filter((entry) => entry !== codec)]) {
+    fragment.append(requireMapValue(sources, family));
+  }
+  const fallback = player.querySelector(":scope > [slot=\"fallback\"]");
+  player.insertBefore(fragment, fallback);
+}
+
+function publishRuntimeStatus(motion: PlaygroundPlayer): void {
+  const readiness = motion.readiness ?? "ready";
+  const codec = motion.getDiagnostics?.().runtime.selectedCodec ?? null;
+  const family = codec === null ? null : familyForCodec(codec);
+  if (switching) {
+    status.textContent = `Trying ${codecLabel(requestedCodec)} first… Runtime readiness: ${readiness}`;
+    status.dataset.state = "switching";
     return;
   }
-  lastTelemetryPaint = now;
-
-  setText("#metric-state", snapshot.state);
-  setText("#metric-virtual", snapshot.virtualFrame?.toString() ?? "—");
-  setText("#metric-seams", snapshot.canvasSeams.toLocaleString());
-  setText("#metric-queued", snapshot.decoder.queuedFrames.toString());
-  setText("#metric-decode-queue", snapshot.decoder.decodeQueueSize.toString());
-  setText("#metric-underflows", snapshot.underflows.toString());
-  setText("#metric-late", snapshot.lateContentFrames.toString());
-  setText("#metric-configure", snapshot.decoder.configureCalls.toString());
-  setText(
-    "#metric-boundary",
-    (snapshot.decoder.boundaryFlushCalls + snapshot.decoder.resetCalls).toString()
-  );
-  setText("#metric-open", snapshot.decoder.openFrames.toString());
-  setText("#overlay-frame", snapshot.contentFrame?.toString() ?? "—");
-
-  status.textContent = statusText(snapshot);
-  status.parentElement?.setAttribute("data-state", snapshot.state);
-  pauseButton.disabled = snapshot.state !== "running";
-  resumeButton.disabled = snapshot.state !== "paused";
+  status.textContent = runtimeStatusText(readiness, codec, family);
+  status.dataset.state = readiness;
+  publishControlState(family);
 }
 
-function renderCodecEvidence(evidence: SyntheticCodecEvidence): void {
-  codecPill.textContent = evidence.selectedCodec;
-  codecPill.dataset.codec = evidence.selectedCodec;
-  const h264 =
-    evidence.h264AnnexB === "supported"
-      ? "H.264 Annex B verified with in-band SPS/PPS/IDR"
-      : `H.264 Annex B ${evidence.h264AnnexB}: ${
-          evidence.h264AnnexBReason ?? "no reason reported"
-        }`;
-  codecEvidence.textContent = `${h264}. Active fixture: ${evidence.selectedCodec}; ${evidence.encoderOutputCount} encoded and ${evidence.decoderOutputCount} decoded during allocation proof.`;
+function runtimeStatusText(
+  readiness: string,
+  codec: string | null,
+  family: Codec | null
+): string {
+  if (family === null || codec === null) {
+    return `Requested ${codecLabel(requestedCodec)} first · Runtime readiness: ${readiness} · no animated codec selected`;
+  }
+  if (family !== requestedCodec) {
+    return `Requested ${codecLabel(requestedCodec)} first · browser selected ${codecLabel(family)} (${codec}) · Runtime readiness: ${readiness}`;
+  }
+  return `Runtime readiness: ${readiness} · selected ${codecLabel(family)} (${codec})`;
 }
 
-function serializeSnapshot(
-  snapshot: LoopCanvasPlayerSnapshot
-): BrowserPlayerSnapshot {
-  return {
-    state: snapshot.state,
-    virtualFrame: snapshot.virtualFrame?.toString() ?? null,
-    contentFrame: snapshot.contentFrame,
-    canvasSeams: snapshot.canvasSeams,
-    underflows: snapshot.underflows,
-    lateContentFrames: snapshot.lateContentFrames,
-    canvasDrawnFrames: snapshot.canvasDrawnFrames,
-    queuedFrames: snapshot.decoder.queuedFrames,
-    decodeQueueSize: snapshot.decoder.decodeQueueSize,
-    configureCalls: snapshot.decoder.configureCalls,
-    boundaryFlushCalls:
-      snapshot.decoder.boundaryFlushCalls + snapshot.decoder.resetCalls,
-    openFrames: snapshot.decoder.openFrames,
-    error: snapshot.error
-  };
-}
-
-function statusText(snapshot: LoopCanvasPlayerSnapshot): string {
-  switch (snapshot.state) {
-    case "idle":
-      return "Idle";
-    case "preparing":
-      return "Building decoded lead…";
-    case "ready":
-      return "Ready";
-    case "running":
-      return "Running continuously";
-    case "paused":
-      return "Paused on a valid frame";
-    case "error":
-      return snapshot.error ?? "Playback failed";
-    case "disposed":
-      return "Disposed";
+function publishControlState(active: Codec | null): void {
+  for (const [codec, button] of codecButtons) {
+    button.setAttribute("aria-pressed", codec === requestedCodec ? "true" : "false");
+    button.dataset.active = codec === active ? "true" : "false";
+    if (codec === active) button.setAttribute("aria-current", "true");
+    else button.removeAttribute("aria-current");
   }
 }
 
-function showRuntimeError(error: unknown): void {
-  const normalized = normalizeError(error);
-  status.textContent = normalized.message;
-  status.parentElement?.setAttribute("data-state", "error");
-  codecPill.textContent = "host fallback";
-  pauseButton.disabled = true;
-  resumeButton.disabled = true;
+function setControlsDisabled(disabled: boolean): void {
+  for (const button of codecButtons.values()) button.disabled = disabled;
 }
 
-function assertSecureBrowserContext(): void {
-  if (!window.isSecureContext) {
-    throw new Error("Animated mode requires HTTPS or the localhost secure-context exception");
+function familyForCodec(codec: string): Codec {
+  if (codec.startsWith("av01.")) return "av1";
+  if (codec.startsWith("vp09.")) return "vp9";
+  if (codec.startsWith("hvc1.")) return "h265";
+  if (codec.startsWith("avc1.")) return "h264";
+  throw new TypeError(`unexpected selected codec: ${codec}`);
+}
+
+function codecLabel(codec: Codec): string {
+  switch (codec) {
+    case "av1": return "AV1";
+    case "vp9": return "VP9";
+    case "h265": return "H.265 / HEVC";
+    case "h264": return "H.264 / AVC";
   }
 }
 
-function setText(selector: string, value: string): void {
-  requireElement<HTMLElement>(selector).textContent = value;
+function requireMapValue<K, V>(map: ReadonlyMap<K, V>, key: K): V {
+  const value = map.get(key);
+  if (value === undefined) throw new Error("required codec source is missing");
+  return value;
+}
+
+function boundedSession(value: string): string {
+  if (!/^[A-Za-z0-9_-]{1,64}$/u.test(value)) throw new TypeError("invalid playground session");
+  return value;
 }
 
 function requireElement<T extends Element>(selector: string): T {
   const element = document.querySelector<T>(selector);
-  if (element === null) {
-    throw new Error(`Missing required element ${selector}`);
-  }
+  if (element === null) throw new Error(`missing playground element: ${selector}`);
   return element;
 }
 
-function normalizeError(error: unknown): Error {
-  return error instanceof Error
-    ? error
-    : new Error("AVAL spike failed", { cause: error });
-}
+void ready.catch((error: unknown) => {
+  console.error("AVAL source playground failed.", error);
+});

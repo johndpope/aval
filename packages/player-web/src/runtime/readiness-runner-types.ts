@@ -1,8 +1,8 @@
 import type {
-  CompiledManifestV01,
-  EdgeV01,
-  ResidencyEndpointV01,
-  UnitV01
+  CompiledManifest,
+  Edge,
+  ResidencyEndpoint,
+  Unit
 } from "@pixel-point/aval-format";
 import type {
   GraphEdgeDefinition,
@@ -24,12 +24,12 @@ import type {
 import type { ReadinessFrameMeasurement } from "./readiness-metrics.js";
 
 type Awaitable<T> = T | PromiseLike<T>;
-type BodyUnit = Extract<UnitV01, { readonly kind: "body" }>;
+type BodyUnit = Extract<Unit, { readonly kind: "body" }>;
 type LoopBodyUnit = BodyUnit & { readonly playback: "loop" };
-type ReversibleUnit = Extract<UnitV01, { readonly kind: "reversible" }>;
+type ReversibleUnit = Extract<Unit, { readonly kind: "reversible" }>;
 
 export interface WarmupAdapterInput {
-  readonly manifest: Readonly<CompiledManifestV01>;
+  readonly manifest: Readonly<CompiledManifest>;
   readonly graph: Readonly<ValidatedMotionGraph>;
 }
 
@@ -47,7 +47,7 @@ export type LoopAdapterResult = Omit<LoopReadinessEvidence, "unit">;
 
 export interface EdgeAdapterInput extends WarmupAdapterInput {
   readonly edge: Readonly<GraphEdgeDefinition>;
-  readonly manifestEdge: Readonly<EdgeV01>;
+  readonly manifestEdge: Readonly<Edge>;
   readonly source: Readonly<GraphStateDefinition>;
   readonly target: Readonly<GraphStateDefinition>;
   readonly ringCapacity: number;
@@ -70,7 +70,7 @@ export type RoutePhaseAdapterResult = Omit<RoutePhaseEvidence, "edge">;
 
 export interface EndpointAdapterInput extends WarmupAdapterInput {
   readonly unit: Readonly<ReversibleUnit>;
-  readonly endpoint: Readonly<ResidencyEndpointV01>;
+  readonly endpoint: Readonly<ResidencyEndpoint>;
   readonly ringCapacity: number;
 }
 

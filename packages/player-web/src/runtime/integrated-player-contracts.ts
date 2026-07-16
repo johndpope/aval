@@ -5,7 +5,10 @@ import type {
   MotionGraphTickOptions
 } from "@pixel-point/aval-graph";
 
-import type { RuntimeAssetCatalog } from "./asset-catalog.js";
+import type {
+  CertifiedVideoRendition,
+  RuntimeAssetCatalog
+} from "./asset-catalog.js";
 import type { EffectHostEvent } from "./effect-host.js";
 import type { RuntimeFailure } from "./errors.js";
 import type {
@@ -17,10 +20,7 @@ import type {
   RuntimeTraceRecord,
   RuntimeVisibilityState
 } from "./model.js";
-import type {
-  RuntimeAvcRenditionCandidate,
-  RuntimeAvcRenditionInspection
-} from "./avc-rendition-selection.js";
+import type { VideoCodecAdapterInspection } from "./video-codec-adapters.js";
 import type { RealtimeUnderflowEvent } from "./realtime-driver.js";
 import type { MotionPolicy } from "./motion-policy.js";
 import type { RuntimeCanvasResourceHost } from "./canvas-resource-plan.js";
@@ -29,11 +29,6 @@ import type { RuntimeAssetSession } from "./runtime-asset-session.js";
 import type {
   IntegratedPlayerParticipantBinding
 } from "./integrated-player-participant.js";
-
-type SuccessfulRenditionInspection = Extract<
-  RuntimeAvcRenditionInspection,
-  { readonly ok: true }
->;
 
 export interface IntegratedFallbackStore {
   installInitial(options: {
@@ -60,8 +55,10 @@ export interface IntegratedFallbackStore {
 
 export interface IntegratedCandidateAttemptContext {
   readonly catalog: RuntimeAssetCatalog;
-  readonly candidate: Readonly<RuntimeAvcRenditionCandidate>;
-  readonly inspection: SuccessfulRenditionInspection["inspection"];
+  /** Exact authored rung selected before candidate construction. */
+  readonly candidate: Readonly<CertifiedVideoRendition>;
+  /** Byte-free inspection for that exact catalog/rendition pair. */
+  readonly inspection: Readonly<VideoCodecAdapterInspection>;
   readonly graphSnapshot: Readonly<MotionGraphSnapshot>;
   readonly hostMaxRuntimeBytes: number | null;
 }
@@ -77,7 +74,7 @@ export interface IntegratedCandidateActivationOptions
   readonly expectedPresentation: Readonly<GraphPresentation>;
 }
 
-/** Opaque-by-identity token backed by candidate-owned prepared draw state. */
+/** Identity token backed by candidate-owned prepared draw state. */
 export interface IntegratedPreparedActivation {
   readonly expectedPresentation: Readonly<GraphPresentation>;
 }
@@ -198,14 +195,20 @@ interface IntegratedPlayerCommonOptions {
 export type IntegratedPlayerOptions = IntegratedPlayerCommonOptions & (
   | {
       readonly bytes: Uint8Array;
+      /** Authored rendition selected by the caller before the byte catalog exists. */
+      readonly selectedRenditionIndex: number;
+      readonly selectedRendition?: never;
       readonly assetSession?: never;
       readonly assetSessionOwnership?: never;
     }
   | {
       readonly bytes?: never;
+      readonly selectedRenditionIndex?: never;
       readonly assetSession: RuntimeAssetSession;
       /** Required capability boundary; external sessions remain host-owned. */
       readonly assetSessionOwnership: "external" | "player";
+      /** Exact selection authority certified by the supplied session catalog. */
+      readonly selectedRendition: Readonly<CertifiedVideoRendition>;
     }
 );
 

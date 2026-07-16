@@ -1,4 +1,4 @@
-import type { CompiledManifestV01 } from "@pixel-point/aval-format";
+import type { CompiledManifest } from "@pixel-point/aval-format";
 
 import {
   MAX_PLAYER_RUNTIME_BYTES,
@@ -16,7 +16,7 @@ export interface RuntimeCanvasBackingSize {
 
 export interface RuntimeCanvasResourceCatalogView {
   readonly ownedByteLength: number;
-  readonly manifest: Readonly<CompiledManifestV01>;
+  readonly manifest: Readonly<CompiledManifest>;
 }
 
 export interface RuntimeCanvasResourcePlanInput {

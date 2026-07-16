@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createRuntimeTestAsset } from "./asset-test-support.js";
 import { RuntimeAssetCatalog } from "./asset-catalog.js";
 import { StateFallbackStore } from "./state-fallback-store.js";
 
 describe("state fallback store", () => {
   it("tracks state and delegates fallback visibility without media bytes", async () => {
-    const catalog = new RuntimeAssetCatalog(createOpaqueTestAsset());
+    const catalog = new RuntimeAssetCatalog(createRuntimeTestAsset());
     const coverFallback = vi.fn();
     const revealAnimated = vi.fn();
     const store = new StateFallbackStore(catalog, {
@@ -32,7 +32,7 @@ describe("state fallback store", () => {
   });
 
   it("rejects unknown states and aborted operations", async () => {
-    const catalog = new RuntimeAssetCatalog(createOpaqueTestAsset());
+    const catalog = new RuntimeAssetCatalog(createRuntimeTestAsset());
     const store = new StateFallbackStore(catalog, {
       coverFallback() {},
       revealAnimated() {}

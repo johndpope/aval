@@ -1,4 +1,4 @@
-import { encodeAccessUnitIndex } from "./access-unit-index.js";
+import { encodeEncodedChunkIndex } from "./access-unit-index.js";
 import { serializeCanonicalJson } from "./canonical-json.js";
 import {
   FORMAT_HEADER_LENGTH,
@@ -9,9 +9,9 @@ import { FormatError, isFormatError } from "./errors.js";
 import { encodeHeader } from "./header.js";
 import { planCanonicalAssetLayout } from "./layout.js";
 import type {
-  AccessUnitRecord,
-  CanonicalAssetInputV01,
-  CompiledManifestV01,
+  CanonicalAssetInput,
+  CompiledManifest,
+  EncodedChunkRecord,
   FormatHeader,
   FormatOptions
 } from "./model.js";
@@ -24,13 +24,13 @@ import {
 interface WriterLayout {
   readonly indexOffset: number;
   readonly indexLength: number;
-  readonly records: readonly AccessUnitRecord[];
+  readonly records: readonly EncodedChunkRecord[];
   readonly fileLength: number;
 }
 
-/** Write one byte-canonical version-0.1 aval asset. */
+/** Write one byte-canonical version-1.0 aval asset. */
 export function writeCanonicalAsset(
-  input: CanonicalAssetInputV01,
+  input: CanonicalAssetInput,
   options?: FormatOptions
 ): Uint8Array {
   try {
@@ -56,7 +56,7 @@ export function writeCanonicalAsset(
       indexLength: finalLayout.indexLength
     });
     const headerBytes = encodeHeader(header, options);
-    const indexBytes = encodeAccessUnitIndex(finalLayout.records, manifest, options);
+    const indexBytes = encodeEncodedChunkIndex(finalLayout.records, manifest, options);
     if (indexBytes.byteLength !== finalLayout.indexLength) {
       throw new FormatError("WRITER_INVALID", "encoded index length changed");
     }
@@ -74,13 +74,13 @@ export function writeCanonicalAsset(
     bytes.set(manifestBytes, FORMAT_HEADER_LENGTH);
     bytes.set(indexBytes, finalLayout.indexOffset);
 
-    for (let index = 0; index < normalized.accessUnits.length; index += 1) {
-      const payload = normalized.accessUnits[index];
+    for (let index = 0; index < normalized.chunks.length; index += 1) {
+      const payload = normalized.chunks[index];
       const record = finalLayout.records[index];
       if (payload === undefined || record === undefined) {
         throw new FormatError("WRITER_INVALID", "access-unit layout is sparse");
       }
-      bytes.set(payload.bytes, record.payloadOffset);
+      bytes.set(payload.bytes, record.byteOffset);
     }
     validateCompleteAsset({
       bytes,
@@ -95,16 +95,19 @@ export function writeCanonicalAsset(
 
 function deriveLayout(
   normalized: Readonly<NormalizedWriterInput>,
-  manifest: CompiledManifestV01,
+  manifest: CompiledManifest,
   manifestBytes: Uint8Array,
   options?: FormatOptions
 ): WriterLayout {
   const plan = planCanonicalAssetLayout(
     manifestBytes.byteLength,
     manifest,
-    normalized.accessUnits.map(({ bytes, key }) => ({
-      payloadLength: bytes.byteLength,
-      key
+    normalized.chunks.map((chunk) => ({
+      byteLength: chunk.bytes.byteLength,
+      presentationTimestamp: chunk.presentationTimestamp,
+      duration: chunk.duration,
+      randomAccess: chunk.randomAccess,
+      displayedFrameCount: chunk.displayedFrameCount
     })),
     options
   );

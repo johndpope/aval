@@ -4,18 +4,20 @@
 
 ```ts
 
-import type { AvcParameterSetSummary } from '@pixel-point/aval-format';
-import type { AvcRenditionGeometry } from '@pixel-point/aval-format';
-import type { AvcRenditionInspection } from '@pixel-point/aval-format';
-import type { AvcUnitInspection } from '@pixel-point/aval-format';
-import type { BindingV01 } from '@pixel-point/aval-format';
-import type { CanvasV01 } from '@pixel-point/aval-format';
-import type { CompiledManifestInputV01 } from '@pixel-point/aval-format';
-import type { EdgeV01 } from '@pixel-point/aval-format';
-import type { PortV01 } from '@pixel-point/aval-format';
-import type { RationalV01 } from '@pixel-point/aval-format';
-import type { ResidencyEndpointV01 } from '@pixel-point/aval-format';
+import type { AlphaLayout } from '@pixel-point/aval-format';
+import { Av1RenditionInspection } from '@pixel-point/aval-format';
+import { CompileBundleReportAsset as CompileBundleReportAsset_2 } from '@pixel-point/aval-format';
+import { CompileBundleReportTool as CompileBundleReportTool_2 } from '@pixel-point/aval-format';
+import { CompileBundleReportToolchain as CompileBundleReportToolchain_2 } from '@pixel-point/aval-format';
+import { CompiledManifestInput } from '@pixel-point/aval-format';
+import { H264RenditionInspection } from '@pixel-point/aval-format';
+import { H265RenditionInspection } from '@pixel-point/aval-format';
+import { ParsedCompileBundleReport } from '@pixel-point/aval-format';
 import type { ValidatedAssetLayout } from '@pixel-point/aval-format';
+import type { VideoBitstream } from '@pixel-point/aval-format';
+import { VideoCodec as VideoCodec_2 } from '@pixel-point/aval-format';
+import type { VideoLayout } from '@pixel-point/aval-format';
+import { Vp9RenditionInspection } from '@pixel-point/aval-format';
 
 // @public (undocumented)
 export interface AlphaAuditSummary {
@@ -27,30 +29,6 @@ export interface AlphaAuditSummary {
     readonly minimumAlpha: number;
     // (undocumented)
     readonly uniqueReferencedFrames: number;
-}
-
-// @public (undocumented)
-export interface AlphaErrorStatistics {
-    // (undocumented)
-    readonly maximumDecodedAlpha: number;
-    // (undocumented)
-    readonly meanAbsoluteError: number;
-    // (undocumented)
-    readonly minimumDecodedAlpha: number;
-    // (undocumented)
-    readonly p99AbsoluteError: number;
-    // (undocumented)
-    readonly sampleCount: number;
-}
-
-// @public (undocumented)
-export interface AlphaFrameQualitySummary extends AlphaErrorStatistics {
-    // (undocumented)
-    readonly frameIndex: number;
-    // (undocumented)
-    readonly rendition: string;
-    // (undocumented)
-    readonly unit: string;
 }
 
 // @public (undocumented)
@@ -80,25 +58,9 @@ export interface AlphaPolicyDecision {
 }
 
 // @public (undocumented)
-export interface AlphaQualitySummary {
-    // (undocumented)
-    readonly aggregate: Readonly<AlphaErrorStatistics>;
-    // (undocumented)
-    readonly frameCount: number;
-    // (undocumented)
-    readonly rendition: string;
-    // (undocumented)
-    readonly worstFrame: Readonly<AlphaFrameQualitySummary>;
-}
-
-// @public (undocumented)
 export interface AssetInspection {
     // (undocumented)
-    readonly accessUnits: number;
-    // (undocumented)
-    readonly avc: readonly AvcRenditionSummary[];
-    // (undocumented)
-    readonly avcClaim: "syntax-and-dependency-inspected" | "not-applicable";
+    readonly bitstream: VideoBitstream;
     // (undocumented)
     readonly bytes: number;
     // (undocumented)
@@ -107,11 +69,17 @@ export interface AssetInspection {
         readonly height: number;
     };
     // (undocumented)
+    readonly chunkRanges: readonly InspectedChunkRange[];
+    // (undocumented)
+    readonly chunks: number;
+    // (undocumented)
+    readonly codec: VideoCodec_2;
+    // (undocumented)
     readonly digestClaim: "all-internal-and-whole-file";
     // (undocumented)
     readonly file: string;
     // (undocumented)
-    readonly formatVersion: string;
+    readonly formatVersion: "1.0";
     // (undocumented)
     readonly frameRate: string;
     // (undocumented)
@@ -119,14 +87,15 @@ export interface AssetInspection {
     // (undocumented)
     readonly initialState: string;
     // (undocumented)
+    readonly layout: VideoLayout;
+    // (undocumented)
     readonly renditions: readonly {
         readonly id: string;
-        readonly profile: string;
         readonly codec: string;
+        readonly bitDepth: 8 | 10;
         readonly coded: string;
+        readonly alphaLayout: AlphaLayout;
     }[];
-    // (undocumented)
-    readonly samples: readonly InspectedAccessUnitRange[];
     // (undocumented)
     readonly sha256: string;
     // (undocumented)
@@ -143,16 +112,22 @@ export interface AssetInspection {
         readonly startSeconds: number;
         readonly endSeconds: number;
     }[];
+    // (undocumented)
+    readonly video: readonly VideoRenditionInspection[];
+    // (undocumented)
+    readonly videoClaim: "syntax-dependency-and-timeline-inspected";
 }
 
 // @public (undocumented)
 export interface AssetValidationReport {
     // (undocumented)
-    readonly accessUnits: number;
-    // (undocumented)
-    readonly avcClaim: "syntax-and-dependency-inspected" | "not-applicable";
+    readonly bitstream: VideoBitstream;
     // (undocumented)
     readonly bytes: number;
+    // (undocumented)
+    readonly chunks: number;
+    // (undocumented)
+    readonly codec: VideoCodec_2;
     // (undocumented)
     readonly command: "validate";
     // (undocumented)
@@ -160,54 +135,41 @@ export interface AssetValidationReport {
     // (undocumented)
     readonly file: string;
     // (undocumented)
+    readonly layout: VideoLayout;
+    // (undocumented)
     readonly sha256: string;
     // (undocumented)
     readonly unitBlobs: number;
+    // (undocumented)
+    readonly video: readonly VideoRenditionInspection[];
+    // (undocumented)
+    readonly videoClaim: "syntax-dependency-and-timeline-inspected";
 }
 
 // @public (undocumented)
-export const AVC_ENCODER_PRESETS: readonly ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
-
-// @public (undocumented)
-export type AvcEncoderPreset = typeof AVC_ENCODER_PRESETS[number];
-
-// @public (undocumented)
-export interface AvcEncodingV03 {
+export interface Av1Encoding<R extends SourceRenditionTarget = SourceRenditionTarget> {
     // (undocumented)
-    readonly codec: "h264";
+    readonly bitDepth: 8 | 10;
     // (undocumented)
-    readonly preset: AvcEncoderPreset;
+    readonly codec: "av1";
     // (undocumented)
-    readonly rateControl: AvcRateControlV03;
+    readonly cpuUsed: number;
+    // (undocumented)
+    readonly renditions: readonly R[];
+    // (undocumented)
+    readonly rowMt: boolean;
+    // (undocumented)
+    readonly threads: number;
+    // (undocumented)
+    readonly tiles: Av1TileLayout;
 }
 
 // @public (undocumented)
-export type AvcRateControlV03 = {
-    readonly mode: "abr";
-    readonly averageBitrate: number;
-    readonly maxBitrate: number;
-} | {
-    readonly mode: "crf";
-    readonly crf: number;
-    readonly maxBitrate: number;
-};
-
-// @public (undocumented)
-export interface AvcRenditionSummary {
+export interface Av1TileLayout {
     // (undocumented)
-    readonly codedHeight: number;
+    readonly columns: number;
     // (undocumented)
-    readonly codedWidth: number;
-    // (undocumented)
-    readonly constraintSet2: boolean;
-    // (undocumented)
-    readonly macroblocksPerFrame: number;
-    // (undocumented)
-    readonly parameterSet: AvcParameterSetSummary;
-    // (undocumented)
-    readonly rendition: string;
-    // (undocumented)
-    readonly units: readonly AvcUnitInspection[];
+    readonly rows: number;
 }
 
 // @public (undocumented)
@@ -226,6 +188,20 @@ export function bt709LimitedChroma2x2(rgb: ArrayLike<number>): Readonly<Bt709Lim
 
 // @public (undocumented)
 export function bt709LimitedLuma(red: number, green: number, blue: number): number;
+
+// @public (undocumented)
+export interface Canvas {
+    // (undocumented)
+    readonly colorSpace: "srgb";
+    // (undocumented)
+    readonly fit: "contain" | "cover" | "fill" | "none";
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly pixelAspect: readonly [numerator: number, denominator: number];
+    // (undocumented)
+    readonly width: number;
+}
 
 // @public (undocumented)
 export type CliArguments = CompileCliArguments | InspectCliArguments | ValidateCliArguments | UnpackCliArguments | InitCliArguments | DevCliArguments | HelpCliArguments;
@@ -248,212 +224,120 @@ export interface CliRuntime {
     readonly signal?: AbortSignal;
 }
 
-// @public (undocumented)
-export interface CompileAdoptionSummary {
-    // (undocumented)
-    readonly alpha: "opaque" | "packed";
-    // (undocumented)
-    readonly bytes: number;
-    // (undocumented)
-    readonly frameRate: Readonly<{
-        numerator: number;
-        denominator: number;
-        text: string;
-    }>;
-    // (undocumented)
-    readonly geometry: Readonly<{
-        visibleWidth: number;
-        visibleHeight: number;
-        codedWidth: number;
-        codedHeight: number;
-    }>;
-    // (undocumented)
-    readonly reports: Readonly<{
-        continuityPassed: number;
-        continuityCuts: number;
-        alphaAuditedFrames: number;
-    }>;
-    // (undocumented)
-    readonly resourceEstimate: Readonly<{
-        maxCompiledBytes: number;
-        maxRuntimeBytes: number;
-        decodedPixelBytes: number;
-        persistentCacheBytes: number;
-        runtimeWorkingSetBytes: number;
-    }>;
-    // (undocumented)
-    readonly sha256: string;
-    // (undocumented)
-    readonly snippets: Readonly<{
-        npm: string;
-        html: string;
-    }>;
-    // (undocumented)
-    readonly sourceMode: "project" | "direct-video" | "direct-png-sequence";
-    // (undocumented)
-    readonly summaryVersion: "0.1";
-    // (undocumented)
-    readonly units: readonly Readonly<CompileAdoptionUnitSummary>[];
-}
-
-// @public (undocumented)
-export interface CompileAdoptionUnitSummary {
-    // (undocumented)
-    readonly frameRange: readonly [number, number];
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly kind: "intro" | "body" | "transition";
-    // (undocumented)
-    readonly timeRange: readonly [string, string];
-}
-
 // @public
-export interface CompileArtifact {
+export interface CompileBundleArtifact {
     // (undocumented)
-    readonly assetBytes: Uint8Array;
+    readonly assets: readonly Readonly<CompileBundleAssetArtifact>[];
     // (undocumented)
-    readonly buildDetails: CompileBuildDetails;
+    readonly buildReport: Readonly<CompileBundleBuildReport>;
     // (undocumented)
-    readonly bytes: number;
+    readonly buildReportBytes: Uint8Array;
     // (undocumented)
     readonly provenance: ToolProvenance;
-    // (undocumented)
-    readonly sha256: string;
     // (undocumented)
     readonly warnings: readonly string[];
 }
 
 // @public
-export interface CompileBuildDetails {
+export interface CompileBundleAssetArtifact {
     // (undocumented)
-    readonly accessUnits: number;
+    readonly assetBytes: Uint8Array;
     // (undocumented)
-    readonly alphaPolicy: Readonly<AlphaPolicyDecision>;
+    readonly bytes: number;
     // (undocumented)
-    readonly continuity: readonly CompileContinuityDetails[];
+    readonly codec: VideoCodec;
     // (undocumented)
-    readonly detailsVersion: "0.2";
-    // (undocumented)
-    readonly encodedPayloadBytes: number;
+    readonly filename: `${VideoCodec}.avl`;
     // (undocumented)
     readonly invocations: readonly CompileInvocationDetails[];
     // (undocumented)
-    readonly manifest: CompiledManifestInputV01;
+    readonly manifest: CompiledManifestInput;
     // (undocumented)
-    readonly mode: "project" | "direct-video" | "direct-png-sequence";
-    // (undocumented)
-    readonly normalization: readonly string[];
-    // (undocumented)
-    readonly projectFile: {
-        readonly bytes: number;
-        readonly sha256: string;
-    } | null;
-    // (undocumented)
-    readonly renditions: readonly CompileRenditionDetails[];
-    // (undocumented)
-    readonly sources: readonly CompileSourceDetails[];
+    readonly sha256: string;
 }
 
-// Warning: (ae-forgotten-export) The symbol "CliBaseArguments" needs to be exported by the entry point index.d.ts
+// @public (undocumented)
+export interface CompileBundleAssetResult {
+    // (undocumented)
+    readonly bytes: number;
+    // (undocumented)
+    readonly codec: VideoCodec;
+    // (undocumented)
+    readonly integrity: string;
+    // (undocumented)
+    readonly path: string;
+    // (undocumented)
+    readonly sha256: string;
+    // (undocumented)
+    readonly type: string;
+}
+
+// @public (undocumented)
+export interface CompileBundleBuildReport {
+    // (undocumented)
+    readonly assets: readonly Readonly<CompileBundleAssetResult>[];
+    // (undocumented)
+    readonly reportVersion: "1.0";
+    // (undocumented)
+    readonly sourceMarkup: string;
+}
+
+// @public (undocumented)
+export type CompileBundleReport = ParsedCompileBundleReport;
+
+// @public (undocumented)
+export type CompileBundleReportAsset = CompileBundleReportAsset_2;
+
+// @public (undocumented)
+export type CompileBundleReportTool = CompileBundleReportTool_2;
+
+// @public (undocumented)
+export type CompileBundleReportToolchain = CompileBundleReportToolchain_2;
+
+// @public (undocumented)
+export interface CompileBundleResult {
+    // (undocumented)
+    readonly assets: readonly Readonly<CompileBundleAssetResult>[];
+    // (undocumented)
+    readonly outputPath: string;
+    // (undocumented)
+    readonly provenance: ToolProvenance;
+    // (undocumented)
+    readonly reportPath: string;
+    // (undocumented)
+    readonly sourceMarkup: string;
+    // (undocumented)
+    readonly warnings: readonly string[];
+}
+
+// Warning: (ae-forgotten-export) The symbol "CompileCliBaseArguments" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "H264CompileCodecArguments" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "H265CompileCodecArguments" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "Vp9CompileCodecArguments" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "Av1CompileCodecArguments" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "ProjectCompileCodecArguments" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-export interface CompileCliArguments extends CliBaseArguments {
-    // (undocumented)
-    readonly alpha?: SourceAlphaPolicy;
-    // (undocumented)
-    readonly bitrate?: {
-        readonly average: number;
-        readonly peak: number;
-    };
-    // (undocumented)
-    readonly canvas?: readonly [number, number];
-    // (undocumented)
-    readonly command: "compile";
-    // (undocumented)
-    readonly crf?: number;
-    // (undocumented)
-    readonly ffmpegPath?: string;
-    // (undocumented)
-    readonly ffprobePath?: string;
-    // (undocumented)
-    readonly force: boolean;
-    // (undocumented)
-    readonly fps?: RationalV01;
-    // (undocumented)
-    readonly frames?: {
-        readonly firstNumber: number;
-        readonly frameCount: number;
-    };
-    // (undocumented)
-    readonly input: string;
-    // (undocumented)
-    readonly loop?: readonly [number, number];
-    // (undocumented)
-    readonly maxBitrate?: number;
-    // (undocumented)
-    readonly mediaTimeoutMs?: number;
-    // (undocumented)
-    readonly normalizeVfr: boolean;
-    // (undocumented)
-    readonly output: string;
-    // (undocumented)
-    readonly preset?: AvcEncoderPreset;
-    // (undocumented)
-    readonly report?: string;
-}
+export type CompileCliArguments = CompileCliBaseArguments & (H264CompileCodecArguments | H265CompileCodecArguments | Vp9CompileCodecArguments | Av1CompileCodecArguments | ProjectCompileCodecArguments);
 
 // @public (undocumented)
 export interface CompileCommandDependencies {
     // (undocumented)
-    readonly buildDirectArtifact: (options: DirectArtifactOptions) => Promise<Readonly<CompileArtifact>>;
+    readonly buildDirectBundleArtifact: (options: DirectArtifactOptions) => Promise<Readonly<CompileBundleArtifact>>;
+    // Warning: (ae-forgotten-export) The symbol "ProjectArtifactOptions" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
-    readonly buildProjectArtifact: (options: ProjectArtifactOptions) => Promise<Readonly<CompileArtifact>>;
+    readonly buildProjectBundleArtifact: (options: ProjectArtifactOptions) => Promise<Readonly<CompileBundleArtifact>>;
 }
 
 // @public (undocumented)
-export interface CompileCommandResult extends CompileResult {
-    // (undocumented)
-    readonly adoption: Readonly<CompileAdoptionSummary>;
+export interface CompileCommandResult extends CompileBundleResult {
     // (undocumented)
     readonly command: "compile";
-    // (undocumented)
-    readonly reportPath: string;
-}
-
-// @public (undocumented)
-export interface CompileContinuityDetails {
-    // (undocumented)
-    readonly from: {
-        readonly unit: string;
-        readonly frame: number | null;
-        readonly direction: "forward" | "reverse" | "runtime";
-    };
-    // (undocumented)
-    readonly kind: "loop" | "intro" | "departure" | "arrival" | "cut";
-    // (undocumented)
-    readonly metrics: {
-        readonly boundaryRms: number;
-        readonly alphaBoundaryRms: number;
-        readonly neighborP95: number;
-        readonly alphaNeighborP95: number;
-        readonly identicalBoundary: boolean;
-        readonly repeatedEndpointPause: boolean;
-    } | null;
-    // (undocumented)
-    readonly name: string;
-    // (undocumented)
-    readonly status: "pass" | "review" | "cut";
-    // (undocumented)
-    readonly to: {
-        readonly unit: string;
-        readonly frame: number;
-        readonly direction: "forward" | "reverse";
-    };
 }
 
 // @public
-export function compileDirectInput(options: DirectCompileOptions): Promise<Readonly<CompileResult>>;
+export function compileDirectInput(options: DirectCompileOptions): Promise<Readonly<CompileBundleResult>>;
 
 // @public (undocumented)
 export interface CompileInvocationDetails {
@@ -465,10 +349,10 @@ export interface CompileInvocationDetails {
 }
 
 // @public
-export function compileProjectFile(options: ProjectCompileOptions): Promise<Readonly<CompileResult>>;
+export function compileProjectFile(options: ProjectCompileOptions): Promise<Readonly<CompileBundleResult>>;
 
 // @public (undocumented)
-export const COMPILER_PROJECT_VERSION: "0.3";
+export const COMPILER_PROJECT_VERSION: "1.0";
 
 // @public (undocumented)
 export interface CompilerDiagnostic {
@@ -493,7 +377,7 @@ export interface CompilerDiagnostic {
     // (undocumented)
     readonly path?: string;
     // (undocumented)
-    readonly phase?: "classification" | "packing" | "quality";
+    readonly phase?: "classification" | "encode" | "pixel-pipeline";
     // (undocumented)
     readonly policy?: "auto" | "opaque" | "packed";
     // (undocumented)
@@ -514,54 +398,6 @@ export interface CompilerDiagnostic {
     readonly x?: number;
     // (undocumented)
     readonly y?: number;
-}
-
-// @public (undocumented)
-export interface CompileRenditionDetails {
-    // (undocumented)
-    readonly accessUnits: number;
-    // (undocumented)
-    readonly alphaQuality: Readonly<AlphaQualitySummary> | null;
-    // (undocumented)
-    readonly bitrate: {
-        readonly average: number;
-        readonly peak: number;
-    };
-    // (undocumented)
-    readonly canonicalizations: readonly {
-        readonly unitId: string;
-        readonly constraintSet2Canonicalized: boolean;
-    }[];
-    // (undocumented)
-    readonly codedHeight: number;
-    // (undocumented)
-    readonly codedWidth: number;
-    // (undocumented)
-    readonly compositeQuality: Readonly<CompositeQualitySummary> | null;
-    // (undocumented)
-    readonly encodedBytes: number;
-    // (undocumented)
-    readonly encoding: {
-        readonly codec: "libx264";
-        readonly preset: AvcEncoderPreset;
-        readonly rateControl: AvcRateControlV03;
-        readonly legacyZeroLatency: boolean;
-        readonly canonicalBytes: number;
-        readonly measuredAverageBitrate: number;
-    };
-    // (undocumented)
-    readonly geometry: Readonly<AvcRenditionGeometry>;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly inspection: AvcRenditionInspection;
-    // (undocumented)
-    readonly pixelPipeline: {
-        readonly yuvProfile: "bt709-limited-yuv420p-v0";
-        readonly dilation: "nearest-radius-4-v0";
-    };
-    // (undocumented)
-    readonly profile: "avc-annexb-opaque-v0" | "avc-annexb-packed-alpha-v0" | "avc-annexb-opaque-v1" | "avc-annexb-packed-alpha-v1";
 }
 
 // @public
@@ -588,7 +424,7 @@ export class CompilerError extends Error {
     // (undocumented)
     readonly path?: string;
     // (undocumented)
-    readonly phase?: "classification" | "packing" | "quality";
+    readonly phase?: "classification" | "encode" | "pixel-pipeline";
     // (undocumented)
     readonly policy?: "auto" | "opaque" | "packed";
     // (undocumented)
@@ -610,7 +446,7 @@ export class CompilerError extends Error {
 }
 
 // @public (undocumented)
-export type CompilerErrorCode = "ALPHA_POLICY_REJECTED" | "ALPHA_QUALITY_REJECTED" | "ASSET_INVALID" | "AVC_PROFILE_INVALID" | "CANCELLED" | "CLI_USAGE" | "CONTINUITY_FAILED" | "FFMPEG_FAILED" | "FFMPEG_NOT_FOUND" | "FFMPEG_UNSUPPORTED" | "FRAME_RANGE_INVALID" | "INPUT_INVALID" | "IO_FAILED" | "OPAQUE_ONLY_M5" | "OUTPUT_LIMIT" | "PATH_OUTSIDE_ROOT" | "PROCESS_TIMEOUT" | "SOURCE_LIMIT" | "VFR_UNSUPPORTED";
+export type CompilerErrorCode = "ALPHA_POLICY_REJECTED" | "ASSET_INVALID" | "H264_BITSTREAM_INVALID" | "CANCELLED" | "CLI_USAGE" | "CONTINUITY_FAILED" | "FFMPEG_FAILED" | "FFMPEG_NOT_FOUND" | "FFMPEG_UNSUPPORTED" | "FRAME_RANGE_INVALID" | "INPUT_INVALID" | "IO_FAILED" | "OUTPUT_LIMIT" | "PATH_OUTSIDE_ROOT" | "PROCESS_TIMEOUT" | "SOURCE_LIMIT" | "VFR_UNSUPPORTED";
 
 // @public (undocumented)
 export interface CompilerErrorDetails {
@@ -633,7 +469,7 @@ export interface CompilerErrorDetails {
     // (undocumented)
     readonly path?: string;
     // (undocumented)
-    readonly phase?: "classification" | "packing" | "quality";
+    readonly phase?: "classification" | "encode" | "pixel-pipeline";
     // (undocumented)
     readonly policy?: "auto" | "opaque" | "packed";
     // (undocumented)
@@ -655,122 +491,20 @@ export interface CompilerErrorDetails {
 }
 
 // @public (undocumented)
-export interface CompileResult {
-    // (undocumented)
-    readonly buildDetails: CompileBuildDetails;
-    // (undocumented)
-    readonly bytes: number;
-    // (undocumented)
-    readonly outputPath: string;
-    // (undocumented)
-    readonly provenance: ToolProvenance;
-    // (undocumented)
-    readonly sha256: string;
-    // (undocumented)
-    readonly warnings: readonly string[];
-}
-
-// @public (undocumented)
-export interface CompileSourceDetails {
-    // (undocumented)
-    readonly alphaAudit: Readonly<AlphaAuditSummary>;
-    // (undocumented)
-    readonly durationMicros: number;
-    // (undocumented)
-    readonly frameCount: number;
-    // (undocumented)
-    readonly frameRate: RationalV01;
-    // (undocumented)
-    readonly frames: readonly MediaProbeFrame[];
-    // (undocumented)
-    readonly hasAlpha: boolean;
-    // (undocumented)
-    readonly height: number;
-    // (undocumented)
-    readonly id: string;
-    // (undocumented)
-    readonly inputFiles: readonly {
-        readonly path: string;
-        readonly bytes: number;
-        readonly sha256: string;
-        readonly identity: RegularFileIdentity;
-    }[];
-    // (undocumented)
-    readonly normalization: {
-        readonly mode: "exact";
-        readonly projectFrameCount: number;
-        readonly selectedProjectFrames: readonly number[];
-        readonly selectedNativeFrames: readonly number[];
-    } | {
-        readonly mode: "normalize-hold";
-        readonly projectFrameCount: number;
-        readonly selectedProjectFrames: readonly number[];
-        readonly selectedNativeFrames: readonly number[];
-        readonly duplicatedSourceFrames: readonly number[];
-        readonly droppedSourceFrames: readonly number[];
-    };
-    // (undocumented)
-    readonly pixelFormat: string;
-    // (undocumented)
-    readonly timeBase: RationalV01;
-    // (undocumented)
-    readonly type: SourceDescriptorV01["type"] | "direct-video" | "direct-png-sequence";
-    // (undocumented)
-    readonly variableFrameRate: boolean;
-    // (undocumented)
-    readonly warnings: readonly string[];
-    // (undocumented)
-    readonly width: number;
-}
-
-// @public (undocumented)
-export type CompositeBackground = "black" | "white" | "magenta";
-
-// @public (undocumented)
-export interface CompositeBackgroundQualitySummary {
-    // (undocumented)
-    readonly background: CompositeBackground;
-    // (undocumented)
-    readonly meanAbsoluteError: number;
-    // (undocumented)
-    readonly p99AbsoluteError: number;
-    // (undocumented)
-    readonly rgb: readonly [red: number, green: number, blue: number];
-    // (undocumented)
-    readonly sampleCount: number;
-}
-
-// @public (undocumented)
-export interface CompositeQualitySummary {
-    // (undocumented)
-    readonly backgrounds: readonly Readonly<CompositeBackgroundQualitySummary>[];
-    // (undocumented)
-    readonly frameCount: number;
-    readonly policy: "report-only";
-    // (undocumented)
-    readonly rendition: string;
-}
-
-// @public (undocumented)
-export function createCompileAdoptionSummary(result: Readonly<CompileResult>): Readonly<CompileAdoptionSummary>;
-
-// @public (undocumented)
-export const DEFAULT_MEDIA_TIMEOUT_MS = 120000;
-
-// @public (undocumented)
 export const DEFAULT_PROBE_TIMEOUT_MS = 15000;
-
-// @public @deprecated (undocumented)
-export const DEFAULT_PROCESS_TIMEOUT_MS = 120000;
 
 // @public (undocumented)
 export interface DevBuildEvent {
+    // Warning: (ae-forgotten-export) The symbol "DevServerBuild" needs to be exported by the entry point index.d.ts
+    readonly build: Readonly<DevServerBuild>;
     // (undocumented)
-    readonly result: Readonly<CompileResult>;
+    readonly result: Readonly<CompileBundleResult>;
     // (undocumented)
     readonly sequence: number;
 }
 
+// Warning: (ae-forgotten-export) The symbol "CliBaseArguments" needs to be exported by the entry point index.d.ts
+//
 // @public (undocumented)
 export interface DevCliArguments extends CliBaseArguments {
     // (undocumented)
@@ -796,12 +530,12 @@ export interface DevCliArguments extends CliBaseArguments {
 // @public (undocumented)
 export interface DevCommandDependencies {
     // (undocumented)
-    readonly buildProjectArtifact: (options: ProjectArtifactOptions) => Promise<Readonly<CompileArtifact>>;
+    readonly buildProjectBundleArtifact: (options: ProjectArtifactOptions) => Promise<Readonly<CompileBundleArtifact>>;
     // (undocumented)
-    readonly publishArtifact?: (artifact: Readonly<CompileArtifact>, context: {
+    readonly publishArtifact?: (artifact: Readonly<CompileBundleArtifact>, context: {
         readonly outputPath: string;
         readonly signal: AbortSignal;
-    }) => Promise<Readonly<CompileResult>>;
+    }) => Promise<Readonly<CompileBundleResult>>;
     // (undocumented)
     readonly watchPath: (path: string, onChange: () => void) => WatchHandle;
 }
@@ -827,58 +561,79 @@ export interface DevSession {
 // @public (undocumented)
 export function diagnosticFromError(error: unknown): CompilerDiagnostic;
 
-// @public
-export function dilateTransparentRgba(input: Readonly<RgbaDilationInput>): Uint8Array;
+// Warning: (ae-forgotten-export) The symbol "DirectCompileBaseOptions" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export type DirectArtifactOptions = Omit<DirectCompileBaseOptions, "outputPath" | "force"> & DirectCodecOptions;
 
 // @public (undocumented)
-export type DirectArtifactOptions = Omit<DirectCompileOptions, "outputPath">;
-
-// @public (undocumented)
-export interface DirectCompileOptions {
-    readonly alpha?: SourceAlphaPolicy;
-    // (undocumented)
-    readonly bitrate?: {
-        readonly average: number;
-        readonly peak: number;
-    };
-    // (undocumented)
-    readonly canvas?: readonly [width: number, height: number];
+export type DirectCodecOptions = {
+    readonly codec: "h264";
     readonly crf?: number;
-    // (undocumented)
-    readonly ffmpegPath?: string;
-    // (undocumented)
-    readonly ffprobePath?: string;
-    // (undocumented)
-    readonly fps?: RationalV01;
-    // (undocumented)
-    readonly frames?: {
-        readonly firstNumber: number;
-        readonly frameCount: number;
-    };
-    // (undocumented)
-    readonly inputPath: string;
-    // (undocumented)
-    readonly loop: readonly [startFrame: number, endFrame: number];
-    readonly maxBitrate?: number;
-    readonly mediaTimeoutMs?: number;
-    // (undocumented)
-    readonly normalizeVfr?: boolean;
-    // (undocumented)
-    readonly outputPath: string;
-    readonly preset?: AvcEncoderPreset;
-    readonly probeTimeoutMs?: number;
-    // (undocumented)
-    readonly signal?: AbortSignal;
-}
+    readonly preset?: H264EncoderPreset;
+} | {
+    readonly codec: "h265";
+    readonly crf?: number;
+    readonly preset?: H265EncoderPreset;
+    readonly threads?: number;
+} | {
+    readonly codec: "vp9";
+    readonly crf?: number;
+    readonly deadline?: Vp9Deadline;
+    readonly cpuUsed?: number;
+    readonly threads?: number;
+} | {
+    readonly codec: "av1";
+    readonly crf?: number;
+    readonly bitDepth?: 8 | 10;
+    readonly cpuUsed?: number;
+    readonly tiles?: Readonly<Av1TileLayout>;
+    readonly rowMt?: boolean;
+    readonly threads?: number;
+};
 
-// @public (undocumented)
-export function formatCompileAdoptionSummary(summary: Readonly<CompileAdoptionSummary>): string;
+// @public
+export type DirectCompileOptions = DirectCompileBaseOptions & DirectCodecOptions;
 
 // @public (undocumented)
 export function formatDiagnostic(diagnostic: CompilerDiagnostic): string;
 
 // @public (undocumented)
-export const HELP_TEXT = "Usage:\n  avl compile <project.json> --out <asset.avl> [--report <report.json>]\n  avl compile <input.mov|input.mp4|input.m4v> --loop <start:end> [--crf <1..51> --max-bitrate <bits/second> | --bitrate <average:peak>] [--preset <name>] [--alpha auto|opaque|packed] --out <asset.avl>\n  avl compile <prefix%0Nd.png> --frames <first:count> --fps <n/d> --loop <start:end> [--crf <1..51> --max-bitrate <bits/second> | --bitrate <average:peak>] [--preset <name>] [--canvas <wxh>] [--alpha auto|opaque|packed] --out <asset.avl>\n  avl inspect <asset.avl> [--json]\n  avl validate <asset.avl> [--json]\n  avl unpack <asset.avl> --out <empty-directory> [--json]\n  avl init <directory> [--json]\n  avl dev <project.json> --out <asset.avl> [--media-timeout-ms <integer>] [--port <0-65535>] [--open] [--force] [--json]\n\nDirect AVC encoding options:\n  --bitrate <average:peak>       ABR average and peak in bits/second\n  --crf <1..51>                  constrained CRF for direct media\n  --max-bitrate <bits/second>    required ceiling with --crf\n  --preset <name>                allowlisted x264 preset through veryslow\n\nOperational options:\n  --media-timeout-ms <integer>   per FFmpeg operation for slow/large encodes\n\nProject files own their rendition encoding policy. HEVC/WebM output, faststart,\nmuxer tags, and arbitrary FFmpeg arguments are unavailable.\n\nCommon compile options: --ffmpeg <absolute-path> --ffprobe <absolute-path> --force --json";
+export const H264_ENCODER_PRESETS: readonly ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"];
+
+// @public (undocumented)
+export type H264EncoderPreset = typeof H264_ENCODER_PRESETS[number];
+
+// @public (undocumented)
+export interface H264Encoding<R extends SourceRenditionTarget = SourceRenditionTarget> {
+    // (undocumented)
+    readonly codec: "h264";
+    // (undocumented)
+    readonly preset: H264EncoderPreset;
+    // (undocumented)
+    readonly renditions: readonly R[];
+}
+
+// @public (undocumented)
+export const H265_ENCODER_PRESETS: readonly ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"];
+
+// @public (undocumented)
+export type H265EncoderPreset = typeof H265_ENCODER_PRESETS[number];
+
+// @public (undocumented)
+export interface H265Encoding<R extends SourceRenditionTarget = SourceRenditionTarget> {
+    // (undocumented)
+    readonly codec: "h265";
+    // (undocumented)
+    readonly preset: H265EncoderPreset;
+    // (undocumented)
+    readonly renditions: readonly R[];
+    // (undocumented)
+    readonly threads: number;
+}
+
+// @public (undocumented)
+export const HELP_TEXT = "Usage:\n  avl compile <project.json> --out <bundle-directory>\n  avl compile <input.mov|input.mp4|input.m4v> --codec <h264|h265|vp9|av1> --loop <start:end> [codec options] [--alpha auto|opaque|packed] --out <bundle-directory>\n  avl compile <prefix%0Nd.png> --codec <h264|h265|vp9|av1> --frames <first:count> --fps <n/d> --loop <start:end> [codec options] [--canvas <wxh>] [--alpha auto|opaque|packed] --out <bundle-directory>\n  avl inspect <asset.avl> [--json]\n  avl validate <asset.avl> [--json]\n  avl unpack <asset.avl> --out <empty-directory> [--json]\n  avl init <directory> [--json]\n  avl dev <project.json> --out <bundle-directory> [--media-timeout-ms <integer>] [--port <0-65535>] [--open] [--force] [--json]\n\nDirect encoding options:\n  --crf <integer>                constant quality (H.264/H.265 0..51; VP9/AV1 0..63)\n  --preset <name>                H.264/H.265 preset, ultrafast through placebo\n  --deadline <mode>              VP9 best, good, or realtime deadline\n  --cpu-used <integer>           VP9 -8..8 or AV1 0..8 speed/quality control\n  --bit-depth <8|10>             AV1 output bit depth\n  --tiles <columns>x<rows>       AV1 power-of-two tile layout, product at most 64\n  --row-mt                       enable AV1 row multithreading\n  --threads <1..64>              H.265, VP9, or AV1 encoder threads\n\nOperational options:\n  --media-timeout-ms <integer>   per FFmpeg operation for slow/large encodes\n\nProject files own their ordered codec-major rendition and compression policy.\nMuxer tags, faststart, arbitrary filters, audio, and raw FFmpeg arguments are unavailable.\n\nCommon compile options: --ffmpeg <absolute-path> --ffprobe <absolute-path> --force --json";
 
 // @public (undocumented)
 export interface HelpCliArguments {
@@ -906,15 +661,21 @@ export interface InspectCliArguments extends CliBaseArguments {
 }
 
 // @public (undocumented)
-export interface InspectedAccessUnitRange {
+export interface InspectedChunkRange {
     // (undocumented)
-    readonly frameIndex: number;
+    readonly byteLength: number;
     // (undocumented)
-    readonly key: boolean;
+    readonly byteOffset: number;
     // (undocumented)
-    readonly length: number;
+    readonly decodeIndex: number;
     // (undocumented)
-    readonly offset: number;
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly duration: number;
+    // (undocumented)
+    readonly presentationTimestamp: number;
+    // (undocumented)
+    readonly randomAccess: boolean;
     // (undocumented)
     readonly rendition: string;
     // (undocumented)
@@ -936,7 +697,7 @@ export interface MediaProbe {
     // (undocumented)
     readonly frameCount: number;
     // (undocumented)
-    readonly frameRate: RationalV01;
+    readonly frameRate: Rational;
     // (undocumented)
     readonly frames: readonly MediaProbeFrame[];
     // (undocumented)
@@ -946,7 +707,7 @@ export interface MediaProbe {
     // (undocumented)
     readonly pixelFormat: string;
     // (undocumented)
-    readonly timeBase: RationalV01;
+    readonly timeBase: Rational;
     // (undocumented)
     readonly variableFrameRate: boolean;
     // (undocumented)
@@ -964,44 +725,35 @@ export interface MediaProbeFrame {
 }
 
 // @public (undocumented)
-export interface NormalizedAvcEncoding extends AvcEncodingV03 {
-    // (undocumented)
-    readonly legacyZeroLatency: boolean;
-}
-
-// @public
 export interface NormalizedSourceProject {
     // (undocumented)
-    readonly alphaPolicy: SourceAlphaPolicy;
-    readonly alphaPolicyRejectionCode: "OPAQUE_ONLY_M5" | "ALPHA_POLICY_REJECTED";
+    readonly alpha: SourceAlphaPolicy;
     // (undocumented)
-    readonly bindings: readonly BindingV01[];
+    readonly bindings: readonly SourceBinding[];
     // (undocumented)
-    readonly canvas: CanvasV01;
+    readonly canvas: Canvas;
     // (undocumented)
-    readonly edges: readonly EdgeV01[];
+    readonly edges: readonly SourceEdge[];
     // (undocumented)
-    readonly frameRate: RationalV01;
+    readonly encodings: readonly NormalizedVideoEncoding[];
+    // (undocumented)
+    readonly frameRate: Rational;
     // (undocumented)
     readonly initialState: string;
     // (undocumented)
-    readonly renditions: readonly NormalizedSourceRenditionTarget[];
+    readonly projectVersion: "1.0";
     // (undocumented)
-    readonly sourceProjectVersion: SourceProjectV01["projectVersion"] | SourceProjectV02["projectVersion"] | SourceProjectV03["projectVersion"];
+    readonly sources: readonly SourceDescriptor[];
     // (undocumented)
-    readonly sources: readonly SourceDescriptorV01[];
+    readonly states: readonly SourceState[];
     // (undocumented)
-    readonly states: readonly SourceStateV01[];
-    // (undocumented)
-    readonly units: readonly SourceUnitV01[];
+    readonly units: readonly SourceUnit[];
 }
 
 // @public (undocumented)
 export interface NormalizedSourceRenditionTarget {
     // (undocumented)
-    readonly avcProfileVersion: "v0" | "v1";
-    // (undocumented)
-    readonly encoding: NormalizedAvcEncoding;
+    readonly crf: number;
     // (undocumented)
     readonly height: number;
     // (undocumented)
@@ -1010,73 +762,11 @@ export interface NormalizedSourceRenditionTarget {
     readonly width: number;
 }
 
-// @public @deprecated (undocumented)
-export type OpaqueRenditionSummary = AvcRenditionSummary;
-
 // @public (undocumented)
-export interface OpaqueRenditionTargetV01 {
-    // (undocumented)
-    readonly bitrate: {
-        readonly average: number;
-        readonly peak: number;
-    };
-    // (undocumented)
-    readonly codedHeight: number;
-    // (undocumented)
-    readonly codedWidth: number;
-    // (undocumented)
-    readonly id: string;
-}
-
-// @public (undocumented)
-export interface PackedPlanarYuv420Frame {
-    // (undocumented)
-    readonly codedHeight: number;
-    // (undocumented)
-    readonly codedWidth: number;
-    // (undocumented)
-    readonly data: Uint8Array;
-    // (undocumented)
-    readonly planes: Readonly<PlanarYuv420Planes>;
-}
-
-// @public
-export function packRgbaToPlanarYuv420(input: Readonly<PackRgbaToPlanarYuv420Input>): Readonly<PackedPlanarYuv420Frame>;
-
-// @public (undocumented)
-export interface PackRgbaToPlanarYuv420Input {
-    // (undocumented)
-    readonly geometry: Readonly<AvcRenditionGeometry>;
-    // (undocumented)
-    readonly rgba: Uint8Array;
-}
+export type NormalizedVideoEncoding = VideoEncoding<NormalizedSourceRenditionTarget>;
 
 // @public
 export function parseCliArguments(argv: readonly string[]): CliArguments;
-
-// @public (undocumented)
-export interface PlanarYuv420Plane {
-    // (undocumented)
-    readonly height: number;
-    // (undocumented)
-    readonly length: number;
-    // (undocumented)
-    readonly offset: number;
-    // (undocumented)
-    readonly stride: number;
-    // (undocumented)
-    readonly width: number;
-}
-
-// @public (undocumented)
-export interface PlanarYuv420Planes {
-    // (undocumented)
-    readonly cb: Readonly<PlanarYuv420Plane>;
-    // (undocumented)
-    readonly cr: Readonly<PlanarYuv420Plane>;
-    // (undocumented)
-    readonly y: Readonly<PlanarYuv420Plane>;
-}
 
 // @public (undocumented)
 export interface ProcessLimits {
@@ -1085,11 +775,8 @@ export interface ProcessLimits {
     // (undocumented)
     readonly maxStdoutBytes: number;
     // (undocumented)
-    readonly timeoutMs: number;
+    readonly timeoutMs?: number;
 }
-
-// @public (undocumented)
-export type ProjectArtifactOptions = Omit<ProjectCompileOptions, "outputPath">;
 
 // @public (undocumented)
 export interface ProjectCompileOptions {
@@ -1097,6 +784,8 @@ export interface ProjectCompileOptions {
     readonly ffmpegPath?: string;
     // (undocumented)
     readonly ffprobePath?: string;
+    // (undocumented)
+    readonly force?: boolean;
     // (undocumented)
     readonly mediaTimeoutMs?: number;
     // (undocumented)
@@ -1110,13 +799,11 @@ export interface ProjectCompileOptions {
 }
 
 // @public (undocumented)
-export interface RgbaDilationInput {
+export interface Rational {
     // (undocumented)
-    readonly height: number;
+    readonly denominator: number;
     // (undocumented)
-    readonly rgba: Uint8Array;
-    // (undocumented)
-    readonly width: number;
+    readonly numerator: number;
 }
 
 // @public
@@ -1129,13 +816,18 @@ export function runCli(argv: readonly string[], runtime?: CliRuntime): Promise<n
 export type SourceAlphaPolicy = "auto" | "opaque" | "packed";
 
 // @public (undocumented)
-export type SourceAvcProfileV02 = "avc-annexb-auto-v0" | "avc-annexb-opaque-v0" | "avc-annexb-packed-alpha-v0";
+export interface SourceBinding {
+    // (undocumented)
+    readonly event: string;
+    // (undocumented)
+    readonly source: SourceBindingName;
+}
 
 // @public (undocumented)
-export type SourceAvcProfileV03 = "avc-annexb-auto-v1" | "avc-annexb-opaque-v1" | "avc-annexb-packed-alpha-v1";
+export type SourceBindingName = "activate" | "engagement.off" | "engagement.on" | "focus.in" | "focus.out" | "hidden" | "pointer.enter" | "pointer.leave" | "visible";
 
 // @public (undocumented)
-export type SourceDescriptorV01 = {
+export type SourceDescriptor = {
     readonly id: string;
     readonly type: "video";
     readonly path: string;
@@ -1154,114 +846,115 @@ export type SourceDescriptorV01 = {
 };
 
 // @public (undocumented)
-export interface SourceProjectV01 {
+export type SourceEdge = {
+    readonly id: string;
+    readonly from: string;
+    readonly to: string;
+    readonly trigger?: SourceTrigger;
+    readonly start: Exclude<SourceStart, {
+        readonly type: "cut";
+    }>;
+    readonly transition?: SourceTransition;
+    readonly continuity: "exact-authored" | "exact-reverse";
+    readonly targetRunwayFrames?: never;
+} | {
+    readonly id: string;
+    readonly from: string;
+    readonly to: string;
+    readonly trigger?: SourceTrigger;
+    readonly start: Extract<SourceStart, {
+        readonly type: "cut";
+    }>;
+    readonly transition?: never;
+    readonly continuity: "cut";
+    readonly targetRunwayFrames: number;
+};
+
+// @public (undocumented)
+export interface SourcePort {
     // (undocumented)
-    readonly bindings: readonly BindingV01[];
+    readonly entryFrame: 0;
     // (undocumented)
-    readonly canvas: CanvasV01;
+    readonly id: string;
     // (undocumented)
-    readonly edges: readonly EdgeV01[];
-    // (undocumented)
-    readonly frameRate: RationalV01;
-    // (undocumented)
-    readonly initialState: string;
-    // (undocumented)
-    readonly profile: "avc-annexb-opaque-v0";
-    // (undocumented)
-    readonly projectVersion: "0.1";
-    // (undocumented)
-    readonly renditions: readonly OpaqueRenditionTargetV01[];
-    // (undocumented)
-    readonly sources: readonly SourceDescriptorV01[];
-    // (undocumented)
-    readonly states: readonly SourceStateV01[];
-    // (undocumented)
-    readonly units: readonly SourceUnitV01[];
+    readonly portalFrames: readonly number[];
 }
 
 // @public (undocumented)
-export interface SourceProjectV02 {
+export interface SourceProject {
     // (undocumented)
-    readonly bindings: readonly BindingV01[];
+    readonly alpha: SourceAlphaPolicy;
     // (undocumented)
-    readonly canvas: CanvasV01;
+    readonly bindings: readonly SourceBinding[];
     // (undocumented)
-    readonly edges: readonly EdgeV01[];
+    readonly canvas: Canvas;
     // (undocumented)
-    readonly frameRate: RationalV01;
+    readonly edges: readonly SourceEdge[];
     // (undocumented)
-    readonly initialState: string;
+    readonly encodings: readonly VideoEncoding[];
     // (undocumented)
-    readonly profile: SourceAvcProfileV02;
-    // (undocumented)
-    readonly projectVersion: "0.2";
-    // (undocumented)
-    readonly renditions: readonly SourceRenditionTargetV02[];
-    // (undocumented)
-    readonly sources: readonly SourceDescriptorV01[];
-    // (undocumented)
-    readonly states: readonly SourceStateV01[];
-    // (undocumented)
-    readonly units: readonly SourceUnitV01[];
-}
-
-// @public (undocumented)
-export interface SourceProjectV03 {
-    // (undocumented)
-    readonly bindings: readonly BindingV01[];
-    // (undocumented)
-    readonly canvas: CanvasV01;
-    // (undocumented)
-    readonly edges: readonly EdgeV01[];
-    // (undocumented)
-    readonly frameRate: RationalV01;
+    readonly frameRate: Rational;
     // (undocumented)
     readonly initialState: string;
     // (undocumented)
-    readonly profile: SourceAvcProfileV03;
+    readonly projectVersion: "1.0";
     // (undocumented)
-    readonly projectVersion: "0.3";
+    readonly sources: readonly SourceDescriptor[];
     // (undocumented)
-    readonly renditions: readonly SourceRenditionTargetV03[];
+    readonly states: readonly SourceState[];
     // (undocumented)
-    readonly sources: readonly SourceDescriptorV01[];
-    // (undocumented)
-    readonly states: readonly SourceStateV01[];
-    // (undocumented)
-    readonly units: readonly SourceUnitV01[];
+    readonly units: readonly SourceUnit[];
 }
 
 // @public (undocumented)
-export type SourceRangeV01 = readonly [
+export type SourceRange = readonly [
 startInclusive: number,
 endExclusive: number
 ];
 
 // @public (undocumented)
-export interface SourceRenditionTargetV02 {
+export type SourceRenditionDimension = number | "auto";
+
+// @public (undocumented)
+export interface SourceRenditionTarget {
     // (undocumented)
-    readonly bitrate: {
-        readonly average: number;
-        readonly peak: number;
-    };
-    readonly height: number;
+    readonly crf: number;
+    // (undocumented)
+    readonly height: SourceRenditionDimension;
     // (undocumented)
     readonly id: string;
-    readonly width: number;
+    // (undocumented)
+    readonly width: SourceRenditionDimension;
 }
 
 // @public (undocumented)
-export interface SourceRenditionTargetV03 {
+export interface SourceResidencyEndpoint {
     // (undocumented)
-    readonly encoding: AvcEncodingV03;
-    readonly height: number;
+    readonly frames: number;
     // (undocumented)
-    readonly id: string;
-    readonly width: number;
+    readonly port: string;
+    // (undocumented)
+    readonly state: string;
 }
 
 // @public (undocumented)
-export interface SourceStateV01 {
+export type SourceStart = {
+    readonly type: "portal";
+    readonly sourcePort: string;
+    readonly targetPort: string;
+    readonly maxWaitFrames: number;
+} | {
+    readonly type: "finish";
+    readonly targetPort: string;
+    readonly maxWaitFrames: number;
+} | {
+    readonly type: "cut";
+    readonly targetPort: string;
+    readonly maxWaitFrames: 1;
+};
+
+// @public (undocumented)
+export interface SourceState {
     // (undocumented)
     readonly bodyUnit: string;
     // (undocumented)
@@ -1270,23 +963,42 @@ export interface SourceStateV01 {
     readonly initialUnit?: string;
 }
 
-// Warning: (ae-forgotten-export) The symbol "SourceUnitBaseV01" needs to be exported by the entry point index.d.ts
+// @public (undocumented)
+export type SourceTransition = {
+    readonly kind: "locked";
+    readonly unit: string;
+} | {
+    readonly kind: "reversible";
+    readonly unit: string;
+    readonly direction: "forward" | "reverse";
+    readonly reverseOf?: string;
+};
+
+// @public (undocumented)
+export type SourceTrigger = {
+    readonly type: "event";
+    readonly name: string;
+} | {
+    readonly type: "completion";
+};
+
+// Warning: (ae-forgotten-export) The symbol "SourceUnitBase" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-export type SourceUnitV01 = (SourceUnitBaseV01 & {
+export type SourceUnit = (SourceUnitBase & {
     readonly kind: "body";
     readonly playback: "loop" | "finite";
-    readonly ports: readonly PortV01[];
-}) | (SourceUnitBaseV01 & {
+    readonly ports: readonly SourcePort[];
+}) | (SourceUnitBase & {
     readonly kind: "bridge";
-}) | (SourceUnitBaseV01 & {
+}) | (SourceUnitBase & {
     readonly kind: "one-shot";
-}) | (SourceUnitBaseV01 & {
+}) | (SourceUnitBase & {
     readonly kind: "reversible";
     readonly residency: {
         readonly endpoints: readonly [
-        ResidencyEndpointV01,
-        ResidencyEndpointV01
+        SourceResidencyEndpoint,
+        SourceResidencyEndpoint
         ];
     };
 });
@@ -1313,6 +1025,8 @@ export interface ToolProvenance {
     readonly encodersOutputSha256: string;
     // (undocumented)
     readonly executable: string;
+    // Warning: (ae-forgotten-export) The symbol "RegularFileIdentity" needs to be exported by the entry point index.d.ts
+    //
     // (undocumented)
     readonly executableIdentity: RegularFileIdentity;
     // (undocumented)
@@ -1349,7 +1063,7 @@ export interface UnpackCliArguments extends CliBaseArguments {
 // @public (undocumented)
 export interface UnpackReport {
     // (undocumented)
-    readonly accessUnits: number;
+    readonly chunks: number;
     // (undocumented)
     readonly command: "unpack";
     // (undocumented)
@@ -1377,14 +1091,59 @@ export interface ValidateCliArguments extends CliBaseArguments {
 }
 
 // @public (undocumented)
+export type VideoCodec = VideoCodec_2;
+
+// @public (undocumented)
+export type VideoEncoding<R extends SourceRenditionTarget = SourceRenditionTarget> = H264Encoding<R> | H265Encoding<R> | Vp9Encoding<R> | Av1Encoding<R>;
+
+// @public (undocumented)
+export type VideoRenditionInspection = Readonly<{
+    codec: "h264";
+    rendition: string;
+    codecString: string;
+    inspection: Readonly<H264RenditionInspection>;
+}> | Readonly<{
+    codec: "h265";
+    rendition: string;
+    codecString: string;
+    inspection: Readonly<H265RenditionInspection>;
+}> | Readonly<{
+    codec: "vp9";
+    rendition: string;
+    codecString: string;
+    inspection: Readonly<Vp9RenditionInspection>;
+}> | Readonly<{
+    codec: "av1";
+    rendition: string;
+    codecString: string;
+    inspection: Readonly<Av1RenditionInspection>;
+}>;
+
+// @public (undocumented)
+export const VP9_DEADLINES: readonly ["best", "good", "realtime"];
+
+// @public (undocumented)
+export type Vp9Deadline = typeof VP9_DEADLINES[number];
+
+// @public (undocumented)
+export interface Vp9Encoding<R extends SourceRenditionTarget = SourceRenditionTarget> {
+    // (undocumented)
+    readonly codec: "vp9";
+    // (undocumented)
+    readonly cpuUsed: number;
+    // (undocumented)
+    readonly deadline: Vp9Deadline;
+    // (undocumented)
+    readonly renditions: readonly R[];
+    // (undocumented)
+    readonly threads: number;
+}
+
+// @public (undocumented)
 export interface WatchHandle {
     // (undocumented)
     close(): void;
 }
-
-// Warnings were encountered during analysis:
-//
-// src/model.ts:345:5 - (ae-forgotten-export) The symbol "RegularFileIdentity" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

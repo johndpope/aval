@@ -1,7 +1,5 @@
-import { readFile } from "node:fs/promises";
-import { parseFrontIndex } from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
-import { evaluateRuntimeScenarioLedger, runtimeFixtureModelFromManifest } from "../src/runtime-scenario-ledger.js";
+import { evaluateRuntimeScenarioLedger } from "../src/runtime-scenario-ledger.js";
 import { createRawScenarioLedger, TEST_FIXTURE_DIGEST, TEST_RUNTIME_FIXTURE } from "./runtime-scenario-support.js";
 
 const candidate = "a".repeat(64);
@@ -15,12 +13,6 @@ describe("raw runtime scenario ledgers", () => {
     const result = evaluateRuntimeScenarioLedger(ledger(id), expected(id));
     expect(result.evaluation.failures).toEqual([]);
     expect(result.evaluation.passed).toBe(true);
-  });
-
-  it("accepts zero maxWaitFrames from an actual compiled candidate fixture", async () => {
-    const bytes = new Uint8Array(await readFile("fixtures/conformance/m5/opaque-reversible.avl"));
-    const model = runtimeFixtureModelFromManifest(parseFrontIndex(bytes).manifest);
-    expect(model.edges.some(({ start }) => start.maxWaitFrames === 0)).toBe(true);
   });
 
   it("derives paired-edge active reversal through reverseOf and exact adjacent frames", () => {

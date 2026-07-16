@@ -84,8 +84,7 @@ export function createReconcilerDiagnostics(
 }
 
 export const DEFAULT_CONFIGURATION: Readonly<ElementConfiguration> = Object.freeze({
-  src: "",
-  integrity: "",
+  sourceCandidates: Object.freeze([]),
   crossOrigin: "anonymous",
   motion: "auto",
   autoplay: "visible",

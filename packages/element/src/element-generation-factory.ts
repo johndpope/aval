@@ -84,8 +84,7 @@ export class ElementGenerationFactory {
         layers: this.#layers,
         elementGeneration: 1,
         generation,
-        source: captured.configuration.src,
-        integrity: captured.configuration.integrity,
+        sourceCandidates: captured.configuration.sourceCandidates,
         credentials: captured.configuration.crossOrigin === "use-credentials"
           ? "include"
           : "same-origin",

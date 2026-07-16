@@ -6,20 +6,16 @@ export type { FormatBudgets, FormatOptions } from "./model.js";
 export const FORMAT_MAGIC = Object.freeze([
   0x41, 0x56, 0x4c, 0x46, 0x0d, 0x0a, 0x1a, 0x0a
 ] as const);
-export const ACCESS_UNIT_INDEX_MAGIC = Object.freeze([
+export const CHUNK_INDEX_MAGIC = Object.freeze([
   0x41, 0x56, 0x4c, 0x49
 ] as const);
-export const REFERENCE_FRAME_MAGIC = Object.freeze([
-  0x41, 0x56, 0x52, 0x46
-] as const);
 
-export const FORMAT_VERSION_MAJOR = 0;
-export const FORMAT_VERSION_MINOR = 1;
+export const FORMAT_VERSION_MAJOR = 1;
+export const FORMAT_VERSION_MINOR = 0;
 export const FORMAT_HEADER_LENGTH = 64;
 export const FORMAT_ALIGNMENT = 8;
-export const ACCESS_UNIT_INDEX_HEADER_LENGTH = 16;
-export const ACCESS_UNIT_RECORD_LENGTH = 32;
-export const REFERENCE_FRAME_HEADER_LENGTH = 24;
+export const CHUNK_INDEX_HEADER_LENGTH = 16;
+export const CHUNK_INDEX_RECORD_LENGTH = 48;
 const UINT32_MAX = 0xffff_ffff;
 
 export const IDENTIFIER_PATTERN = Object.freeze(
@@ -31,7 +27,7 @@ export const FORMAT_DEFAULT_BUDGETS: Readonly<FormatBudgets> = Object.freeze({
   maxFileBytes: Number.MAX_SAFE_INTEGER,
   maxManifestBytes: 1024 * 1024,
   maxIndexBytes: Number.MAX_SAFE_INTEGER,
-  maxSampleBytes: UINT32_MAX,
+  maxChunkBytes: UINT32_MAX,
   maxPngBytes: Number.MAX_SAFE_INTEGER,
   maxJsonDepth: 64,
   maxJsonNodes: 20_000,
@@ -43,7 +39,7 @@ export const FORMAT_DEFAULT_BUDGETS: Readonly<FormatBudgets> = Object.freeze({
   maxBindings: 32,
   maxBlobRanges: 128,
   maxTotalUnitFrames: UINT32_MAX,
-  maxSampleRecords: UINT32_MAX,
+  maxChunkRecords: UINT32_MAX,
   maxPortsPerBody: 16,
   maxReversibleFrames: UINT32_MAX
 });

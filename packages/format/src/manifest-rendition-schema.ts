@@ -1,73 +1,51 @@
-import { deriveAvcRenditionGeometryAtPath } from "./avc/rendition-geometry.js";
-import {
-  avcLevelLimits,
-  isAvcCodec,
-  type AvcCodecV01
-} from "./avc/codec.js";
-import { FormatError } from "./errors.js";
+import { PACKED_ALPHA_GUTTER } from "./video/geometry.js";
+import { isVideoCodecString } from "./video/codec-string.js";
 import {
   boundedArray,
   exactKeys,
   identifier,
+  integerInRange,
   invalid,
   literal,
   nonNegativeInteger,
   oneOf,
   positiveInteger,
   record,
-  requireIdOrder,
   tuple
 } from "./manifest-validation.js";
 import type {
-  AvcProductionRenditionProfileV01,
-  BitrateV01,
-  CanvasV01,
+  AlphaLayout,
+  Bitrate,
+  Canvas,
   FormatBudgets,
-  RationalV01,
+  ProductionRendition,
+  Rational,
   Rect,
-  RenditionV01
+  VideoCodec,
+  VideoLayout
 } from "./model.js";
 
 const MAX_PIXEL_ASPECT_TERM = 10_000;
 const MAX_FRAME_RATE = 60;
 const MAX_FRAME_RATE_DENOMINATOR = 1_001;
-const PNG_DIMENSION_MAX = 0xffff_ffff;
-const REFERENCE_DIMENSION_MAX = 0xffff;
-const REFERENCE_SAMPLE_HEADER_BYTES = 24n;
-const UINT32_MAX_BIGINT = 0xffff_ffffn;
+const DIMENSION_MAX = 0xffff_ffff;
 
-export function cloneCanvas(value: unknown, path: string): CanvasV01 {
+export function cloneCanvas(value: unknown, path: string): Canvas {
   const input = record(value, path);
-  exactKeys(
-    input,
-    ["width", "height", "fit", "pixelAspect", "colorSpace"],
-    path
-  );
-  const width = positiveInteger(input.width, `${path}.width`, PNG_DIMENSION_MAX);
-  const height = positiveInteger(
-    input.height,
-    `${path}.height`,
-    PNG_DIMENSION_MAX
-  );
+  exactKeys(input, ["width", "height", "fit", "pixelAspect", "colorSpace"], path);
+  const width = positiveInteger(input.width, `${path}.width`, DIMENSION_MAX);
+  const height = positiveInteger(input.height, `${path}.height`, DIMENSION_MAX);
   const fit = oneOf(input.fit, ["contain", "cover", "fill", "none"], `${path}.fit`);
   const pixelAspectInput = tuple(input.pixelAspect, 2, `${path}.pixelAspect`);
   const pixelAspect = Object.freeze([
-    positiveInteger(
-      pixelAspectInput[0],
-      `${path}.pixelAspect[0]`,
-      MAX_PIXEL_ASPECT_TERM
-    ),
-    positiveInteger(
-      pixelAspectInput[1],
-      `${path}.pixelAspect[1]`,
-      MAX_PIXEL_ASPECT_TERM
-    )
+    positiveInteger(pixelAspectInput[0], `${path}.pixelAspect[0]`, MAX_PIXEL_ASPECT_TERM),
+    positiveInteger(pixelAspectInput[1], `${path}.pixelAspect[1]`, MAX_PIXEL_ASPECT_TERM)
   ]) as readonly [number, number];
   literal(input.colorSpace, "srgb", `${path}.colorSpace`);
   return Object.freeze({ width, height, fit, pixelAspect, colorSpace: "srgb" });
 }
 
-export function cloneFrameRate(value: unknown, path: string): RationalV01 {
+export function cloneFrameRate(value: unknown, path: string): Rational {
   const input = record(value, path);
   exactKeys(input, ["numerator", "denominator"], path);
   const numerator = positiveInteger(input.numerator, `${path}.numerator`);
@@ -77,293 +55,148 @@ export function cloneFrameRate(value: unknown, path: string): RationalV01 {
     MAX_FRAME_RATE_DENOMINATOR
   );
   if (numerator > denominator * MAX_FRAME_RATE) {
-    invalid(
-      `${path}.numerator`,
-      `must not exceed ${String(MAX_FRAME_RATE)} frames per second`
-    );
+    invalid(`${path}.numerator`, `must not exceed ${String(MAX_FRAME_RATE)} frames per second`);
   }
   return Object.freeze({ numerator, denominator });
 }
 
+/** Preserve authored quality order while requiring unique rendition IDs. */
 export function cloneRenditions(
   value: unknown,
-  canvas: CanvasV01,
-  frameRate: RationalV01,
+  canvas: Canvas,
+  codecFamily: VideoCodec,
+  layout: VideoLayout,
   budgets: FormatBudgets,
   path: string
-): readonly RenditionV01[] {
+): readonly ProductionRendition[] {
   const inputs = boundedArray(value, path, 1, budgets.maxRenditions);
-  const renditions = inputs.map((entry, index) =>
-    cloneRendition(entry, canvas, `${path}[${String(index)}]`)
-  );
-  requireIdOrder(renditions, path);
-  let productionProfile: AvcProductionRenditionProfileV01 | undefined;
-  for (let index = 0; index < renditions.length; index += 1) {
-    const rendition = renditions[index]!;
-    if (rendition.profile === "reference-rgba-v0") continue;
-    if (rendition.codedWidth % 16 !== 0 || rendition.codedHeight % 16 !== 0) {
-      invalid(
-        `${path}[${String(index)}]`,
-        "AVC coded dimensions must be multiples of 16"
-      );
-    }
-    const level = avcLevelLimitsForManifest(rendition.codec);
-    const widthInMacroblocks = rendition.codedWidth / 16;
-    const heightInMacroblocks = rendition.codedHeight / 16;
-    if (
-      widthInMacroblocks > level.maximumMacroblockDimension ||
-      heightInMacroblocks > level.maximumMacroblockDimension
-    ) {
-      invalid(
-        `${path}[${String(index)}]`,
-        "coded width or height exceeds the declared AVC level dimension limit"
-      );
-    }
-    const macroblocksPerFrame = widthInMacroblocks * heightInMacroblocks;
-    if (macroblocksPerFrame > level.maximumMacroblocksPerFrame) {
-      invalid(
-        `${path}[${String(index)}]`,
-        "coded dimensions exceed the declared AVC level macroblocks-per-frame limit"
-      );
-    }
-    if (
-      BigInt(macroblocksPerFrame) * BigInt(frameRate.numerator) >
-      BigInt(level.maximumMacroblocksPerSecond) * BigInt(frameRate.denominator)
-    ) {
-      invalid(
-        `${path}[${String(index)}]`,
-        "coded dimensions and frame rate exceed the declared AVC level macroblocks-per-second limit"
-      );
-    }
-    const common = {
-      canvasWidth: canvas.width,
-      canvasHeight: canvas.height,
-      codedWidth: rendition.codedWidth,
-      codedHeight: rendition.codedHeight,
-      colorRect: rendition.alphaLayout.colorRect
-    } as const;
-    deriveAvcRenditionGeometryAtPath(
-      rendition.profile === "avc-annexb-packed-alpha-v0" ||
-        rendition.profile === "avc-annexb-packed-alpha-v1"
-        ? {
-            ...common,
-            profile: rendition.profile,
-            alphaRect: rendition.alphaLayout.alphaRect
-          }
-        : { ...common, profile: rendition.profile },
+  const seen = new Set<string>();
+  const renditions = inputs.map((entry, index) => {
+    const rendition = cloneRendition(
+      entry,
+      canvas,
+      codecFamily,
+      layout,
       `${path}[${String(index)}]`
     );
-    if (productionProfile === undefined) {
-      productionProfile = rendition.profile;
-    } else if (productionProfile !== rendition.profile) {
-      throw new FormatError(
-        "PROFILE_INVALID",
-        "all production AVC renditions must use one profile and version",
-        { path }
-      );
+    if (seen.has(rendition.id)) {
+      invalid(`${path}[${String(index)}].id`, "duplicates an earlier rendition ID");
     }
-  }
+    seen.add(rendition.id);
+    return rendition;
+  });
   return Object.freeze(renditions);
 }
 
 function cloneRendition(
   value: unknown,
-  canvas: CanvasV01,
+  canvas: Canvas,
+  codecFamily: VideoCodec,
+  layout: VideoLayout,
   path: string
-): RenditionV01 {
+): ProductionRendition {
   const input = record(value, path);
-  const profile = input.profile;
-  if (profile === "reference-rgba-v0") {
-    exactKeys(
-      input,
-      [
-        "id",
-        "profile",
-        "codec",
-        "codedWidth",
-        "codedHeight",
-        "alphaLayout",
-        "capabilities"
-      ],
-      path
-    );
-    const common = cloneRenditionCommon(input, path);
-    if (
-      common.codedWidth !== canvas.width ||
-      common.codedHeight !== canvas.height
-    ) {
-      invalid(path, "reference rendition dimensions must equal the canvas");
-    }
-    if (
-      common.codedWidth > REFERENCE_DIMENSION_MAX ||
-      common.codedHeight > REFERENCE_DIMENSION_MAX
-    ) {
-      invalid(path, "reference rendition dimensions must fit uint16");
-    }
-    const referenceSampleBytes = REFERENCE_SAMPLE_HEADER_BYTES +
-      BigInt(common.codedWidth) * BigInt(common.codedHeight) * 4n;
-    if (referenceSampleBytes > UINT32_MAX_BIGINT) {
-      invalid(path, "reference rendition sample length must fit uint32");
-    }
-    literal(input.codec, "aval.reference-rgba", `${path}.codec`);
-    const alpha = record(input.alphaLayout, `${path}.alphaLayout`);
-    exactKeys(alpha, ["type"], `${path}.alphaLayout`);
-    literal(alpha.type, "straight-rgba-v0", `${path}.alphaLayout.type`);
-    const capabilities = tuple(input.capabilities, 0, `${path}.capabilities`);
-    return Object.freeze({
-      id: common.id,
-      profile,
-      codec: "aval.reference-rgba",
-      codedWidth: common.codedWidth,
-      codedHeight: common.codedHeight,
-      alphaLayout: Object.freeze({ type: "straight-rgba-v0" }),
-      capabilities: Object.freeze(capabilities) as readonly []
-    });
-  }
-
-  if (
-    profile !== "avc-annexb-opaque-v0" &&
-    profile !== "avc-annexb-packed-alpha-v0" &&
-    profile !== "avc-annexb-opaque-v1" &&
-    profile !== "avc-annexb-packed-alpha-v1"
-  ) {
-    invalid(`${path}.profile`, "has an unsupported rendition profile");
-  }
   exactKeys(
     input,
-    [
-      "id",
-      "profile",
-      "codec",
-      "codedWidth",
-      "codedHeight",
-      "alphaLayout",
-      "bitrate",
-      "capabilities"
-    ],
+    ["id", "codec", "bitDepth", "codedWidth", "codedHeight", "alphaLayout", "bitrate"],
     path
   );
-  const common = cloneRenditionCommon(input, path);
-  const codec = cloneAvcCodec(input.codec, `${path}.codec`);
-  const bitrate = cloneBitrate(
-    input.bitrate,
-    `${path}.bitrate`,
-    avcLevelLimitsForManifest(codec).maximumBitrate
-  );
-  const capabilitiesInput = tuple(input.capabilities, 2, `${path}.capabilities`);
-  literal(capabilitiesInput[0], "webcodecs", `${path}.capabilities[0]`);
-  literal(capabilitiesInput[1], "webgl2", `${path}.capabilities[1]`);
-  const capabilities = Object.freeze([
-    "webcodecs",
-    "webgl2"
-  ]) as readonly ["webcodecs", "webgl2"];
-  const alpha = record(input.alphaLayout, `${path}.alphaLayout`);
-
-  if (
-    profile === "avc-annexb-opaque-v0" ||
-    profile === "avc-annexb-opaque-v1"
-  ) {
-    exactKeys(alpha, ["type", "colorRect"], `${path}.alphaLayout`);
-    literal(alpha.type, "opaque-v0", `${path}.alphaLayout.type`);
-    const colorRect = cloneRect(
-      alpha.colorRect,
-      common.codedWidth,
-      common.codedHeight,
-      `${path}.alphaLayout.colorRect`
-    );
-    const opaque = {
-      id: common.id,
-      codec,
-      codedWidth: common.codedWidth,
-      codedHeight: common.codedHeight,
-      alphaLayout: Object.freeze({ type: "opaque-v0" as const, colorRect }),
-      bitrate,
-      capabilities
-    } as const;
-    if (profile === "avc-annexb-opaque-v0") {
-      return Object.freeze({ ...opaque, profile });
-    }
-    return Object.freeze({ ...opaque, profile });
+  const id = identifier(input.id, `${path}.id`);
+  const bitDepthValue = integerInRange(input.bitDepth, `${path}.bitDepth`, 8, 10);
+  if (bitDepthValue !== 8 && bitDepthValue !== 10) {
+    invalid(`${path}.bitDepth`, "must be 8 or 10");
   }
-
-  exactKeys(
-    alpha,
-    ["type", "colorRect", "alphaRect"],
+  const bitDepth = bitDepthValue;
+  if (codecFamily !== "av1" && bitDepth !== 8) {
+    invalid(`${path}.bitDepth`, `${codecFamily} assets require 8-bit renditions`);
+  }
+  if (!isVideoCodecString(input.codec, codecFamily, bitDepth)) {
+    invalid(`${path}.codec`, `must be a canonical ${codecFamily} codec string matching bit depth`);
+  }
+  const codedWidth = positiveInteger(input.codedWidth, `${path}.codedWidth`, DIMENSION_MAX);
+  const codedHeight = positiveInteger(input.codedHeight, `${path}.codedHeight`, DIMENSION_MAX);
+  if (codedWidth % 2 !== 0 || codedHeight % 2 !== 0) {
+    invalid(path, "4:2:0 coded dimensions must be even");
+  }
+  const alphaLayout = cloneAlphaLayout(
+    input.alphaLayout,
+    layout,
+    canvas,
+    codedWidth,
+    codedHeight,
     `${path}.alphaLayout`
   );
-  literal(alpha.type, "stacked-v0", `${path}.alphaLayout.type`);
-  const colorRect = cloneRect(
-    alpha.colorRect,
-    common.codedWidth,
-    common.codedHeight,
-    `${path}.alphaLayout.colorRect`
-  );
-  const alphaRect = cloneRect(
-    alpha.alphaRect,
-    common.codedWidth,
-    common.codedHeight,
-    `${path}.alphaLayout.alphaRect`
-  );
-  const packed = {
-    id: common.id,
-    codec,
-    codedWidth: common.codedWidth,
-    codedHeight: common.codedHeight,
-    alphaLayout: Object.freeze({
-      type: "stacked-v0" as const,
-      colorRect,
-      alphaRect
-    }),
-    bitrate,
-    capabilities
-  } as const;
-  if (profile === "avc-annexb-packed-alpha-v0") {
-    return Object.freeze({ ...packed, profile });
-  }
-  return Object.freeze({ ...packed, profile });
+  const bitrate = cloneBitrate(input.bitrate, `${path}.bitrate`);
+  return Object.freeze({
+    id,
+    codec: input.codec,
+    bitDepth,
+    codedWidth,
+    codedHeight,
+    alphaLayout,
+    bitrate
+  });
 }
 
-function cloneRenditionCommon(
-  input: Record<string, unknown>,
-  path: string
-): { readonly id: string; readonly codedWidth: number; readonly codedHeight: number } {
-  const id = identifier(input.id, `${path}.id`);
-  const codedWidth = positiveInteger(
-    input.codedWidth,
-    `${path}.codedWidth`
-  );
-  const codedHeight = positiveInteger(
-    input.codedHeight,
-    `${path}.codedHeight`
-  );
-  return { id, codedWidth, codedHeight };
-}
-
-function cloneBitrate(
+function cloneAlphaLayout(
   value: unknown,
-  path: string,
-  maximum: number
-): BitrateV01 {
+  layout: VideoLayout,
+  canvas: Canvas,
+  codedWidth: number,
+  codedHeight: number,
+  path: string
+): AlphaLayout {
+  const input = record(value, path);
+  if (layout === "opaque") {
+    exactKeys(input, ["type", "colorRect"], path);
+    literal(input.type, "opaque", `${path}.type`);
+    const colorRect = cloneVisibleColorRect(input.colorRect, canvas, codedWidth, codedHeight, `${path}.colorRect`);
+    return Object.freeze({ type: "opaque", colorRect });
+  }
+  exactKeys(input, ["type", "colorRect", "alphaRect"], path);
+  literal(input.type, "stacked", `${path}.type`);
+  const colorRect = cloneVisibleColorRect(input.colorRect, canvas, codedWidth, codedHeight, `${path}.colorRect`);
+  const alphaRect = cloneRect(input.alphaRect, codedWidth, codedHeight, `${path}.alphaRect`);
+  const paneHeight = colorRect[3] % 2 === 0 ? colorRect[3] : colorRect[3] + 1;
+  const expectedY = paneHeight + PACKED_ALPHA_GUTTER;
+  if (
+    alphaRect[0] !== 0 ||
+    alphaRect[1] !== expectedY ||
+    alphaRect[2] !== colorRect[2] ||
+    alphaRect[3] !== colorRect[3]
+  ) {
+    invalid(`${path}.alphaRect`, "must be a second matching pane after the fixed eight-pixel gutter");
+  }
+  return Object.freeze({ type: "stacked", colorRect, alphaRect });
+}
+
+function cloneVisibleColorRect(
+  value: unknown,
+  canvas: Canvas,
+  codedWidth: number,
+  codedHeight: number,
+  path: string
+): Rect {
+  const rect = cloneRect(value, codedWidth, codedHeight, path);
+  if (rect[0] !== 0 || rect[1] !== 0) {
+    invalid(path, "visible color rectangle must begin at the decoded surface origin");
+  }
+  if (rect[2] > canvas.width || rect[3] > canvas.height) {
+    invalid(path, "visible color rectangle must fit the logical canvas");
+  }
+  if (BigInt(rect[2]) * BigInt(canvas.height) !== BigInt(rect[3]) * BigInt(canvas.width)) {
+    invalid(path, "visible color rectangle must retain the canvas aspect ratio");
+  }
+  return rect;
+}
+
+function cloneBitrate(value: unknown, path: string): Bitrate {
   const input = record(value, path);
   exactKeys(input, ["average", "peak"], path);
-  const average = positiveInteger(input.average, `${path}.average`, maximum);
-  const peak = positiveInteger(input.peak, `${path}.peak`, maximum);
-  if (average > peak) {
-    invalid(`${path}.average`, "must not exceed peak bitrate");
-  }
+  const average = positiveInteger(input.average, `${path}.average`);
+  const peak = positiveInteger(input.peak, `${path}.peak`);
+  if (average > peak) invalid(`${path}.average`, "must not exceed peak bitrate");
   return Object.freeze({ average, peak });
-}
-
-function cloneAvcCodec(value: unknown, path: string): AvcCodecV01 {
-  if (!isAvcCodec(value)) {
-    invalid(path, "must identify a supported Constrained Baseline AVC level");
-  }
-  return value;
-}
-
-function avcLevelLimitsForManifest(codec: AvcCodecV01) {
-  const levelHex = codec.slice(-2);
-  return avcLevelLimits(Number.parseInt(levelHex, 16));
 }
 
 function cloneRect(

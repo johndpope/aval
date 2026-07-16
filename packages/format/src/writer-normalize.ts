@@ -1,7 +1,8 @@
+import { checkedAdd } from "./checked-integer.js";
 import { resolveFormatBudgets } from "./constants.js";
 import { FormatError, isFormatError } from "./errors.js";
 import { adaptManifestToMotionGraph } from "./graph-adapter.js";
-import { validateCompiledManifestV01 } from "./manifest-schema.js";
+import { validateCompiledManifest } from "./manifest-schema.js";
 import {
   compareAscii,
   exactKeys,
@@ -13,26 +14,14 @@ import {
   record
 } from "./manifest-validation.js";
 import type {
-  AccessUnitInputV01,
-  CanonicalAssetInputV01,
-  CompiledManifestV01,
+  CanonicalAssetInput,
+  CompiledManifest,
+  EncodedChunkInput,
   FormatBudgets,
-  FormatOptions
+  FormatOptions,
+  UnitChunkSpan
 } from "./model.js";
-import {
-  createCanonicalSamplePlan,
-  type CanonicalSamplePlan,
-  type CanonicalSampleSpan
-} from "./sample-plan.js";
 
-const RENDITION_PROFILES = [
-  "reference-rgba-v0",
-  "avc-annexb-opaque-v0",
-  "avc-annexb-packed-alpha-v0",
-  "avc-annexb-opaque-v1",
-  "avc-annexb-packed-alpha-v1"
-] as const;
-const RENDITION_CAPABILITIES = ["webcodecs", "webgl2"] as const;
 const BINDING_SOURCES = [
   "activate",
   "engagement.off",
@@ -48,6 +37,9 @@ const UNIT_KINDS = ["body", "bridge", "reversible", "one-shot"] as const;
 const MANIFEST_INPUT_KEYS = [
   "formatVersion",
   "generator",
+  "codec",
+  "bitstream",
+  "layout",
   "canvas",
   "frameRate",
   "renditions",
@@ -61,113 +53,138 @@ const MANIFEST_INPUT_KEYS = [
 ] as const;
 
 export interface NormalizedWriterInput {
-  readonly manifest: CompiledManifestV01;
-  readonly accessUnits: readonly AccessUnitInputV01[];
+  readonly manifest: CompiledManifest;
+  readonly chunks: readonly EncodedChunkInput[];
+}
+
+interface NormalizedUnitBase {
+  readonly value: Record<string, unknown>;
+  readonly id: string;
+  readonly frameCount: number;
+  readonly digests: ReadonlyMap<string, string>;
 }
 
 /** Clone, canonicalize, and validate writer metadata without copying payloads. */
 export function normalizeWriterInput(
-  input: CanonicalAssetInputV01,
+  input: CanonicalAssetInput,
   options?: FormatOptions
 ): Readonly<NormalizedWriterInput> {
   try {
     const budgets = resolveFormatBudgets(options);
     const root = record(input, "writer input");
-    exactKeys(root, ["manifest", "accessUnits"], "writer input");
+    exactKeys(root, ["manifest", "chunks"], "writer input");
     const sourceManifest = record(root.manifest, "manifest input");
     exactKeys(sourceManifest, MANIFEST_INPUT_KEYS, "manifest input");
-    const sourceUnits = boundedInputArray(
-      sourceManifest.units,
-      "manifest.units",
-      budgets.maxUnits,
-      1
-    );
     const sourceRenditions = boundedInputArray(
       sourceManifest.renditions,
       "manifest.renditions",
       budgets.maxRenditions,
       1
     );
+    const renditionIds = authoredRenditionIds(sourceRenditions);
+    const sourceUnits = sortById(
+      boundedInputArray(sourceManifest.units, "manifest.units", budgets.maxUnits, 1),
+      "units"
+    );
+    const unitBases = sourceUnits.map((unit, unitIndex) =>
+      normalizeUnitBase(unit, unitIndex, renditionIds, budgets)
+    );
+    const blobCount = unitBases.length * renditionIds.length;
+    if (!Number.isSafeInteger(blobCount) || blobCount > budgets.maxBlobRanges) {
+      budget("blob range count");
+    }
+
+    const suppliedChunks = normalizeChunkInputs(
+      boundedInputArray(root.chunks, "chunks", budgets.maxChunkRecords, 1),
+      budgets.maxChunkBytes
+    );
+    const groups = groupChunks(suppliedChunks);
+    const unitSpans: UnitChunkSpan[][] = Array.from(
+      { length: unitBases.length },
+      () => []
+    );
+    const orderedChunks: EncodedChunkInput[] = [];
+    let chunkStart = 0;
+    for (const rendition of renditionIds) {
+      for (let unitIndex = 0; unitIndex < unitBases.length; unitIndex += 1) {
+        const unit = unitBases[unitIndex]!;
+        const key = chunkGroupKey(rendition, unit.id);
+        const group = groups.get(key);
+        if (group === undefined || group.length === 0) {
+          invalid(`missing encoded chunks for ${rendition}/${unit.id}`);
+        }
+        groups.delete(key);
+        group.sort((left, right) => left.decodeIndex - right.decodeIndex);
+        let displayedFrames = 0;
+        for (let index = 0; index < group.length; index += 1) {
+          const chunk = group[index]!;
+          if (chunk.decodeIndex !== index) {
+            invalid(`${rendition}/${unit.id} decode indexes must be contiguous from zero`);
+          }
+          if (index === 0 && !chunk.randomAccess) {
+            invalid(`${rendition}/${unit.id} must begin with a random-access chunk`);
+          }
+          displayedFrames = checkedAdd(
+            displayedFrames,
+            chunk.displayedFrameCount,
+            budgets.maxTotalUnitFrames,
+            "unit displayed frame count"
+          );
+          orderedChunks.push(chunk);
+        }
+        if (displayedFrames !== unit.frameCount) {
+          invalid(`${rendition}/${unit.id} must display exactly ${String(unit.frameCount)} frames`);
+        }
+        const sha256 = unit.digests.get(rendition);
+        if (sha256 === undefined) invalid(`${unit.id} is missing digest for ${rendition}`);
+        unitSpans[unitIndex]!.push(Object.freeze({
+          rendition,
+          chunkStart,
+          chunkCount: group.length,
+          frameCount: unit.frameCount,
+          sha256
+        }));
+        chunkStart = checkedAdd(
+          chunkStart,
+          group.length,
+          budgets.maxChunkRecords,
+          "chunk span end"
+        );
+      }
+    }
+    if (groups.size !== 0) invalid("chunks contain an unknown rendition or unit");
+    if (orderedChunks.length !== suppliedChunks.length) invalid("chunks contain duplicate identities");
+
     const sourceStates = boundedInputArray(
       sourceManifest.states,
       "manifest.states",
       budgets.maxStates,
       1
     );
-    const sourceEdges = boundedInputArray(
-      sourceManifest.edges,
-      "manifest.edges",
-      budgets.maxEdges
-    );
+    const sourceEdges = boundedInputArray(sourceManifest.edges, "manifest.edges", budgets.maxEdges);
     const sourceBindings = boundedInputArray(
       sourceManifest.bindings,
       "manifest.bindings",
       budgets.maxBindings
     );
-    const blobCount = sourceUnits.length * sourceRenditions.length;
-    if (!Number.isSafeInteger(blobCount) || blobCount > budgets.maxBlobRanges) {
-      budget("blob range count");
-    }
-
-    const accessInputs = boundedInputArray(
-      root.accessUnits,
-      "accessUnits",
-      budgets.maxSampleRecords,
-      1
-    );
-    const renditions = sortById(sourceRenditions, "renditions");
-    const normalizedRenditions = normalizeRenditions(renditions);
-
-    const unitInputs = sortById(sourceUnits, "units");
-    const samplePlan = createCanonicalSamplePlan(
-      normalizedRenditions.map((rendition, index) => ({
-        id: identifier(rendition.id, `renditions[${String(index)}].id`),
-        profile: oneOf(
-          rendition.profile,
-          RENDITION_PROFILES,
-          `renditions[${String(index)}].profile`
-        )
-      })),
-      unitInputs.map((unit, index) => ({
-        id: identifier(unit.id, `units[${String(index)}].id`),
-        frameCount: positiveInteger(
-          unit.frameCount,
-          `units[${String(index)}].frameCount`
-        )
-      })),
-      budgets.maxSampleRecords,
-      budgets.maxTotalUnitFrames
-    );
-
-    const units = unitInputs.map((unit, unitIndex) =>
-      normalizeUnit(
-        unit,
-        unitIndex,
-        samplePlan.unitSpans[unitIndex] ?? [],
-        samplePlan.unitSpans[unitIndex]?.[0]?.sampleCount ?? 0,
-        budgets
-      )
-    );
-
+    const units = unitBases.map((unit, index) => ({
+      ...unit.value,
+      chunks: unitSpans[index]
+    }));
     const manifestCandidate = {
       ...sourceManifest,
-      renditions: normalizedRenditions,
+      renditions: sourceRenditions,
       units,
       states: sortById(sourceStates, "states"),
       edges: sortById(sourceEdges, "edges"),
       bindings: normalizeBindings(sourceBindings),
       readiness: normalizeReadiness(sourceManifest.readiness, budgets)
     };
-    const manifest = validateCompiledManifestV01(manifestCandidate, options);
+    const manifest = validateCompiledManifest(manifestCandidate, options);
     adaptManifestToMotionGraph(manifest);
-    const accessUnits = normalizeAccessUnits(
-      accessInputs,
-      samplePlan,
-      budgets.maxSampleBytes
-    );
     return Object.freeze({
       manifest,
-      accessUnits: Object.freeze(accessUnits)
+      chunks: Object.freeze(orderedChunks)
     });
   } catch (error) {
     if (isFormatError(error)) {
@@ -183,96 +200,42 @@ export function normalizeWriterInput(
   }
 }
 
-function normalizeUnit(
+function normalizeUnitBase(
   value: Record<string, unknown>,
   unitIndex: number,
-  expectedSpans: readonly CanonicalSampleSpan[],
-  frameCount: number,
+  renditionIds: readonly string[],
   budgets: Readonly<FormatBudgets>
-): Record<string, unknown> {
+): NormalizedUnitBase {
   const path = `units[${String(unitIndex)}]`;
   const kind = oneOf(value.kind, UNIT_KINDS, `${path}.kind`);
   if (kind === "body") {
-    exactKeys(
-      value,
-      ["id", "kind", "playback", "frameCount", "ports", "samples"],
-      path
-    );
+    exactKeys(value, ["id", "kind", "playback", "frameCount", "ports", "chunks"], path);
   } else if (kind === "reversible") {
-    exactKeys(
-      value,
-      ["id", "kind", "frameCount", "residency", "samples"],
-      path
-    );
+    exactKeys(value, ["id", "kind", "frameCount", "residency", "chunks"], path);
   } else {
-    exactKeys(value, ["id", "kind", "frameCount", "samples"], path);
+    exactKeys(value, ["id", "kind", "frameCount", "chunks"], path);
   }
-  const sampleInputs = exactInputArray(
-    value.samples,
-    `${path}.samples`,
-    expectedSpans.length
-  );
-  const samplesByRendition = new Map<string, Record<string, unknown>>();
-  for (let index = 0; index < sampleInputs.length; index += 1) {
-    const sample = record(
-      sampleInputs[index],
-      `${path}.samples[${String(index)}]`
-    );
-    exactKeys(
-      sample,
-      ["rendition", "sha256"],
-      `${path}.samples[${String(index)}]`
-    );
-    const rendition = identifier(
-      sample.rendition,
-      `${path}.samples[${String(index)}].rendition`
-    );
-    if (samplesByRendition.has(rendition)) {
-      invalid(`${path}.samples duplicates rendition ${rendition}`);
-    }
-    samplesByRendition.set(rendition, sample);
-  }
-  const samples = expectedSpans.map((expected) => {
-    const rendition = expected.renditionId;
-    const sample = samplesByRendition.get(rendition);
-    if (sample === undefined) invalid(`${path}.samples is missing rendition ${rendition}`);
-    return {
-      ...sample,
-      sampleStart: expected.sampleStart,
-      sampleCount: expected.sampleCount
-    };
-  });
-  if (samplesByRendition.size !== expectedSpans.length) {
-    invalid(`${path}.samples references an unknown rendition`);
-  }
+  const id = identifier(value.id, `${path}.id`);
+  const frameCount = positiveInteger(value.frameCount, `${path}.frameCount`);
+  const digests = normalizeDigests(value.chunks, renditionIds, `${path}.chunks`);
 
   if (kind === "body") {
     const ports = sortById(
-      boundedInputArray(
-        value.ports,
-        `${path}.ports`,
-        budgets.maxPortsPerBody
-      ),
+      boundedInputArray(value.ports, `${path}.ports`, budgets.maxPortsPerBody),
       `${path}.ports`
-    ).map(
-      (port, index) => {
-        const portPath = `${path}.ports[${String(index)}]`;
-        exactKeys(port, ["id", "entryFrame", "portalFrames"], portPath);
-        return {
-          ...port,
-          portalFrames: numericSort(
-            boundedInputArray(
-              port.portalFrames,
-              `${portPath}.portalFrames`,
-              frameCount,
-              1
-            ),
-            `${portPath}.portalFrames`
-          )
-        };
-      }
-    );
-    return { ...value, kind, ports, samples };
+    ).map((port, index) => {
+      const portPath = `${path}.ports[${String(index)}]`;
+      exactKeys(port, ["id", "entryFrame", "portalFrames"], portPath);
+      return {
+        ...port,
+        portalFrames: numericSort(
+          boundedInputArray(port.portalFrames, `${portPath}.portalFrames`, frameCount, 1),
+          `${portPath}.portalFrames`
+        )
+      };
+    });
+    const { chunks: _chunks, ...rest } = value;
+    return { value: { ...rest, kind, ports }, id, frameCount, digests };
   }
   if (kind === "reversible") {
     const residency = record(value.residency, `${path}.residency`);
@@ -281,83 +244,127 @@ function normalizeUnit(
       residency.endpoints,
       `${path}.residency.endpoints`,
       2
-    ).map((endpoint, index) =>
-      record(endpoint, `${path}.residency.endpoints[${String(index)}]`)
     ).map((endpoint, index) => {
       const endpointPath = `${path}.residency.endpoints[${String(index)}]`;
-      exactKeys(endpoint, ["state", "port", "frames"], endpointPath);
+      const input = record(endpoint, endpointPath);
+      exactKeys(input, ["state", "port", "frames"], endpointPath);
       return {
-        ...endpoint,
-        state: identifier(endpoint.state, `${endpointPath}.state`),
-        port: identifier(endpoint.port, `${endpointPath}.port`)
+        ...input,
+        state: identifier(input.state, `${endpointPath}.state`),
+        port: identifier(input.port, `${endpointPath}.port`)
       };
     });
-    endpoints.sort((left, right) => {
-      const byState = compareAscii(left.state, right.state);
-      return byState || compareAscii(left.port, right.port);
-    });
+    endpoints.sort((left, right) =>
+      compareAscii(left.state, right.state) || compareAscii(left.port, right.port)
+    );
+    const { chunks: _chunks, ...rest } = value;
     return {
-      ...value,
-      kind,
-      residency: { ...residency, endpoints },
-      samples
+      value: { ...rest, kind, residency: { ...residency, endpoints } },
+      id,
+      frameCount,
+      digests
     };
   }
-  return { ...value, kind, samples };
+  const { chunks: _chunks, ...rest } = value;
+  return { value: { ...rest, kind }, id, frameCount, digests };
 }
 
-function normalizeRenditions(
-  renditions: readonly Record<string, unknown>[]
-): readonly Record<string, unknown>[] {
-  return renditions.map((rendition) => {
-    const profile = oneOf(
-      rendition.profile,
-      RENDITION_PROFILES,
-      `rendition ${String(rendition.id)} profile`
-    );
+function normalizeDigests(
+  value: unknown,
+  renditionIds: readonly string[],
+  path: string
+): ReadonlyMap<string, string> {
+  const inputs = exactInputArray(value, path, renditionIds.length);
+  const supplied = new Map<string, string>();
+  for (let index = 0; index < inputs.length; index += 1) {
+    const input = record(inputs[index], `${path}[${String(index)}]`);
+    exactKeys(input, ["rendition", "sha256"], `${path}[${String(index)}]`);
+    const rendition = identifier(input.rendition, `${path}[${String(index)}].rendition`);
+    if (typeof input.sha256 !== "string") invalid(`${path}[${String(index)}].sha256 must be a string`);
+    if (supplied.has(rendition)) invalid(`${path} duplicates rendition ${rendition}`);
+    supplied.set(rendition, input.sha256);
+  }
+  for (const rendition of renditionIds) {
+    if (!supplied.has(rendition)) invalid(`${path} is missing rendition ${rendition}`);
+  }
+  if (supplied.size !== renditionIds.length) invalid(`${path} references an unknown rendition`);
+  return supplied;
+}
+
+function authoredRenditionIds(values: readonly unknown[]): readonly string[] {
+  const seen = new Set<string>();
+  const ids = values.map((value, index) => {
+    const input = record(value, `renditions[${String(index)}]`);
+    const id = identifier(input.id, `renditions[${String(index)}].id`);
+    if (seen.has(id)) invalid(`renditions[${String(index)}].id duplicates ${id}`);
+    seen.add(id);
+    return id;
+  });
+  return Object.freeze(ids);
+}
+
+function normalizeChunkInputs(values: readonly unknown[], maxBytes: number): EncodedChunkInput[] {
+  return values.map((value, index) => {
+    const path = `chunks[${String(index)}]`;
+    const input = record(value, path);
     exactKeys(
-      rendition,
-      profile === "reference-rgba-v0"
-        ? [
-            "id",
-            "profile",
-            "codec",
-            "codedWidth",
-            "codedHeight",
-            "alphaLayout",
-            "capabilities"
-          ]
-        : [
-            "id",
-            "profile",
-            "codec",
-            "codedWidth",
-            "codedHeight",
-            "alphaLayout",
-            "bitrate",
-            "capabilities"
-          ],
-      `rendition ${String(rendition.id)}`
+      input,
+      [
+        "rendition",
+        "unit",
+        "decodeIndex",
+        "presentationTimestamp",
+        "duration",
+        "randomAccess",
+        "displayedFrameCount",
+        "bytes"
+      ],
+      path
     );
-    const capabilities = boundedInputArray(
-      rendition.capabilities,
-      `rendition ${String(rendition.id)} capabilities`,
-      2
-    ).map((value) => {
-      return oneOf(
-        value,
-        RENDITION_CAPABILITIES,
-        `rendition ${String(rendition.id)} capability`
-      );
+    if (typeof input.randomAccess !== "boolean") invalid(`${path}.randomAccess must be boolean`);
+    if (!(input.bytes instanceof Uint8Array)) invalid(`${path}.bytes must be a Uint8Array`);
+    if (input.bytes.byteLength < 1) invalid(`${path}.bytes must not be empty`);
+    if (input.bytes.byteLength > maxBytes) budget(`${path}.bytes`);
+    const displayedFrameCount = nonNegativeInteger(
+      input.displayedFrameCount,
+      `${path}.displayedFrameCount`
+    );
+    const duration = nonNegativeInteger(input.duration, `${path}.duration`);
+    if (displayedFrameCount > 0 && duration === 0) {
+      invalid(`${path}.duration must be positive when the chunk displays frames`);
+    }
+    return Object.freeze({
+      rendition: identifier(input.rendition, `${path}.rendition`),
+      unit: identifier(input.unit, `${path}.unit`),
+      decodeIndex: nonNegativeInteger(input.decodeIndex, `${path}.decodeIndex`),
+      presentationTimestamp: nonNegativeInteger(
+        input.presentationTimestamp,
+        `${path}.presentationTimestamp`
+      ),
+      duration,
+      randomAccess: input.randomAccess,
+      displayedFrameCount,
+      bytes: input.bytes
     });
-    capabilities.sort(compareAscii);
-    return { ...rendition, profile, capabilities };
   });
 }
 
-function normalizeBindings(
-  values: readonly unknown[]
-): readonly Record<string, unknown>[] {
+function groupChunks(values: readonly EncodedChunkInput[]): Map<string, EncodedChunkInput[]> {
+  const groups = new Map<string, EncodedChunkInput[]>();
+  const identities = new Set<string>();
+  for (const chunk of values) {
+    const identity = `${chunkGroupKey(chunk.rendition, chunk.unit)}\u0000${String(chunk.decodeIndex)}`;
+    if (identities.has(identity)) invalid(`duplicate encoded chunk ${identity}`);
+    identities.add(identity);
+    const key = chunkGroupKey(chunk.rendition, chunk.unit);
+    const group = groups.get(key) ?? [];
+    group.push(chunk);
+    groups.set(key, group);
+  }
+  return groups;
+}
+
+function normalizeBindings(values: readonly unknown[]): readonly Record<string, unknown>[] {
   const bindings = values.map((value, index) => {
     const path = `bindings[${String(index)}]`;
     const binding = record(value, path);
@@ -368,37 +375,21 @@ function normalizeBindings(
       event: identifier(binding.event, `${path}.event`)
     };
   });
-  bindings.sort((left, right) => {
-    const source = compareAscii(left.source, right.source);
-    return source || compareAscii(left.event, right.event);
-  });
+  bindings.sort((left, right) =>
+    compareAscii(left.source, right.source) || compareAscii(left.event, right.event)
+  );
   return bindings;
 }
 
-function normalizeReadiness(
-  value: unknown,
-  budgets: Readonly<FormatBudgets>
-): Record<string, unknown> {
+function normalizeReadiness(value: unknown, budgets: Readonly<FormatBudgets>): Record<string, unknown> {
   const readiness = record(value, "manifest.readiness");
-  exactKeys(
-    readiness,
-    ["policy", "bootstrapUnits", "immediateEdges"],
-    "manifest.readiness"
-  );
+  exactKeys(readiness, ["policy", "bootstrapUnits", "immediateEdges"], "manifest.readiness");
   const bootstrapUnits = stringArray(
-    boundedInputArray(
-      readiness.bootstrapUnits,
-      "readiness.bootstrapUnits",
-      budgets.maxUnits
-    ),
+    boundedInputArray(readiness.bootstrapUnits, "readiness.bootstrapUnits", budgets.maxUnits),
     "readiness.bootstrapUnits"
   );
   const immediateEdges = stringArray(
-    boundedInputArray(
-      readiness.immediateEdges,
-      "readiness.immediateEdges",
-      budgets.maxEdges
-    ),
+    boundedInputArray(readiness.immediateEdges, "readiness.immediateEdges", budgets.maxEdges),
     "readiness.immediateEdges"
   );
   bootstrapUnits.sort(compareAscii);
@@ -406,109 +397,25 @@ function normalizeReadiness(
   return { ...readiness, bootstrapUnits, immediateEdges };
 }
 
-function normalizeAccessUnits(
-  values: readonly unknown[],
-  plan: Readonly<CanonicalSamplePlan>,
-  maxBytes: number
-): AccessUnitInputV01[] {
-  const supplied = new Map<string, AccessUnitInputV01>();
-  for (let index = 0; index < values.length; index += 1) {
-    const payloadRecord = record(
-      values[index],
-      `accessUnits[${String(index)}]`
-    );
-    exactKeys(
-      payloadRecord,
-      ["rendition", "unit", "frameIndex", "key", "bytes"],
-      `accessUnits[${String(index)}]`
-    );
-    const rendition = identifier(
-      payloadRecord.rendition,
-      "access unit rendition"
-    );
-    const unit = identifier(payloadRecord.unit, "access unit unit");
-    const frameIndex = nonNegativeInteger(
-      payloadRecord.frameIndex,
-      "access unit frameIndex"
-    );
-    if (typeof payloadRecord.key !== "boolean") {
-      invalid("access unit key must be boolean");
-    }
-    const bytes = byteArray(
-      payloadRecord.bytes,
-      maxBytes,
-      "access unit payload"
-    );
-    const key = accessKey(rendition, unit, frameIndex);
-    if (supplied.has(key)) invalid(`duplicate access unit ${key}`);
-    supplied.set(
-      key,
-      Object.freeze({
-        rendition,
-        unit,
-        frameIndex,
-        key: payloadRecord.key,
-        bytes
-      })
-    );
-  }
-
-  const ordered: AccessUnitInputV01[] = [];
-  for (const slot of plan.records()) {
-    const key = accessKey(slot.renditionId, slot.unitId, slot.frameIndex);
-    const payload = supplied.get(key);
-    if (payload === undefined) invalid(`missing access unit ${key}`);
-    if (slot.keyRequired && !payload.key) {
-      invalid(
-        slot.frameIndex === 0
-          ? `${key} frame zero must be key`
-          : `${key} reference frame must be key`
-      );
-    }
-    ordered.push(payload);
-  }
-  if (ordered.length !== supplied.size) invalid("accessUnits contains an unknown payload");
-  return ordered;
-}
-
-function sortById(
-  values: readonly unknown[],
-  path: string
-): Record<string, unknown>[] {
+function sortById(values: readonly unknown[], path: string): Record<string, unknown>[] {
   const identified = values.map((value, index) => {
     const entry = record(value, `${path}[${String(index)}]`);
-    return {
-      entry,
-      id: identifier(entry.id, `${path}[${String(index)}].id`)
-    };
+    return { entry, id: identifier(entry.id, `${path}[${String(index)}].id`) };
   });
-  identified.sort((left, right) =>
-    compareAscii(left.id, right.id)
-  );
+  identified.sort((left, right) => compareAscii(left.id, right.id));
   return identified.map(({ entry }) => entry);
 }
 
 function numericSort(values: readonly unknown[], path: string): number[] {
-  const numbers = values.map((value, index) =>
+  const result = values.map((value, index) =>
     nonNegativeInteger(value, `${path}[${String(index)}]`)
   );
-  numbers.sort((left, right) => left - right);
-  return numbers;
+  result.sort((left, right) => left - right);
+  return result;
 }
 
-function stringArray(value: unknown, path: string): string[] {
-  return requireArray(value, path).map((item, index) =>
-    identifier(item, `${path}[${String(index)}]`)
-  );
-}
-
-function byteArray(value: unknown, maximum: number, label: string): Uint8Array {
-  if (!(value instanceof Uint8Array)) invalid(`${label} must be a Uint8Array`);
-  if (value.byteLength === 0) invalid(`${label} must not be empty`);
-  if (value.byteLength > maximum) {
-    throw new FormatError("BUDGET_EXCEEDED", `${label} exceeds its byte budget`);
-  }
-  return value;
+function stringArray(values: readonly unknown[], path: string): string[] {
+  return values.map((value, index) => identifier(value, `${path}[${String(index)}]`));
 }
 
 function requireArray(value: unknown, path: string): readonly unknown[] {
@@ -524,36 +431,26 @@ function boundedInputArray(
 ): readonly unknown[] {
   const array = requireArray(value, path);
   if (array.length > maximum) budget(`${path} count`);
-  if (array.length < minimum) {
-    invalid(`${path} must contain at least ${String(minimum)} entries`);
-  }
+  if (array.length < minimum) invalid(`${path} must contain at least ${String(minimum)} entries`);
   requireDenseArray(array, path);
   return array;
 }
 
-function exactInputArray(
-  value: unknown,
-  path: string,
-  expectedLength: number
-): readonly unknown[] {
+function exactInputArray(value: unknown, path: string, expected: number): readonly unknown[] {
   const array = requireArray(value, path);
-  if (array.length !== expectedLength) {
-    invalid(`${path} must contain exactly ${String(expectedLength)} entries`);
-  }
+  if (array.length !== expected) invalid(`${path} must contain exactly ${String(expected)} entries`);
   requireDenseArray(array, path);
   return array;
 }
 
 function requireDenseArray(value: readonly unknown[], path: string): void {
   for (let index = 0; index < value.length; index += 1) {
-    if (!owns(value, String(index))) {
-      invalid(`${path}[${String(index)}] must not be sparse`);
-    }
+    if (!owns(value, String(index))) invalid(`${path}[${String(index)}] must not be sparse`);
   }
 }
 
-function accessKey(rendition: string, unit: string, frameIndex: number): string {
-  return `${rendition}\u0000${unit}\u0000${String(frameIndex)}`;
+function chunkGroupKey(rendition: string, unit: string): string {
+  return `${rendition}\u0000${unit}`;
 }
 
 function budget(label: string): never {

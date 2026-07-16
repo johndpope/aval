@@ -6,14 +6,14 @@ import { afterAll, describe, expect, it } from "vitest";
 import { runInitCommand } from "../src/commands/init.js";
 import { parseSourceProject } from "../src/source-project-schema.js";
 
-describe("M8 idle-hover starter", () => {
+describe("AVAL 1.0 multi-codec idle-hover starter", () => {
   let root = "";
   afterAll(async () => {
     if (root !== "") await rm(root, { recursive: true, force: true });
   });
 
   it("creates a provenanced arbitrary-state accessible starter", async () => {
-    root = await mkdtemp(join(tmpdir(), "aval-m8-starter-"));
+    root = await mkdtemp(join(tmpdir(), "aval-v1-starter-"));
     const result = await runInitCommand({
       command: "init",
       directory: "starter",
@@ -22,10 +22,17 @@ describe("M8 idle-hover starter", () => {
     expect(result.files).toHaveLength(29);
     await expectExactTree(
       result.directory,
-      resolve(process.cwd(), "fixtures/starter/m8-idle-hover")
+      resolve(process.cwd(), "fixtures/starter/v1-idle-hover")
     );
     const project = parseSourceProject(new Uint8Array(await readFile(result.project)));
     expect(project).toMatchObject({
+      projectVersion: "1.0",
+      encodings: [
+        { codec: "av1", bitDepth: 10 },
+        { codec: "vp9", deadline: "good" },
+        { codec: "h265", preset: "slow" },
+        { codec: "h264", preset: "slow" }
+      ],
       initialState: "idle",
       states: [{ id: "engaged" }, { id: "idle" }]
     });
@@ -48,23 +55,39 @@ describe("M8 idle-hover starter", () => {
     const html = await readFile(join(result.directory, "index.html"), "utf8");
     expect(html).toContain("<button id=\"favorite\"");
     expect(html).toContain("interaction-for=\"favorite\"");
+    expect(html).toContain('<source data-aval-codec="av1">');
+    expect(html).toContain('<source data-aval-codec="vp9">');
+    expect(html).toContain('<source data-aval-codec="h265">');
+    expect(html).toContain('<source data-aval-codec="h264">');
     expect(html).toContain('src="./main.js"');
-    expect(await readFile(join(result.directory, "main.js"), "utf8")).toBe(
-      'import "@pixel-point/aval-element/auto";\n'
-    );
+    expect(html).not.toMatch(/<aval-player[^>]+\s(?:src|integrity)=/u);
+    const main = await readFile(join(result.directory, "main.js"), "utf8");
+    expect(main).toContain('fetch("./motion/build.json")');
+    expect(main).toContain('source.setAttribute("type", asset.type)');
+    expect(main).toContain('source.setAttribute("integrity", asset.integrity)');
+    expect(main).toContain('await import("@pixel-point/aval-element/auto")');
     expect(html).not.toContain("tabindex");
     const packageJson = JSON.parse(await readFile(
       join(result.directory, "package.json"),
       "utf8"
     )) as {
       dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
       scripts?: Record<string, string>;
     };
     expect(packageJson.dependencies).toEqual({
-      "@pixel-point/aval-compiler": "1.0.0",
       "@pixel-point/aval-element": "1.0.0"
     });
-    expect(packageJson.scripts?.dev).toBe("avl dev motion.json --out starter.avl --force");
+    expect(packageJson.devDependencies).toEqual({
+      "@pixel-point/aval-compiler": "1.0.0",
+      vite: "8.1.4"
+    });
+    expect(packageJson.scripts?.build).toBe(
+      "avl compile motion.json --out motion --force"
+    );
+    expect(packageJson.scripts?.dev).toBe(
+      "avl dev motion.json --out motion --force"
+    );
     const combined = await Promise.all(result.files.map((file) =>
       readFile(join(result.directory, file), "utf8").catch(() => "")
     ));
@@ -74,7 +97,7 @@ describe("M8 idle-hover starter", () => {
   });
 
   it("never replaces an empty directory raced in after staging", async () => {
-    const raceRoot = await mkdtemp(join(tmpdir(), "aval-m8-init-race-"));
+    const raceRoot = await mkdtemp(join(tmpdir(), "aval-v1-init-race-"));
     try {
       const target = join(raceRoot, "starter");
       await expect(runInitCommand({
@@ -92,7 +115,7 @@ describe("M8 idle-hover starter", () => {
   });
 
   it("reports a committed project when the final parent sync is uncertain", async () => {
-    const syncRoot = await mkdtemp(join(tmpdir(), "aval-m8-init-durability-"));
+    const syncRoot = await mkdtemp(join(tmpdir(), "aval-v1-init-durability-"));
     try {
       let syncs = 0;
       const operation = runInitCommand({

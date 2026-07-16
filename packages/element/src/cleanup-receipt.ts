@@ -1,5 +1,5 @@
 import type {
-  BrowserAvcCandidateComposition,
+  BrowserVideoCandidateComposition,
   BrowserPresentationPlanes,
   IntegratedPlayer,
   PlayerWebPageRuntime,
@@ -25,7 +25,7 @@ export function captureCleanupReceipt(input: Readonly<{
   participant: ReturnType<PlayerWebPageRuntime["createParticipant"]>;
   session: RuntimeAssetSession | null;
   planes: BrowserPresentationPlanes | null;
-  composition: Readonly<BrowserAvcCandidateComposition> | null;
+  composition: Readonly<BrowserVideoCandidateComposition> | null;
   player: IntegratedPlayer | null;
   operationFailureCount: number;
 }>): Readonly<AvalCleanupReceipt> {

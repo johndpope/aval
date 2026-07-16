@@ -20,7 +20,7 @@ describe("private canonical RGBA spool", () => {
     try {
       await readCanonicalRgbaRange({
         source: {
-          type: "raw-rgba",
+          type: "raw-rgba64",
           path: privatePath,
           width: 1,
           height: 1,

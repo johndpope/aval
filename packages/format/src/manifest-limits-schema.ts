@@ -1,5 +1,5 @@
-import { deriveAvcRenditionGeometryAtPath } from "./avc/rendition-geometry.js";
 import { checkedMultiply } from "./checked-integer.js";
+import { FormatError } from "./errors.js";
 import {
   exactKeys,
   integerInRange,
@@ -8,19 +8,17 @@ import {
   record
 } from "./manifest-validation.js";
 import type {
-  CanvasV01,
-  DeclaredLimitsV01,
+  DeclaredLimits,
   FormatBudgets,
-  RenditionV01
+  ProductionRendition
 } from "./model.js";
 
 export function cloneDeclaredLimits(
   value: unknown,
-  renditions: readonly RenditionV01[],
-  canvas: CanvasV01,
+  renditions: readonly ProductionRendition[],
   budgets: FormatBudgets,
   path: string
-): DeclaredLimitsV01 {
+): DeclaredLimits {
   const input = record(value, path);
   exactKeys(
     input,
@@ -35,13 +33,16 @@ export function cloneDeclaredLimits(
   );
   const maxCompiledBytes = positiveInteger(
     input.maxCompiledBytes,
-    `${path}.maxCompiledBytes`,
-    budgets.maxFileBytes
+    `${path}.maxCompiledBytes`
   );
-  const maxRuntimeBytes = positiveInteger(
-    input.maxRuntimeBytes,
-    `${path}.maxRuntimeBytes`
-  );
+  if (maxCompiledBytes > budgets.maxFileBytes) {
+    throw new FormatError(
+      "BUDGET_EXCEEDED",
+      `maxCompiledBytes exceeds the active limit of ${String(budgets.maxFileBytes)}`,
+      { path: `${path}.maxCompiledBytes` }
+    );
+  }
+  const maxRuntimeBytes = positiveInteger(input.maxRuntimeBytes, `${path}.maxRuntimeBytes`);
   const decodedPixelBytes = integerInRange(
     input.decodedPixelBytes,
     `${path}.decodedPixelBytes`,
@@ -70,39 +71,19 @@ export function cloneDeclaredLimits(
     );
   }
   const minimumDecodedBytes = Math.max(
-    ...renditions.map((rendition, index) => {
-      if (rendition.profile === "reference-rgba-v0") {
-        return checkedMultiply(
-          checkedMultiply(
-            rendition.codedWidth,
-            rendition.codedHeight,
-            Number.MAX_SAFE_INTEGER,
-            `renditions[${String(index)}] decoded pixel count`
-          ),
-          4,
+    ...renditions.map((rendition, index) =>
+      checkedMultiply(
+        checkedMultiply(
+          rendition.codedWidth,
+          rendition.codedHeight,
           Number.MAX_SAFE_INTEGER,
-          `renditions[${String(index)}] decoded RGBA bytes`
-        );
-      }
-      const common = {
-        canvasWidth: canvas.width,
-        canvasHeight: canvas.height,
-        codedWidth: rendition.codedWidth,
-        codedHeight: rendition.codedHeight,
-        colorRect: rendition.alphaLayout.colorRect
-      } as const;
-      return deriveAvcRenditionGeometryAtPath(
-        rendition.profile === "avc-annexb-packed-alpha-v0" ||
-          rendition.profile === "avc-annexb-packed-alpha-v1"
-          ? {
-              ...common,
-              profile: rendition.profile,
-              alphaRect: rendition.alphaLayout.alphaRect
-            }
-          : { ...common, profile: rendition.profile },
-        `renditions[${String(index)}]`
-      ).codedRgbaBytes;
-    })
+          `renditions[${String(index)}] coded pixel count`
+        ),
+        4,
+        Number.MAX_SAFE_INTEGER,
+        `renditions[${String(index)}] decoded RGBA bytes`
+      )
+    )
   );
   if (decodedPixelBytes < minimumDecodedBytes) {
     invalid(

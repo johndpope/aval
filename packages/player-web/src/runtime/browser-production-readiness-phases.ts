@@ -6,17 +6,17 @@ import type {
 
 import { graphBodyFrameAt } from "./body-frame-semantics.js";
 import {
-  BrowserReadinessRehearsalDriver,
-  type BrowserRehearsalTick
-} from "./browser-readiness-rehearsal-driver.js";
-import type { BrowserProductionPhaseEvidence } from "./browser-production-readiness-evidence.js";
+  BrowserReadinessDriver,
+  type BrowserReadinessTick
+} from "./browser-readiness-driver.js";
+import type { BrowserProductionPhaseEvidence } from "./browser-production-readiness-report.js";
 import type {
-  AvcCandidateReadinessSessionInput
-} from "./avc-candidate-factory.js";
+  VideoCandidateReadinessSessionInput
+} from "./video-candidate-factory.js";
 
 export async function measureBrowserProductionPhase(input: {
-  readonly candidate: Readonly<AvcCandidateReadinessSessionInput>;
-  readonly driver: BrowserReadinessRehearsalDriver;
+  readonly candidate: Readonly<VideoCandidateReadinessSessionInput>;
+  readonly driver: BrowserReadinessDriver;
   readonly edge: Readonly<GraphEdgeDefinition>;
 }): Promise<Readonly<BrowserProductionPhaseEvidence>> {
   const { candidate, driver, edge } = input;
@@ -87,7 +87,7 @@ export async function measureBrowserProductionPhase(input: {
 }
 
 async function measureAutomaticCompletion(
-  driver: BrowserReadinessRehearsalDriver,
+  driver: BrowserReadinessDriver,
   edge: Readonly<GraphEdgeDefinition>
 ): Promise<Readonly<BrowserProductionPhaseEvidence>> {
   let automaticAdmissionReady = false;
@@ -116,8 +116,8 @@ async function measureAutomaticCompletion(
 }
 
 async function measureLockedFollowOn(
-  candidate: Readonly<AvcCandidateReadinessSessionInput>,
-  driver: BrowserReadinessRehearsalDriver,
+  candidate: Readonly<VideoCandidateReadinessSessionInput>,
+  driver: BrowserReadinessDriver,
   edge: Readonly<GraphEdgeDefinition>
 ): Promise<boolean> {
   const transition = edge.transition;
@@ -127,7 +127,7 @@ async function measureLockedFollowOn(
   );
   if (followOn === undefined) return true;
   if ((await admitEdgeIntent(driver, edge)).accepted !== true) return false;
-  const ticks: Readonly<BrowserRehearsalTick>[] = [];
+  const ticks: Readonly<BrowserReadinessTick>[] = [];
   for (let count = 0; driver.snapshot.phase !== "locked"; count += 1) {
     if (count >= driver.maxTicks) {
       throw new Error(
@@ -157,8 +157,8 @@ async function measureLockedFollowOn(
 }
 
 async function measureVisibleRunway(
-  candidate: Readonly<AvcCandidateReadinessSessionInput>,
-  driver: BrowserReadinessRehearsalDriver,
+  candidate: Readonly<VideoCandidateReadinessSessionInput>,
+  driver: BrowserReadinessDriver,
   edge: Readonly<GraphEdgeDefinition>
 ): Promise<boolean> {
   if (edge.start.type !== "cut") return true;
@@ -197,7 +197,7 @@ async function measureVisibleRunway(
 }
 
 function isTransitionMediaForEdge(
-  tick: Readonly<BrowserRehearsalTick>,
+  tick: Readonly<BrowserReadinessTick>,
   edge: Readonly<GraphEdgeDefinition>
 ): boolean {
   return tick.media.edge === edge.id ||
@@ -205,7 +205,7 @@ function isTransitionMediaForEdge(
 }
 
 function admitEdgeIntent(
-  driver: BrowserReadinessRehearsalDriver,
+  driver: BrowserReadinessDriver,
   edge: Readonly<GraphEdgeDefinition>
 ) {
   return edge.trigger?.type === "event"
@@ -214,7 +214,7 @@ function admitEdgeIntent(
 }
 
 function requireState(
-  input: Readonly<AvcCandidateReadinessSessionInput>,
+  input: Readonly<VideoCandidateReadinessSessionInput>,
   state: string
 ): Readonly<GraphStateDefinition> {
   const value = input.context.catalog.graph.definition.states.find(

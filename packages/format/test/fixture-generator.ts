@@ -1,72 +1,50 @@
 import { createHash } from "node:crypto";
 
-import { encodeReferenceFrame } from "../src/reference-frame.js";
-import { writeCanonicalAsset } from "../src/writer.js";
 import type {
-  AccessUnitInputV01,
-  CanonicalAssetInputV01,
-  CompiledManifestInputV01,
-  CompiledManifestV01,
-  UnitInputV01,
-  UnitV01
+  CanonicalAssetInput,
+  CompiledManifest,
+  CompiledManifestInput,
+  EncodedChunkInput,
+  Unit,
+  UnitInput
 } from "../src/model.js";
+import { writeCanonicalAsset } from "../src/writer.js";
 import { validManifest } from "./manifest-fixture.js";
 
 const DECLARED_DIGEST = "0".repeat(64);
 
 export interface GeneratedConformanceFixture {
-  readonly fileName: "reference-loop.avl" | "reference-graph.avl";
+  readonly fileName: "video-loop.avl" | "video-graph.avl";
   readonly description: string;
   readonly bytes: Uint8Array;
   readonly sha256: string;
 }
 
-function referenceRgba(ordinal: number): Uint8Array {
-  const rgba = new Uint8Array(16);
-  for (let pixel = 0; pixel < 4; pixel += 1) {
-    const offset = pixel * 4;
-    rgba[offset] = (ordinal * 37 + pixel * 53) & 0xff;
-    rgba[offset + 1] = (ordinal * 71 + pixel * 29) & 0xff;
-    rgba[offset + 2] = (ordinal * 19 + pixel * 97) & 0xff;
-    rgba[offset + 3] = 0xff - ((ordinal + pixel) % 4) * 0x20;
-  }
-  return rgba;
-}
-
-function referenceAccessUnits(
-  manifest: CompiledManifestInputV01
-): readonly AccessUnitInputV01[] {
-  const result: AccessUnitInputV01[] = [];
+function encodedChunks(manifest: CompiledManifestInput): readonly EncodedChunkInput[] {
+  const result: EncodedChunkInput[] = [];
   let ordinal = 0;
   for (const rendition of manifest.renditions) {
     for (const unit of manifest.units) {
-      for (let frameIndex = 0; frameIndex < unit.frameCount; frameIndex += 1) {
-        result.push(
-          Object.freeze({
-            rendition: rendition.id,
-            unit: unit.id,
-            frameIndex,
-            key: true,
-            bytes: encodeReferenceFrame({
-              width: rendition.codedWidth,
-              height: rendition.codedHeight,
-              frameIndex,
-              rgba: referenceRgba(ordinal)
-            })
-          })
-        );
-        ordinal += 1;
+      for (let decodeIndex = 0; decodeIndex < unit.frameCount; decodeIndex += 1) {
+        result.push(Object.freeze({
+          rendition: rendition.id,
+          unit: unit.id,
+          decodeIndex,
+          presentationTimestamp: decodeIndex,
+          duration: 1,
+          randomAccess: decodeIndex === 0,
+          displayedFrameCount: 1,
+          bytes: new Uint8Array([0, 0, 1, ordinal++ & 0xff])
+        }));
       }
     }
   }
   return Object.freeze(result);
 }
 
-function unitInput(unit: UnitV01): UnitInputV01 {
-  const samples = Object.freeze(
-    unit.samples.map(({ rendition, sha256 }) =>
-      Object.freeze({ rendition, sha256 })
-    )
+function unitInput(unit: Unit): UnitInput {
+  const chunks = Object.freeze(
+    unit.chunks.map(({ rendition, sha256 }) => Object.freeze({ rendition, sha256 }))
   );
   switch (unit.kind) {
     case "body":
@@ -76,45 +54,38 @@ function unitInput(unit: UnitV01): UnitInputV01 {
         frameCount: unit.frameCount,
         playback: unit.playback,
         ports: unit.ports,
-        samples
+        chunks
       });
     case "bridge":
     case "one-shot":
-      return Object.freeze({
-        id: unit.id,
-        kind: unit.kind,
-        frameCount: unit.frameCount,
-        samples
-      });
+      return Object.freeze({ id: unit.id, kind: unit.kind, frameCount: unit.frameCount, chunks });
     case "reversible":
       return Object.freeze({
         id: unit.id,
         kind: unit.kind,
         frameCount: unit.frameCount,
         residency: unit.residency,
-        samples
+        chunks
       });
   }
 }
 
-function writerInputFromManifest(
-  source: CompiledManifestV01
-): CanonicalAssetInputV01 {
+function writerInputFromManifest(source: CompiledManifest): CanonicalAssetInput {
   const { units, ...rest } = source;
-  const manifest: CompiledManifestInputV01 = {
+  const manifest: CompiledManifestInput = {
     ...rest,
     units: Object.freeze(units.map(unitInput))
   };
-  return Object.freeze({
-    manifest,
-    accessUnits: referenceAccessUnits(manifest)
-  });
+  return Object.freeze({ manifest, chunks: encodedChunks(manifest) });
 }
 
-function referenceLoopInput(): CanonicalAssetInputV01 {
-  const manifest: CompiledManifestInputV01 = {
-    formatVersion: "0.1",
-    generator: "aval-m4-reference-loop",
+function videoLoopInput(): CanonicalAssetInput {
+  const manifest: CompiledManifestInput = {
+    formatVersion: "1.0",
+    generator: "aval-v1-video-loop",
+    codec: "h264",
+    bitstream: "annex-b",
+    layout: "opaque",
     canvas: {
       width: 2,
       height: 2,
@@ -123,27 +94,23 @@ function referenceLoopInput(): CanonicalAssetInputV01 {
       colorSpace: "srgb"
     },
     frameRate: { numerator: 30, denominator: 1 },
-    renditions: [
-      {
-        id: "reference",
-        profile: "reference-rgba-v0",
-        codec: "aval.reference-rgba",
-        codedWidth: 2,
-        codedHeight: 2,
-        alphaLayout: { type: "straight-rgba-v0" },
-        capabilities: []
-      }
-    ],
-    units: [
-      {
-        id: "idle-body",
-        kind: "body",
-        playback: "loop",
-        frameCount: 3,
-        ports: [{ id: "default", entryFrame: 0, portalFrames: [0, 2] }],
-        samples: [{ rendition: "reference", sha256: DECLARED_DIGEST }]
-      }
-    ],
+    renditions: [{
+      id: "video",
+      codec: "avc1.640020",
+      bitDepth: 8,
+      codedWidth: 16,
+      codedHeight: 16,
+      alphaLayout: { type: "opaque", colorRect: [0, 0, 2, 2] },
+      bitrate: { average: 1_000, peak: 2_000 }
+    }],
+    units: [{
+      id: "idle-body",
+      kind: "body",
+      playback: "loop",
+      frameCount: 3,
+      ports: [{ id: "default", entryFrame: 0, portalFrames: [0, 2] }],
+      chunks: [{ rendition: "video", sha256: DECLARED_DIGEST }]
+    }],
     initialState: "idle",
     states: [{ id: "idle", bodyUnit: "idle-body" }],
     edges: [],
@@ -156,22 +123,19 @@ function referenceLoopInput(): CanonicalAssetInputV01 {
     limits: {
       maxCompiledBytes: 32 * 1024,
       maxRuntimeBytes: 64 * 1024,
-      decodedPixelBytes: 16,
+      decodedPixelBytes: 1_024,
       persistentCacheBytes: 0,
-      runtimeWorkingSetBytes: 16
+      runtimeWorkingSetBytes: 1_024
     }
   };
-  return Object.freeze({
-    manifest,
-    accessUnits: referenceAccessUnits(manifest)
-  });
+  return Object.freeze({ manifest, chunks: encodedChunks(manifest) });
 }
 
-export function generateReferenceLoopFixture(): Uint8Array {
-  return writeCanonicalAsset(referenceLoopInput());
+export function generateVideoLoopFixture(): Uint8Array {
+  return writeCanonicalAsset(videoLoopInput());
 }
 
-export function generateReferenceGraphFixture(): Uint8Array {
+export function generateVideoGraphFixture(): Uint8Array {
   return writeCanonicalAsset(writerInputFromManifest(validManifest()));
 }
 
@@ -179,27 +143,21 @@ export function fixtureSha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-/** Generate both checked-in M4 fixtures and their whole-file provenance. */
 export function generateConformanceFixtures(): readonly GeneratedConformanceFixture[] {
   const definitions = [
     {
-      fileName: "reference-loop.avl" as const,
-      description: "one-state, three-frame reference RGBA loop",
-      bytes: generateReferenceLoopFixture()
+      fileName: "video-loop.avl" as const,
+      description: "one-state, three-frame encoded video loop",
+      bytes: generateVideoLoopFixture()
     },
     {
-      fileName: "reference-graph.avl" as const,
-      description:
-        "multi-state finite/held graph with portal, finish, cut, locked, and reversible routes",
-      bytes: generateReferenceGraphFixture()
+      fileName: "video-graph.avl" as const,
+      description: "multi-state graph spanning every unit and transition kind",
+      bytes: generateVideoGraphFixture()
     }
   ];
-  return Object.freeze(
-    definitions.map((fixture) =>
-      Object.freeze({
-        ...fixture,
-        sha256: fixtureSha256(fixture.bytes)
-      })
-    )
-  );
+  return Object.freeze(definitions.map((fixture) => Object.freeze({
+    ...fixture,
+    sha256: fixtureSha256(fixture.bytes)
+  })));
 }

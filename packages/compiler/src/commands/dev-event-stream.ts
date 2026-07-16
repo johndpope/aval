@@ -105,11 +105,20 @@ export function createDevEventStreamHub(): DevEventStreamHub {
 export function writeBuildEvent(response: ServerResponse, build: Readonly<DevServerBuild>): boolean {
   const event = `event: build\ndata: ${JSON.stringify({
     generation: build.generation,
-    src: `asset.avl#v=${String(build.generation)}`,
-    bytes: build.bytes,
-    sha256: build.sha256,
-    warnings: build.warnings,
-    report: build.report ?? null
+    sources: build.assets.map((asset) => ({
+      codec: asset.codec,
+      src: `${asset.path}#v=${String(build.generation)}`,
+      type: asset.type,
+      integrity: asset.integrity,
+      bytes: asset.bytes,
+      sha256: asset.sha256
+    })),
+    buildReport: {
+      src: `${build.buildReport.path}#v=${String(build.generation)}`,
+      bytes: build.buildReport.bytes,
+      sha256: build.buildReport.sha256
+    },
+    warnings: build.warnings
   })}\n\n`;
   if (Buffer.byteLength(event) > MAX_SSE_EVENT_BYTES) return false;
   return writeEventBytes(response, event);

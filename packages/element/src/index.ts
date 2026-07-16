@@ -21,10 +21,11 @@ export {
   type AvalRequestedStateChangeDetail,
   type AvalRuntimeMediaCursor,
   type AvalRuntimeTraceRecord,
+  type AvalSourceCandidate,
   type AvalTransitionDetail,
   type AvalUnderflowDetail,
   type AvalVisualStateChangeDetail,
-  type BindingV01,
+  type Binding,
   type RuntimeReadiness,
   type RuntimeReadinessResult,
   type StaticReason

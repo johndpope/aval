@@ -1,7 +1,7 @@
 export {
-  ACCESS_UNIT_INDEX_HEADER_LENGTH,
-  ACCESS_UNIT_INDEX_MAGIC,
-  ACCESS_UNIT_RECORD_LENGTH,
+  CHUNK_INDEX_HEADER_LENGTH,
+  CHUNK_INDEX_MAGIC,
+  CHUNK_INDEX_RECORD_LENGTH,
   FORMAT_ALIGNMENT,
   FORMAT_DEFAULT_BUDGETS,
   FORMAT_HEADER_LENGTH,
@@ -9,8 +9,6 @@ export {
   FORMAT_VERSION_MAJOR,
   FORMAT_VERSION_MINOR,
   IDENTIFIER_PATTERN,
-  REFERENCE_FRAME_HEADER_LENGTH,
-  REFERENCE_FRAME_MAGIC,
   SHA256_HEX_PATTERN,
   resolveFormatBudgets
 } from "./constants.js";
@@ -27,50 +25,87 @@ export type {
   CanonicalJsonValue
 } from "./canonical-json.js";
 export {
-  AvcIncrementalInspector,
-  AVC_DECODER_SURFACE_PADDING,
-  avcCodecForLevel,
-  avcLevelLimits,
-  avcQuantizationPolicyForRendition,
-  deriveAvcRenditionGeometry,
-  deriveAvcRenditionGeometryFromVisible,
-  inspectAvcAnnexBEncoderCandidateRendition,
-  inspectAvcAnnexBRendition,
-  isAvcCodec,
-  isAvcLevelIdc,
-  maximumAvcDecodedRgbaBytes,
-  maximumAvcDecoderSurfaceDimension,
-  parseAvcCodec,
-  prepareAvcEncoderRendition
-} from "./avc/index.js";
+  H264_DECODER_SURFACE_PADDING,
+  h264CodecForLevel,
+  h264LevelLimits,
+  inspectH264AnnexBRendition,
+  isH264Codec,
+  isH264LevelIdc,
+  maximumH264DecodedRgbaBytes,
+  maximumH264DecoderSurfaceDimension,
+  parseH264Codec,
+  prepareH264EncoderRendition
+} from "./h264/index.js";
 export type {
-  AvcCodecV01,
-  AvcAccessUnitInput,
-  AvcAccessUnitSummary,
-  AvcColorSummary,
-  AvcConstrainedBaselineProfile,
-  AvcCropSummary,
-  AvcEncoderRenditionPreparation,
-  AvcEncoderRenditionPreparationInput,
-  AvcEncoderUnitStreamInput,
-  AvcFrameRate,
-  AvcIncrementalAccessUnitInput,
-  AvcIncrementalAccessUnitInspection,
-  AvcLevelIdc,
-  AvcLevelLimits,
-  AvcParameterSetSummary,
-  AvcProductionRenditionProfileV01,
-  AvcQuantizationPolicy,
-  AvcRenditionGeometry,
-  AvcRenditionGeometryInput,
-  AvcRenditionInspection,
-  AvcRenditionInspectionInput,
-  AvcUnitInput,
-  AvcUnitInspection,
-  AvcVisibleRenditionGeometryInput
-} from "./avc/index.js";
+  H264Codec,
+  H264AccessUnitInput,
+  H264AccessUnitSummary,
+  H264ColorSummary,
+  H264Profile,
+  H264CropSummary,
+  H264EncoderRenditionPreparation,
+  H264EncoderRenditionPreparationInput,
+  H264EncoderUnitStreamInput,
+  H264FrameRate,
+  H264LevelIdc,
+  H264LevelLimits,
+  H264ParameterSetSummary,
+  H264RenditionInspection,
+  H264RenditionInspectionInput,
+  H264UnitInput,
+  H264UnitInspection
+} from "./h264/index.js";
 export { adaptManifestToMotionGraph } from "./graph-adapter.js";
 export { parseHeader } from "./header.js";
+export {
+  createCanonicalChunkPlan,
+  validateCanonicalChunkSpans
+} from "./chunk-plan.js";
+export type {
+  CanonicalChunkPlan,
+  CanonicalChunkSlot,
+  CanonicalChunkSpan
+} from "./chunk-plan.js";
+export {
+  isVideoCodecString,
+  parseVideoCodecString,
+  VIDEO_BITSTREAM_BY_CODEC,
+  VIDEO_CODECS
+} from "./video/codec-string.js";
+export { deriveVideoRenditionGeometry, PACKED_ALPHA_GUTTER } from "./video/geometry.js";
+export type {
+  ParsedVideoCodecString
+} from "./video/codec-string.js";
+export {
+  COMPILE_BUNDLE_H264_PRESETS,
+  COMPILE_BUNDLE_H265_PRESETS,
+  COMPILE_BUNDLE_REPORT_LIMITS,
+  COMPILE_BUNDLE_VP9_DEADLINES,
+  createCompileBundleSourceMarkup,
+  parseCompileBundleReport
+} from "./compile-bundle-report.js";
+export type {
+  CompileBundleReportAsset,
+  CompileBundleReportAv1Encoding,
+  CompileBundleReportEncoding,
+  CompileBundleReportExecutableIdentity,
+  CompileBundleReportH264Encoding,
+  CompileBundleReportH265Encoding,
+  CompileBundleReportInvocation,
+  CompileBundleReportRendition,
+  CompileBundleReportTool,
+  CompileBundleReportToolchain,
+  CompileBundleReportVp9Encoding,
+  ParsedCompileBundleReport
+} from "./compile-bundle-report.js";
+export type {
+  VideoRenditionGeometry,
+  VideoRenditionGeometryInput,
+  VideoStoragePolicy
+} from "./video/model.js";
+export * from "./h265/index.js";
+export * from "./vp9/index.js";
+export * from "./av1/index.js";
 export { adler32, crc32 } from "./png/crc32.js";
 export {
   decodePngRgba,
@@ -83,51 +118,45 @@ export type {
   PngProfileValidationInput
 } from "./png/profile.js";
 export type {
-  AccessUnitInputV01,
-  AccessUnitRecord,
-  BindingSourceV01,
-  BindingV01,
-  BitrateV01,
+  AlphaLayout,
+  Binding,
+  BindingSource,
+  Bitrate,
   ByteRange,
-  CanvasV01,
-  CanonicalAssetInputV01,
-  CompiledManifestInputV01,
-  CompiledManifestV01,
-  DeclaredLimitsV01,
-  EdgeV01,
+  Canvas,
+  CanonicalAssetInput,
+  ChunkDigestInput,
+  CompiledManifest,
+  CompiledManifestInput,
+  DeclaredLimits,
+  Edge,
+  EncodedChunkInput,
+  EncodedChunkRecord,
   FormatBudgets,
   FormatHeader,
   FormatOptions,
   Id,
   ParsedFrontIndex,
-  PortV01,
-  RationalV01,
-  ReadinessV01,
+  Port,
+  ProductionRendition,
+  Rational,
+  Readiness,
   Rect,
-  ReferenceFrameDescriptor,
-  ReferenceFrameHeader,
-  RenditionV01,
-  ResidencyEndpointV01,
-  SampleDigestInputV01,
-  SampleSpanV01,
+  ResidencyEndpoint,
   Sha256Hex,
-  StartV01,
-  StateV01,
-  TransitionV01,
-  TriggerV01,
+  Start,
+  State,
+  Transition,
+  Trigger,
   UnitBlobRange,
-  UnitInputV01,
-  UnitV01,
-  ValidatedAssetLayout
+  Unit,
+  UnitChunkSpan,
+  UnitInput,
+  ValidatedAssetLayout,
+  VideoBitDepth,
+  VideoBitstream,
+  VideoCodec,
+  VideoLayout
 } from "./model.js";
 export { parseFrontIndex, validateCompleteAsset } from "./parser.js";
-export {
-  encodeReferenceFrame,
-  parseReferenceFrameHeader,
-  validateReferenceFrame
-} from "./reference-frame.js";
-export type {
-  ReferenceFrameInput,
-  ReferenceFrameValidationInput
-} from "./reference-frame.js";
 export { writeCanonicalAsset } from "./writer.js";

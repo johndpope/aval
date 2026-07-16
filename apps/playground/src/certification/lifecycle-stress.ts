@@ -1,7 +1,12 @@
 import type { AvalDiagnostics } from "@pixel-point/aval-element";
 
 import { BrowserResourceLedger } from "./resource-ledger.js";
-import { createPublicMotionElement, preparePublicMotion, retirePublicMotion } from "./public-element-host.js";
+import {
+  createPublicMotionElement,
+  preparePublicMotion,
+  replacePublicMotionSource,
+  retirePublicMotion
+} from "./public-element-host.js";
 import { RouteLedger } from "./route-ledger.js";
 
 export interface LifecycleStressReport {
@@ -47,8 +52,11 @@ export async function runLifecycleStress(options: Readonly<{
       await element.resume();
       if (options.alternateSourceUrl !== undefined) {
         if (options.alternateSourceIntegrity === undefined) throw new Error("alternate lifecycle source requires exact integrity");
-        element.src = `${options.alternateSourceUrl}${separator(options.alternateSourceUrl)}replace=${String(cycle)}`;
-        element.integrity = options.alternateSourceIntegrity;
+        replacePublicMotionSource(
+          element,
+          `${options.alternateSourceUrl}${separator(options.alternateSourceUrl)}replace=${String(cycle)}`,
+          options.alternateSourceIntegrity
+        );
         resources.append(`cycle-${String(cycle)}-replaced`, await preparePublicMotion(element, 20_000, options.signal));
         sourceReplacements += 1;
       }

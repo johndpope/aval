@@ -1,44 +1,54 @@
 import { describe, expect, it } from "vitest";
+
 import { evaluateDecoderThroughputLedger } from "../src/decoder-throughput-ledger.js";
 
+const DEFAULT_RENDITION = Object.freeze({
+  id: "alpha.1x",
+  codecFamily: "h264",
+  codec: "avc1.64000A",
+  bitDepth: 8,
+  codedWidth: 64,
+  codedHeight: 72,
+  alphaLayout: {
+    type: "stacked",
+    colorRect: [0, 0, 64, 32],
+    alphaRect: [0, 40, 64, 32]
+  },
+  frameRateNumerator: 30,
+  frameRateDenominator: 1
+});
+
 function validLedger(
-  codec = "avc1.42E020",
-  profile = "avc-annexb-packed-alpha-v0"
+  selectedRendition: Record<string, unknown> = DEFAULT_RENDITION,
+  submittedChunks = 324
 ): unknown {
   const warmup = 24;
   const measured = 300;
+  const outputCount = warmup + measured;
   return {
     schemaVersion: "1.0",
     ledgerKind: "decoder-output-throughput",
     candidateManifestDigest: "a".repeat(64),
     fixtureDigest: "b".repeat(64),
-    selectedRendition: {
-      id: "alpha.1x",
-      profile,
-      codec,
-      codedWidth: 64,
-      codedHeight: 32,
-      frameRateNumerator: 30,
-      frameRateDenominator: 1
-    },
-    outputs: Array.from({ length: warmup + measured }, (_, outputOrdinal) => ({
+    selectedRendition,
+    outputs: Array.from({ length: outputCount }, (_, outputOrdinal) => ({
       outputOrdinal,
       phase: outputOrdinal < warmup ? "warmup" : "measured",
       mediaTimestampMicroseconds: outputOrdinal * 33_333,
       mediaDurationMicroseconds: 33_333,
       callbackMicroseconds: outputOrdinal * 10_000,
-      renditionId: "alpha.1x",
+      renditionId: selectedRendition.id,
       unitId: "idle-body",
       unitInstance: Math.floor(outputOrdinal / 2),
       localFrame: outputOrdinal % 2
     })),
     events: [
       { eventOrdinal: 0, kind: "configure", atMicroseconds: 0, outputOrdinal: null },
-      ...Array.from({ length: warmup + measured }, (_, outputOrdinal) => [
+      ...Array.from({ length: outputCount }, (_, outputOrdinal) => [
         { eventOrdinal: outputOrdinal * 2 + 1, kind: "output-callback", atMicroseconds: outputOrdinal * 10_000, outputOrdinal },
         { eventOrdinal: outputOrdinal * 2 + 2, kind: "frame-close", atMicroseconds: outputOrdinal * 10_000, outputOrdinal }
       ]).flat(),
-      { eventOrdinal: (warmup + measured) * 2 + 1, kind: "terminal", atMicroseconds: (warmup + measured) * 10_000, outputOrdinal: null }
+      { eventOrdinal: outputCount * 2 + 1, kind: "terminal", atMicroseconds: outputCount * 10_000, outputOrdinal: null }
     ],
     terminal: {
       decoderClosed: true,
@@ -46,11 +56,11 @@ function validLedger(
       resetCalls: 0,
       flushCalls: 0,
       boundaryFlushCalls: 0,
-      acceptedSamples: warmup + measured,
-      submittedChunks: warmup + measured,
-      outputFrames: warmup + measured,
-      deliveredFrames: warmup + measured,
-      releasedFrames: warmup + measured,
+      acceptedSamples: submittedChunks,
+      submittedChunks,
+      outputFrames: outputCount,
+      deliveredFrames: outputCount,
+      releasedFrames: outputCount,
       staleFrames: 0,
       workerClosedFrames: 0,
       errors: 0,
@@ -63,41 +73,61 @@ function validLedger(
 
 describe("decoder throughput raw ledger", () => {
   it.each([
-    "avc-annexb-packed-alpha-v0",
-    "avc-annexb-opaque-v0",
-    "avc-annexb-packed-alpha-v1",
-    "avc-annexb-opaque-v1"
-  ])("accepts production AVC profile %s", (profile) => {
-    const result = evaluateDecoderThroughputLedger(
-      validLedger("avc1.42E020", profile)
+    ["h264", "avc1.64000A", 8],
+    ["h265", "hvc1.1.6.L30.90", 8],
+    ["vp9", "vp09.00.10.08.01.01.01.01.00", 8],
+    ["av1", "av01.0.00M.10.0.110.01.01.01.0", 10]
+  ] as const)("accepts a canonical %s rendition identity", (codecFamily, codec, bitDepth) => {
+    const selectedRendition = { ...DEFAULT_RENDITION, codecFamily, codec, bitDepth };
+    const result = evaluateDecoderThroughputLedger(validLedger(selectedRendition));
+    expect(result.ledger.selectedRendition).toMatchObject({ codecFamily, codec, bitDepth });
+    expect(result.evaluation.passed).toBe(true);
+  });
+
+  it("accepts an opaque rendition layout", () => {
+    const selectedRendition = {
+      ...DEFAULT_RENDITION,
+      codedHeight: 32,
+      alphaLayout: { type: "opaque", colorRect: [0, 0, 64, 32] }
+    };
+    expect(evaluateDecoderThroughputLedger(validLedger(selectedRendition)).evaluation.passed).toBe(true);
+  });
+
+  it.each([
+    ["family mismatch", { codecFamily: "h265" }, /canonical h265 codec/u],
+    ["unsupported non-AV1 depth", { codecFamily: "vp9", codec: "vp09.00.10.10.01.01.01.01.00", bitDepth: 10 }, /must be 8 for vp9/u],
+    ["AV1 depth mismatch", { codecFamily: "av1", codec: "av01.0.00M.10.0.110.01.01.01.0", bitDepth: 8 }, /matching bit depth/u],
+    ["noncanonical codec", { codec: "avc1.64000a" }, /canonical h264 codec/u]
+  ])("rejects %s", (_name, replacement, message) => {
+    expect(() => evaluateDecoderThroughputLedger(validLedger({
+      ...DEFAULT_RENDITION,
+      ...replacement
+    }))).toThrow(message);
+  });
+
+  it("rejects obsolete profile fields", () => {
+    expect(() => evaluateDecoderThroughputLedger(validLedger({
+      ...DEFAULT_RENDITION,
+      profile: "removed-profile"
+    }))).toThrow(/unknown field/u);
+  });
+
+  it("permits hidden chunks and multiple outputs per chunk", () => {
+    expect(evaluateDecoderThroughputLedger(validLedger(DEFAULT_RENDITION, 327)).evaluation.passed).toBe(true);
+    expect(evaluateDecoderThroughputLedger(validLedger(DEFAULT_RENDITION, 319)).evaluation.passed).toBe(true);
+  });
+
+  it("binds accepted samples to chunks and output counters to callbacks", () => {
+    const accepted = validLedger() as any;
+    accepted.terminal.acceptedSamples += 1;
+    expect(evaluateDecoderThroughputLedger(accepted).evaluation.failures).toContain(
+      "terminal-accepted-sample-count-mismatch"
     );
-    expect(result.ledger.selectedRendition.profile).toBe(profile);
-    expect(result.evaluation.passed).toBe(true);
-  });
 
-  it("rejects an unversioned AVC profile", () => {
-    expect(() => evaluateDecoderThroughputLedger(
-      validLedger("avc1.42E020", "avc-annexb-packed-alpha")
-    )).toThrow(/profile is invalid/u);
-  });
-
-  it.each([
-    "avc1.42E015",
-    "avc1.42E028",
-    "avc1.42E03E"
-  ])("accepts and preserves supported Constrained Baseline codec %s", (codec) => {
-    const result = evaluateDecoderThroughputLedger(validLedger(codec));
-    expect(result.ledger.selectedRendition.codec).toBe(codec);
-    expect(result.evaluation.passed).toBe(true);
-  });
-
-  it.each([
-    "avc1.640028",
-    "avc1.42E023",
-    "avc1.42e028"
-  ])("rejects unsupported or noncanonical codec %s", (codec) => {
-    expect(() => evaluateDecoderThroughputLedger(validLedger(codec))).toThrow(
-      /supported Constrained Baseline codec/u
+    const outputs = validLedger() as any;
+    outputs.terminal.outputFrames -= 1;
+    expect(evaluateDecoderThroughputLedger(outputs).evaluation.failures).toContain(
+      "terminal-output-count:outputFrames"
     );
   });
 
@@ -118,7 +148,7 @@ describe("decoder throughput raw ledger", () => {
       ledger.outputs.splice(-1, 1);
       ledger.events = ledger.events.filter((event: any) => event.outputOrdinal !== 323);
       ledger.events.at(-1).eventOrdinal -= 2;
-      for (const name of ["acceptedSamples", "submittedChunks", "outputFrames", "deliveredFrames", "releasedFrames"]) ledger.terminal[name] -= 1;
+      for (const name of ["outputFrames", "deliveredFrames", "releasedFrames"]) ledger.terminal[name] -= 1;
     }, "throughput-sample-count-below-300"],
     ["slow callbacks", (ledger: any) => { ledger.outputs.forEach((output: any) => { output.callbackMicroseconds = output.outputOrdinal * 30_000; }); }, "throughput-below-1.5x"],
     ["ordinal gap", (ledger: any) => { ledger.outputs[100].outputOrdinal += 1; }, "output-ordinal"],

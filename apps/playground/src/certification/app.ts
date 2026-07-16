@@ -9,7 +9,6 @@ import {
   DEFAULT_MAXIMUM_PLAYER_LOGICAL_BYTES
 } from "@pixel-point/aval-player-web";
 
-import { runDecoderThroughputProbe, type DecoderThroughputProbeResult } from "./decoder-throughput-probe.js";
 import { ForegroundMeasurementGuard, type MeasurementInterruption } from "./foreground-guard.js";
 import { runLifecycleStress } from "./lifecycle-stress.js";
 import { LOCAL_NETWORK_FAULTS, runNetworkFaultStress } from "./network-fault-stress.js";
@@ -73,7 +72,6 @@ export interface PublicHarnessReport {
     routeEntries: number;
   }>;
   readonly runtimeTrace: RuntimeTraceCollection;
-  readonly decoderThroughput: DecoderThroughputProbeResult | null;
   readonly measurementInterruptions: readonly Readonly<MeasurementInterruption>[];
   readonly lifecycle: Awaited<ReturnType<typeof runLifecycleStress>>;
   readonly visibility: Awaited<ReturnType<typeof runVisibilityStress>>;
@@ -155,7 +153,6 @@ export class CertificationApp implements CertificationBrowserApi {
     let readiness: Readonly<AvalDiagnostics> | null = null;
     let transitionsCompleted = 0;
     let rapidInputsSettled = 0;
-    let decoderThroughput: DecoderThroughputProbeResult | null = null;
     let selectedRendition: string | null = null;
     const counts = runCounts(config, options);
     let lifecycle = emptyLifecycle(counts.lifecycleCycles);
@@ -242,18 +239,6 @@ export class CertificationApp implements CertificationBrowserApi {
         if (terminal !== null) resourceLedger.append("terminal", terminal);
       }
     }
-    if (!signal.aborted && selectedRendition !== null && readiness?.readiness === "interactiveReady") {
-      this.#setStatus("Collecting decoder throughput evidence…", "running");
-      decoderThroughput = await runDecoderThroughputProbe({
-        assetBytes: loadedSource.bytes,
-        selectedRenditionId: selectedRendition,
-        candidateManifestDigest: config.candidateManifestDigest,
-        fixtureDigest: config.fixtureDigest,
-        requireForeground: config.mode === "named",
-        signal
-      });
-      if (decoderThroughput.status === "failed") failures.push(`decoder-throughput:${decoderThroughput.failure ?? "failed"}`);
-    }
     foreground.stop();
     const diagnostics = readiness;
     const trace = traceCollector.snapshot();
@@ -300,7 +285,6 @@ export class CertificationApp implements CertificationBrowserApi {
         routeEntries: routeLedger.snapshot().length
       }),
       runtimeTrace: trace,
-      decoderThroughput,
       measurementInterruptions: interruptions,
       lifecycle,
       visibility,

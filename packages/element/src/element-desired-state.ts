@@ -214,5 +214,10 @@ function freezeSnapshot(input: Omit<ElementDesiredSnapshot, "effectivelyVisible"
 function freezeConfiguration(
   configuration: Readonly<ElementConfiguration>
 ): Readonly<ElementConfiguration> {
-  return Object.freeze({ ...configuration });
+  return Object.freeze({
+    ...configuration,
+    sourceCandidates: Object.freeze(configuration.sourceCandidates.map((candidate) =>
+      Object.freeze({ ...candidate })
+    ))
+  });
 }

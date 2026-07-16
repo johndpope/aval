@@ -4,7 +4,7 @@
 
 ```ts
 
-import type { BindingV01 } from '@pixel-point/aval-player-web';
+import type { Binding } from '@pixel-point/aval-player-web';
 import type { MotionPolicy } from '@pixel-point/aval-player-web';
 import type { RuntimeFailureCode } from '@pixel-point/aval-player-web';
 import type { RuntimeReadiness } from '@pixel-point/aval-player-web';
@@ -65,7 +65,7 @@ export interface AvalDiagnostics {
     // (undocumented)
     readonly hostReducedMotion: boolean | null;
     // (undocumented)
-    readonly inputBindings: readonly Readonly<BindingV01>[];
+    readonly inputBindings: readonly Readonly<Binding>[];
     // (undocumented)
     readonly inputGeneration: number;
     // (undocumented)
@@ -114,7 +114,8 @@ export interface AvalDiagnostics {
     // (undocumented)
     readonly runtime: Readonly<{
         selectedRendition: string | null;
-        selectedProfile: string | null;
+        selectedCodec: string | null;
+        selectedBitDepth: 8 | 10 | null;
         transportMode: "range" | "full" | null;
         declaredFileBytes: number;
         metadataBytes: number;
@@ -191,9 +192,7 @@ export interface AvalElement extends HTMLElement {
     // (undocumented)
     height: number | null;
     // (undocumented)
-    readonly inputBindings: readonly Readonly<BindingV01>[];
-    // (undocumented)
-    integrity: string;
+    readonly inputBindings: readonly Readonly<Binding>[];
     // (undocumented)
     interactionFor: string;
     // (undocumented)
@@ -229,8 +228,6 @@ export interface AvalElement extends HTMLElement {
     // (undocumented)
     setState(name: string): Promise<void>;
     // (undocumented)
-    src: string;
-    // (undocumented)
     state: string | null;
     // (undocumented)
     readonly stateNames: readonly string[];
@@ -257,11 +254,7 @@ export interface AvalElementAttributes {
     // (undocumented)
     readonly height?: number | `${number}`;
     // (undocumented)
-    readonly integrity?: string;
-    // (undocumented)
     readonly motion?: AvalMotion;
-    // (undocumented)
-    readonly src?: string;
     // (undocumented)
     readonly state?: string;
     // (undocumented)
@@ -451,6 +444,18 @@ export interface AvalRuntimeTraceRecord {
 }
 
 // @public (undocumented)
+export interface AvalSourceCandidate {
+    // (undocumented)
+    readonly codec: string;
+    // (undocumented)
+    readonly integrity: string;
+    // (undocumented)
+    readonly src: string;
+    // (undocumented)
+    readonly type: `application/vnd.aval; codecs="${string}"`;
+}
+
+// @public (undocumented)
 export interface AvalTransitionDetail {
     // (undocumented)
     readonly edge: string;
@@ -486,7 +491,7 @@ export interface AvalVisualStateChangeDetail {
     readonly to: string;
 }
 
-export { BindingV01 }
+export { Binding }
 
 // @public (undocumented)
 export function defineAvalElement(): AvalElementConstructor;

@@ -1,391 +1,161 @@
 import { describe, expect, it } from "vitest";
 
-import { FORMAT_DEFAULT_BUDGETS } from "../src/constants.js";
 import { FormatError } from "../src/errors.js";
 import { parseFrontIndex, validateCompleteAsset } from "../src/parser.js";
-import type { CanonicalAssetInputV01 } from "../src/model.js";
+import type { CanonicalAssetInput } from "../src/model.js";
 import { writeCanonicalAsset } from "../src/writer.js";
 import {
-  avcWriterInput,
   byteIdentity,
+  largeChunkWriterInput,
   shuffledWriterInput,
   twoRenditionWriterInput,
   validWriterInput
 } from "./writer-fixture.js";
 
-function expectFormatError(
-  operation: () => unknown,
-  code?: FormatError["code"]
-): FormatError {
+function expectFormatError(action: () => unknown, code?: FormatError["code"]): FormatError {
   try {
-    operation();
+    action();
   } catch (error) {
     expect(error).toBeInstanceOf(FormatError);
     if (code !== undefined) expect((error as FormatError).code).toBe(code);
     return error as FormatError;
   }
-  throw new Error("expected a FormatError");
+  throw new Error("expected operation to throw");
 }
 
-function snapshotInput(input: CanonicalAssetInputV01): string {
-  return JSON.stringify({
-    manifest: input.manifest,
-    accessUnits: input.accessUnits.map(({ bytes, ...record }) => ({
-      ...record,
-      bytes: Array.from(bytes)
-    }))
-  });
-}
-
-function replaceAccess(
-  input: CanonicalAssetInputV01,
-  accessUnits: CanonicalAssetInputV01["accessUnits"]
-): CanonicalAssetInputV01 {
-  return { ...input, accessUnits };
-}
-
-function unreadHostileArray(length: number): {
-  readonly value: unknown[];
-  readonly elementReads: () => number;
-} {
-  const target: unknown[] = [];
-  target.length = length;
-  let reads = 0;
-  const value = new Proxy(target, {
-    get(array, property, receiver) {
-      if (typeof property === "string" && /^(?:0|[1-9][0-9]*)$/.test(property)) {
-        reads += 1;
-      }
-      return Reflect.get(array, property, receiver);
-    }
-  });
-  return { value, elementReads: () => reads };
-}
-
-describe("writeCanonicalAsset", () => {
-  it("writes deterministic valid bytes repeatedly and from shuffled semantic input", () => {
+describe("canonical 1.0 asset writer", () => {
+  it("emits deterministic bytes while normalizing unordered graph/chunk input", () => {
     const input = twoRenditionWriterInput();
-    const first = writeCanonicalAsset(input);
-    const second = writeCanonicalAsset(input);
+    const canonical = writeCanonicalAsset(input);
     const shuffled = writeCanonicalAsset(shuffledWriterInput(input));
-
-    expect(byteIdentity(first, second)).toBe(true);
-    expect(byteIdentity(first, shuffled)).toBe(true);
-    expect(validateCompleteAsset({ bytes: first }).fileRange).toEqual({
-      offset: 0,
-      length: first.byteLength
-    });
+    expect(byteIdentity(canonical, shuffled)).toBe(true);
+    expect(parseFrontIndex(canonical).manifest.renditions.map(({ id }) => id))
+      .toEqual(["alternate", "video"]);
   });
 
-  it("does not mutate metadata, arrays, records, or caller payload bytes", () => {
+  it("does not mutate metadata or payload bytes", () => {
     const input = validWriterInput();
-    const before = snapshotInput(input);
+    const snapshot = JSON.stringify(input.manifest);
+    const payload = input.chunks[0]!.bytes.slice();
     const bytes = writeCanonicalAsset(input);
-
-    expect(snapshotInput(input)).toBe(before);
+    expect(JSON.stringify(input.manifest)).toBe(snapshot);
+    expect(input.chunks[0]!.bytes).toEqual(payload);
     bytes.fill(0);
-    expect(snapshotInput(input)).toBe(before);
+    expect(input.chunks[0]!.bytes).toEqual(payload);
   });
 
-  it("observes payload changes only on a later synchronous call", () => {
+  it("derives canonical chunk spans from decoder submission groups", () => {
     const input = validWriterInput();
-    const first = writeCanonicalAsset(input);
-    const original = input.accessUnits[0]!.bytes[24] ?? 0;
-    input.accessUnits[0]!.bytes[24] = original ^ 0xff;
-    const second = writeCanonicalAsset(input);
-
-    expect(byteIdentity(first, second)).toBe(false);
-    expect(validateCompleteAsset({ bytes: second }).fileRange.length).toBe(
-      second.byteLength
-    );
+    const parsed = parseFrontIndex(writeCanonicalAsset(input));
+    expect(parsed.records).toHaveLength(input.chunks.length);
+    expect(parsed.manifest.units[0]!.chunks[0]).toMatchObject({
+      rendition: "video",
+      chunkStart: 0,
+      chunkCount: 4,
+      frameCount: 4
+    });
+    expect(parsed.records.slice(0, 4).map(({ presentationTimestamp }) => presentationTimestamp))
+      .toEqual([0, 1, 2, 3]);
   });
 
-  it("rejects missing, duplicate, unknown, and empty access-unit payloads", () => {
-    const missing = validWriterInput();
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(missing, missing.accessUnits.slice(1))),
-      "WRITER_INVALID"
-    );
-
-    const duplicate = validWriterInput();
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(duplicate, [
-        ...duplicate.accessUnits,
-        duplicate.accessUnits[0]!
-      ])),
-      "WRITER_INVALID"
-    );
-
-    const extra = validWriterInput();
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(extra, [
-        ...extra.accessUnits,
-        { ...extra.accessUnits[0]!, unit: "unknown" }
-      ])),
-      "WRITER_INVALID"
-    );
-
-    const empty = validWriterInput();
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(empty, [
-        { ...empty.accessUnits[0]!, bytes: new Uint8Array() },
-        ...empty.accessUnits.slice(1)
-      ])),
-      "WRITER_INVALID"
-    );
-
-  });
-
-  it("accepts media payloads above the former default byte ceilings", () => {
-    const sampleInput = avcWriterInput(2 * 1024 * 1024);
-    expect(sampleInput.accessUnits[0]!.bytes.byteLength)
-      .toBe(2 * 1024 * 1024 + 1);
-    expect(() => writeCanonicalAsset(sampleInput)).not.toThrow();
-
-  });
-
-  it("round-trips an actual compiled file above the former 32 MiB ceiling", () => {
-    const input = avcWriterInput(33 * 1024 * 1024);
-    const bytes = writeCanonicalAsset(input);
-    const validated = validateCompleteAsset({ bytes });
-
-    expect(bytes.byteLength).toBeGreaterThan(32 * 1024 * 1024);
-    expect(validated.fileRange.length).toBe(bytes.byteLength);
-    expect(validated.frontIndex.records).toHaveLength(input.accessUnits.length);
-  }, 20_000);
-
-  it("enforces frame-zero and reference-rendition key rules", () => {
-    const frameZero = validWriterInput();
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(frameZero, [
-        { ...frameZero.accessUnits[0]!, key: false },
-        ...frameZero.accessUnits.slice(1)
-      ])),
-      "WRITER_INVALID"
-    );
-
-    const referenceDelta = validWriterInput();
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(referenceDelta, [
-        referenceDelta.accessUnits[0]!,
-        { ...referenceDelta.accessUnits[1]!, key: false },
-        ...referenceDelta.accessUnits.slice(2)
-      ])),
-      "WRITER_INVALID"
-    );
-  });
-
-  it("self-validates reference sample identity", () => {
-    const badReference = validWriterInput();
-    const referenceBytes = badReference.accessUnits[0]!.bytes.slice();
-    referenceBytes[0] = 0;
-    expectFormatError(
-      () => writeCanonicalAsset(replaceAccess(badReference, [
-        { ...badReference.accessUnits[0]!, bytes: referenceBytes },
-        ...badReference.accessUnits.slice(1)
-      ])),
-      "REFERENCE_FRAME_INVALID"
-    );
-  });
-
-  it("converges across every eight-byte alignment residue", () => {
-    const seenManifestResidues = new Set<number>();
-    for (let suffixLength = 0; suffixLength < 16; suffixLength += 1) {
-      const bytes = writeCanonicalAsset(
-        validWriterInput({ generatorSuffix: "x".repeat(suffixLength) })
-      );
-      const front = parseFrontIndex(bytes);
-      seenManifestResidues.add(
-        (front.header.manifestOffset + front.header.manifestLength) % 8
-      );
-      expect(front.header.indexOffset % 8).toBe(0);
-      expect(front.records.every((record) => record.payloadOffset % 8 === 0 || record.frameIndex > 0)).toBe(true);
-    }
-    expect([...seenManifestResidues].sort()).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
-  });
-
-  it("ends exactly after the final access-unit payload", () => {
-    const bytes = writeCanonicalAsset(validWriterInput());
-    const front = parseFrontIndex(bytes);
-    const final = front.records.at(-1)!;
-    expect(final.payloadOffset + final.payloadLength).toBe(bytes.byteLength);
-  });
-
-  it("round-trips AVC-v1 profiles and rejects profiles outside the allowlist", () => {
-    for (const profile of [
-      "avc-annexb-opaque-v1",
-      "avc-annexb-packed-alpha-v1"
-    ] as const) {
-      const input = avcWriterInput(0);
-      const base = input.manifest.renditions[0]!;
-      const packed = profile === "avc-annexb-packed-alpha-v1";
-      const manifest = {
-        ...input.manifest,
-        renditions: [{
-          ...base,
-          profile,
-          codedHeight: 16,
-          alphaLayout: packed
-            ? {
-                type: "stacked-v0" as const,
-                colorRect: [0, 0, 2, 2] as const,
-                alphaRect: [0, 10, 2, 2] as const
-              }
-            : {
-                type: "opaque-v0" as const,
-                colorRect: [0, 0, 2, 2] as const
-              }
-        }],
-        limits: {
-          ...input.manifest.limits,
-          decodedPixelBytes: 1_024,
-          runtimeWorkingSetBytes: 1_024
-        }
-      } as CanonicalAssetInputV01["manifest"];
-      const bytes = writeCanonicalAsset({ ...input, manifest });
-      expect(parseFrontIndex(bytes).manifest.renditions[0]?.profile).toBe(profile);
-    }
-
-    const unknown: any = avcWriterInput(0);
-    unknown.manifest.renditions[0]!.profile = "avc-annexb-opaque-v2";
-    expectFormatError(() => writeCanonicalAsset(unknown), "WRITER_INVALID");
-  });
-
-  it("honors lower file, manifest, index, sample, and count budgets", () => {
+  it("supports hidden chunks and presentation order independent of decode order", () => {
     const input = validWriterInput();
-    const bytes = writeCanonicalAsset(input);
-    const front = parseFrontIndex(bytes);
-    const fileLimited: CanonicalAssetInputV01 = {
-      ...input,
-      manifest: {
-        ...input.manifest,
-        limits: { ...input.manifest.limits, maxCompiledBytes: 4_096 }
-      }
-    };
+    const first = input.chunks[0]!;
+    const second = input.chunks[1]!;
+    const replacement = [
+      {
+        ...first,
+        decodeIndex: 0,
+        presentationTimestamp: 1,
+        duration: 0,
+        displayedFrameCount: 0,
+        randomAccess: true
+      },
+      { ...first, decodeIndex: 1, presentationTimestamp: 1, randomAccess: false },
+      { ...second, decodeIndex: 2, presentationTimestamp: 0, randomAccess: false },
+      ...input.chunks.slice(2, 4).map((chunk) => ({
+        ...chunk,
+        decodeIndex: chunk.decodeIndex + 1
+      })),
+      ...input.chunks.slice(4)
+    ];
+    const bytes = writeCanonicalAsset({ ...input, chunks: replacement });
+    const parsed = parseFrontIndex(bytes);
+    expect(parsed.records.slice(0, 3).map(({ presentationTimestamp }) => presentationTimestamp))
+      .toEqual([1, 1, 0]);
+    expect(parsed.records[0]?.displayedFrameCount).toBe(0);
+  });
+
+  it("rejects missing, duplicate, unknown, and gapped chunk identities", () => {
+    const input = validWriterInput();
+    const mutations: CanonicalAssetInput[] = [
+      { ...input, chunks: input.chunks.slice(1) },
+      { ...input, chunks: [...input.chunks, input.chunks[0]!] },
+      { ...input, chunks: [{ ...input.chunks[0]!, unit: "unknown" }, ...input.chunks.slice(1)] },
+      { ...input, chunks: [{ ...input.chunks[0]!, decodeIndex: 9 }, ...input.chunks.slice(1)] }
+    ];
+    for (const value of mutations) {
+      expectFormatError(() => writeCanonicalAsset(value), "WRITER_INVALID");
+    }
+  });
+
+  it("requires each unit to begin at random access and display its authored frame count", () => {
+    const input = validWriterInput();
     expectFormatError(
-      () => writeCanonicalAsset(fileLimited, { budgets: { maxFileBytes: 4_096 } }),
-      "BUDGET_EXCEEDED"
+      () => writeCanonicalAsset({
+        ...input,
+        chunks: [{ ...input.chunks[0]!, randomAccess: false }, ...input.chunks.slice(1)]
+      }),
+      "WRITER_INVALID"
     );
-    const cases = [
-      ["manifest", { maxManifestBytes: front.header.manifestLength - 1 }],
-      ["index", { maxIndexBytes: front.header.indexLength - 1 }],
-      ["sample", { maxSampleBytes: input.accessUnits[0]!.bytes.byteLength - 1 }],
-      ["record count", { maxSampleRecords: input.accessUnits.length - 1 }],
-      ["unit count", { maxUnits: input.manifest.units.length - 1 }]
-    ] as const;
-    for (const [label, budgets] of cases) {
-      const error = expectFormatError(() => writeCanonicalAsset(input, { budgets }));
-      expect(error.code, `${label}: ${error.message}`).toBe("BUDGET_EXCEEDED");
-    }
-  });
-
-  it("rejects every bounded writer array before traversing hostile elements", () => {
-    type MutableInput = ReturnType<typeof validWriterInput> & {
-      manifest: any;
-    };
-    const cases: readonly [
-      string,
-      number,
-      (input: MutableInput, value: unknown[]) => void
-    ][] = [
-      ["states", FORMAT_DEFAULT_BUDGETS.maxStates + 1, (input, value) => {
-        input.manifest.states = value;
-      }],
-      ["edges", FORMAT_DEFAULT_BUDGETS.maxEdges + 1, (input, value) => {
-        input.manifest.edges = value;
-      }],
-      ["bindings", FORMAT_DEFAULT_BUDGETS.maxBindings + 1, (input, value) => {
-        input.manifest.bindings = value;
-      }],
-      ["unit samples", 2, (input, value) => {
-        input.manifest.units[0].samples = value;
-      }],
-      ["body ports", FORMAT_DEFAULT_BUDGETS.maxPortsPerBody + 1, (input, value) => {
-        input.manifest.units.find((unit: any) => unit.kind === "body").ports = value;
-      }],
-      ["portal frames", 7, (input, value) => {
-        input.manifest.units.find((unit: any) => unit.kind === "body").ports[0].portalFrames = value;
-      }],
-      ["residency endpoints", 3, (input, value) => {
-        input.manifest.units.find((unit: any) => unit.kind === "reversible")
-          .residency.endpoints = value;
-      }],
-      ["rendition capabilities", 3, (input, value) => {
-        input.manifest.renditions[0].capabilities = value;
-      }],
-      ["bootstrap units", FORMAT_DEFAULT_BUDGETS.maxUnits + 1, (input, value) => {
-        input.manifest.readiness.bootstrapUnits = value;
-      }],
-      ["immediate edges", FORMAT_DEFAULT_BUDGETS.maxEdges + 1, (input, value) => {
-        input.manifest.readiness.immediateEdges = value;
-      }]
-    ];
-
-    for (const [label, length, install] of cases) {
-      const input = validWriterInput() as MutableInput;
-      const hostile = unreadHostileArray(length);
-      install(input, hostile.value);
-      expectFormatError(() => writeCanonicalAsset(input));
-      expect(hostile.elementReads(), label).toBe(0);
-    }
-  });
-
-  it("validates sortable and keyed strings before comparison or key construction", () => {
-    type MutableInput = ReturnType<typeof validWriterInput> & {
-      manifest: any;
-      accessUnits: any;
-    };
-    const oversized = "x".repeat(
-      FORMAT_DEFAULT_BUDGETS.maxJsonStringBytes + 1
+    expectFormatError(
+      () => writeCanonicalAsset({
+        ...input,
+        chunks: [{ ...input.chunks[0]!, displayedFrameCount: 0, duration: 0 }, ...input.chunks.slice(1)]
+      }),
+      "WRITER_INVALID"
     );
-    const cases: readonly [string, (input: MutableInput) => void][] = [
-      ["state ID", (input) => {
-        input.manifest.states[0].id = oversized;
-      }],
-      ["rendition capability", (input) => {
-        input.manifest.renditions[0].capabilities = [oversized];
-      }],
-      ["readiness ID", (input) => {
-        input.manifest.readiness.bootstrapUnits[0] = oversized;
-      }],
-      ["residency endpoint", (input) => {
-        input.manifest.units.find((unit: any) => unit.kind === "reversible")
-          .residency.endpoints[0].state = oversized;
-      }],
-      ["access-unit rendition", (input) => {
-        input.accessUnits[0].rendition = oversized;
-      }]
-    ];
+  });
 
-    for (const [label, mutate] of cases) {
-      const input = validWriterInput() as MutableInput;
-      mutate(input);
-      const error = expectFormatError(
-        () => writeCanonicalAsset(input),
-        "WRITER_INVALID"
-      );
-      expect(error.message, label).not.toContain("could not be normalized");
+  it("supports payloads and files above the former internal ceilings", () => {
+    const input = largeChunkWriterInput(2 * 1024 * 1024);
+    const bytes = writeCanonicalAsset(input);
+    expect(bytes.byteLength).toBeGreaterThan(2 * 1024 * 1024);
+    expect(validateCompleteAsset({ bytes }).fileRange.length).toBe(bytes.length);
+  });
+
+  it("honors lower-only chunk, record, manifest, index, and file budgets", () => {
+    const input = validWriterInput();
+    for (const budgets of [
+      { maxChunkBytes: 3 },
+      { maxChunkRecords: input.chunks.length - 1 },
+      { maxManifestBytes: 1 },
+      { maxIndexBytes: 1 },
+      { maxFileBytes: 1 }
+    ]) {
+      expectFormatError(() => writeCanonicalAsset(input, { budgets }), "BUDGET_EXCEEDED");
     }
   });
 
-  it("contains hostile input failures behind the stable FormatError surface", () => {
-    const hostile: unknown[] = [
+  it("rejects old root fields and non-1.0 manifests", () => {
+    const input: any = validWriterInput();
+    input.manifest.formatVersion = "0.1";
+    expectFormatError(() => writeCanonicalAsset(input), "WRITER_INVALID");
+
+    const extra: any = validWriterInput();
+    extra.accessUnits = extra.chunks;
+    delete extra.chunks;
+    expectFormatError(() => writeCanonicalAsset(extra), "WRITER_INVALID");
+  });
+
+  it("wraps hostile runtime inputs without leaking built-in exceptions", () => {
+    for (const value of [
       null,
-      undefined,
-      1,
-      "asset",
       {},
-      { manifest: {}, accessUnits: [] },
-      { ...validWriterInput(), staticPayloads: [] },
       { ...validWriterInput(), extra: true },
-      new Proxy(validWriterInput(), {
-        ownKeys() { throw new RangeError("hostile ownKeys trap"); }
-      })
-    ];
-    for (const value of hostile) {
-      expectFormatError(
-        () => writeCanonicalAsset(value as CanonicalAssetInputV01)
-      );
+      new Proxy(validWriterInput(), { ownKeys() { throw new Error("hostile"); } })
+    ]) {
+      expectFormatError(() => writeCanonicalAsset(value as CanonicalAssetInput));
     }
   });
 });

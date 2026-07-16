@@ -1,173 +1,139 @@
 import type {
-  AccessUnitInputV01,
-  AccessUnitRecord,
-  AvcAccessUnitInput,
-  AvcAccessUnitSummary,
-  AvcColorSummary,
-  AvcConstrainedBaselineProfile,
-  AvcCropSummary,
-  AvcEncoderRenditionPreparation,
-  AvcEncoderRenditionPreparationInput,
-  AvcEncoderUnitStreamInput,
-  AvcFrameRate,
-  AvcIncrementalAccessUnitInput,
-  AvcIncrementalAccessUnitInspection,
-  AvcIncrementalInspector,
-  AvcParameterSetSummary,
-  AvcProductionRenditionProfileV01,
-  AvcRenditionGeometry,
-  AvcRenditionGeometryInput,
-  AvcVisibleRenditionGeometryInput,
-  AvcRenditionInspection,
-  AvcRenditionInspectionInput,
-  AvcUnitInput,
-  AvcUnitInspection,
-  BindingSourceV01,
-  BindingV01,
-  BitrateV01,
+  AlphaLayout,
+  Av1ChunkInspection,
+  Av1Codec,
+  Binding,
+  BindingSource,
+  Bitrate,
   ByteRange,
-  CanvasV01,
-  CanonicalAssetInputV01,
-  CanonicalJsonObject,
-  CanonicalJsonWriteLimits,
-  CanonicalJsonValue,
-  CompiledManifestInputV01,
-  CompiledManifestV01,
-  DeclaredLimitsV01,
-  EdgeV01,
+  Canvas,
+  CanonicalAssetInput,
+  CanonicalChunkPlan,
+  ChunkDigestInput,
+  CompiledManifest,
+  CompiledManifestInput,
+  DeclaredLimits,
+  Edge,
+  EncodedChunkInput,
+  EncodedChunkRecord,
   FormatBudgets,
   FormatErrorCode,
   FormatErrorDetails,
   FormatHeader,
   FormatOptions,
+  H264AccessUnitSummary,
+  H264Codec,
+  H264EncoderRenditionPreparation,
+  H264ParameterSetSummary,
+  H264Profile,
+  H264RenditionInspection,
+  H264UnitInspection,
+  H265AccessUnitSummary,
   Id,
   ParsedFrontIndex,
-  PngDecodePlan,
-  PngProfileValidationInput,
-  PngRgbaDecodeResult,
-  PortV01,
-  RationalV01,
-  ReadinessV01,
+  ParsedVideoCodecString,
+  Port,
+  ProductionRendition,
+  Rational,
+  Readiness,
   Rect,
-  ReferenceFrameDescriptor,
-  ReferenceFrameHeader,
-  ReferenceFrameInput,
-  ReferenceFrameValidationInput,
-  RenditionV01,
-  ResidencyEndpointV01,
-  SampleDigestInputV01,
-  SampleSpanV01,
+  ResidencyEndpoint,
   Sha256Hex,
-  StartV01,
-  StateV01,
-  TransitionV01,
-  TriggerV01,
+  Start,
+  State,
+  Transition,
+  Trigger,
+  Unit,
   UnitBlobRange,
-  UnitInputV01,
-  UnitV01,
-  ValidatedAssetLayout
+  UnitChunkSpan,
+  UnitInput,
+  ValidatedAssetLayout,
+  VideoBitDepth,
+  VideoBitstream,
+  VideoCodec,
+  VideoLayout,
+  VideoRenditionGeometry,
+  VideoRenditionGeometryInput,
+  VideoStoragePolicy,
+  Vp9Codec,
+  Vp9PacketInspection
 } from "@pixel-point/aval-format";
 
-// This tuple is never emitted. It makes every approved public type cross the
-// package export boundary during the test TypeScript project build.
+// Never emitted: this tuple makes every canonical wire/video type cross the
+// package export boundary during test TypeScript compilation.
 export type PublicFormatTypes = readonly [
-  AccessUnitInputV01,
-  AccessUnitRecord,
-  AvcAccessUnitInput,
-  AvcAccessUnitSummary,
-  AvcColorSummary,
-  AvcConstrainedBaselineProfile,
-  AvcCropSummary,
-  AvcEncoderRenditionPreparation,
-  AvcEncoderRenditionPreparationInput,
-  AvcEncoderUnitStreamInput,
-  AvcFrameRate,
-  AvcIncrementalAccessUnitInput,
-  AvcIncrementalAccessUnitInspection,
-  AvcIncrementalInspector,
-  AvcParameterSetSummary,
-  AvcProductionRenditionProfileV01,
-  AvcRenditionGeometry,
-  AvcRenditionGeometryInput,
-  AvcVisibleRenditionGeometryInput,
-  AvcRenditionInspection,
-  AvcRenditionInspectionInput,
-  AvcUnitInput,
-  AvcUnitInspection,
-  BindingSourceV01,
-  BindingV01,
-  BitrateV01,
+  AlphaLayout,
+  Av1ChunkInspection,
+  Av1Codec,
+  Binding,
+  BindingSource,
+  Bitrate,
   ByteRange,
-  CanvasV01,
-  CanonicalAssetInputV01,
-  CanonicalJsonObject,
-  CanonicalJsonWriteLimits,
-  CanonicalJsonValue,
-  CompiledManifestInputV01,
-  CompiledManifestV01,
-  DeclaredLimitsV01,
-  EdgeV01,
+  Canvas,
+  CanonicalAssetInput,
+  CanonicalChunkPlan,
+  ChunkDigestInput,
+  CompiledManifest,
+  CompiledManifestInput,
+  DeclaredLimits,
+  Edge,
+  EncodedChunkInput,
+  EncodedChunkRecord,
   FormatBudgets,
   FormatErrorCode,
   FormatErrorDetails,
   FormatHeader,
   FormatOptions,
+  H264AccessUnitSummary,
+  H264Codec,
+  H264EncoderRenditionPreparation,
+  H264ParameterSetSummary,
+  H264Profile,
+  H264RenditionInspection,
+  H264UnitInspection,
+  H265AccessUnitSummary,
   Id,
   ParsedFrontIndex,
-  PngDecodePlan,
-  PngProfileValidationInput,
-  PngRgbaDecodeResult,
-  PortV01,
-  RationalV01,
-  ReadinessV01,
+  ParsedVideoCodecString,
+  Port,
+  ProductionRendition,
+  Rational,
+  Readiness,
   Rect,
-  ReferenceFrameDescriptor,
-  ReferenceFrameHeader,
-  ReferenceFrameInput,
-  ReferenceFrameValidationInput,
-  RenditionV01,
-  ResidencyEndpointV01,
-  SampleDigestInputV01,
-  SampleSpanV01,
+  ResidencyEndpoint,
   Sha256Hex,
-  StartV01,
-  StateV01,
-  TransitionV01,
-  TriggerV01,
+  Start,
+  State,
+  Transition,
+  Trigger,
+  Unit,
   UnitBlobRange,
-  UnitInputV01,
-  UnitV01,
-  ValidatedAssetLayout
+  UnitChunkSpan,
+  UnitInput,
+  ValidatedAssetLayout,
+  VideoBitDepth,
+  VideoBitstream,
+  VideoCodec,
+  VideoLayout,
+  VideoRenditionGeometry,
+  VideoRenditionGeometryInput,
+  VideoStoragePolicy,
+  Vp9Codec,
+  Vp9PacketInspection
 ];
 
-// Internal implementation contracts deliberately do not cross the package
-// root even though their defining modules use named exports internally.
-// @ts-expect-error encoder constraint rewriting is private
-export { canonicalizeAvcConstraintSet2 } from "@pixel-point/aval-format";
-// @ts-expect-error canonical layout is private
+// @ts-expect-error fixed-width index codecs remain internal implementation details
+export { parseEncodedChunkIndex } from "@pixel-point/aval-format";
+// @ts-expect-error canonical byte layout remains private
 export type { CanonicalAssetLayout } from "@pixel-point/aval-format";
-// @ts-expect-error PNG validation inputs are private
-export type { PngEnvelopeValidationInput } from "@pixel-point/aval-format";
-// @ts-expect-error writer normalization is private
+// @ts-expect-error writer normalization remains private
 export type { NormalizedWriterInput } from "@pixel-point/aval-format";
 
-declare const publicAvcProfile: AvcConstrainedBaselineProfile;
-// @ts-expect-error compatibility policy is selected by the entry point
-publicAvcProfile.requireConstraintSet2;
+declare const geometry: VideoRenditionGeometry;
+// @ts-expect-error public geometry is immutable
+geometry.codedWidth = 16;
+// @ts-expect-error public geometry rectangles are immutable
+geometry.decodedStorageRect[0] = 1;
 
 const pngDeflateCode: FormatErrorCode = "PNG_DEFLATE_INVALID";
-const pngScanlineCode: FormatErrorCode = "PNG_SCANLINE_INVALID";
 void pngDeflateCode;
-void pngScanlineCode;
-
-declare const publicGeometry: AvcRenditionGeometry;
-// @ts-expect-error public geometry is immutable
-publicGeometry.codedWidth = 16;
-// @ts-expect-error public geometry rectangles are immutable
-publicGeometry.decodedStorageRect[0] = 1;
-
-declare const pngPlan: PngDecodePlan;
-// @ts-expect-error PNG decode plans are immutable
-pngPlan.expectedFilteredBytes = 0;
-// @ts-expect-error plan ranges are immutable
-pngPlan.deflateRange.offset = 0;

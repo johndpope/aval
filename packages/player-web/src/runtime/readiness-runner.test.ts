@@ -7,7 +7,7 @@ import {
 import {
   passingMeasurements,
   readinessFixture
-} from "./readiness-test-fixture.js";
+} from "./readiness-test-support.js";
 
 describe("injectable all-routes readiness runner", () => {
   it("drives every adapter, honors hint order, and evaluates the complete set", async () => {

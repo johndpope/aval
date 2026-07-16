@@ -10,9 +10,16 @@ describe("all fixture provenance", () => {
       cwd: process.cwd(),
       maxBuffer: 1024 * 1024
     });
-    const result = JSON.parse(stdout) as { status: string; files: readonly { references: number }[] };
+    const result = JSON.parse(stdout) as {
+      status: string;
+      files: readonly { path: string; references: number }[];
+    };
     expect(result.status).toBe("passed");
-    expect(result.files.length).toBeGreaterThanOrEqual(5);
+    expect(result.files.map(({ path }) => path)).toEqual([
+      "fixtures/compiler/v1/provenance.json",
+      "fixtures/conformance/v1/provenance.json",
+      "fixtures/starter/v1-idle-hover/provenance.json"
+    ]);
     expect(result.files.every((file) => file.references > 0)).toBe(true);
   }, 30_000);
 });

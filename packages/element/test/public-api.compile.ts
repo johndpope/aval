@@ -4,6 +4,7 @@ import type {
   AvalErrorDetail,
   AvalFit,
   AvalReadinessChangeDetail,
+  AvalSourceCandidate,
   StaticReason
 } from "@pixel-point/aval-element";
 
@@ -24,7 +25,6 @@ void element.resume();
 element.getDiagnostics({ trace: true });
 
 const attributes: AvalElementAttributes = {
-  src: "/motion.avl",
   motion: "reduce",
   autoplay: "visible",
   fit: "contain",
@@ -32,6 +32,18 @@ const attributes: AvalElementAttributes = {
   width: 128
 };
 void attributes;
+const sourceCandidate: AvalSourceCandidate = {
+  src: "/motion.av1.avl",
+  type: 'application/vnd.aval; codecs="av01.0.08M.10"',
+  codec: "av01.0.08M.10",
+  integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+};
+void sourceCandidate;
+
+// @ts-expect-error source children are the sole source authority
+element.src = "/motion.avl";
+// @ts-expect-error integrity belongs to each direct source child
+element.integrity = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 void detail.failure.code;
 const readinessReason: StaticReason | undefined = readinessDetail.reason;
 void readinessReason;

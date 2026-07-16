@@ -61,7 +61,7 @@ describe("parseFrontIndex", () => {
     const fromPrefix = parseFrontIndex(prefix);
 
     const withCorruptPayload = fixture.bytes.slice();
-    const firstPayloadOffset = fromPrefix.records[0]!.payloadOffset;
+    const firstPayloadOffset = fromPrefix.records[0]!.byteOffset;
     withCorruptPayload[firstPayloadOffset] =
       (withCorruptPayload[firstPayloadOffset] ?? 0) ^ 0xff;
     const fromFullFile = parseFrontIndex(withCorruptPayload);
@@ -95,10 +95,10 @@ describe("parseFrontIndex", () => {
     const parsed = parseFrontIndex(unaligned);
 
     expect(parsed.header.declaredFileLength).toBe(fixture.bytes.byteLength);
-    expect(parsed.records[0]?.payloadOffset).toBe(fixture.records[0]?.payloadOffset);
+    expect(parsed.records[0]?.byteOffset).toBe(fixture.records[0]?.byteOffset);
   });
 
-  it("requires every byte through the exact end of the access-unit index", () => {
+  it("requires every byte through the exact end of the encoded-chunk index", () => {
     const prefix = frontPrefix(canonicalAssetFixture().bytes);
 
     const error = expectFormatError(
@@ -124,7 +124,7 @@ describe("parseFrontIndex", () => {
     expect(error.offset).toBe(paddingOffset);
   });
 
-  it("rejects a noncanonical access-unit payload offset using front metadata only", () => {
+  it("rejects a noncanonical encoded-chunk byte offset using front metadata only", () => {
     const fixture = canonicalAssetFixture();
     const bytes = fixture.bytes.slice();
     const header = parseHeader(bytes);
@@ -132,7 +132,7 @@ describe("parseFrontIndex", () => {
     writeUint64LE(
       bytes,
       firstRecordOffset,
-      fixture.records[0]!.payloadOffset + 1,
+      fixture.records[0]!.byteOffset + 1,
       "INDEX_INVALID"
     );
 

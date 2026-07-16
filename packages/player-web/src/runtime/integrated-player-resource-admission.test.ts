@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { RuntimeAssetCatalog } from "./asset-catalog.js";
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import {
   IntegratedPlayer,
   PlaybackFallbackError,
@@ -13,6 +13,9 @@ import {
 import {
   ManualTimers
 } from "./integrated-player-preparation-test-support.js";
+import {
+  createIntegratedTestVideoSource
+} from "./integrated-player-video-test-support.js";
 import type { MotionPolicy } from "./motion-policy.js";
 import type {
   RuntimeCanvasResourceHost,
@@ -22,7 +25,7 @@ import type {
 
 describe("IntegratedPlayer construction and resource admission", () => {
   it("rejects an undersized static baseline before constructing its store", () => {
-    const bytes = createIntegratedOpaqueTestAsset();
+    const bytes = createIntegratedTestAsset();
     const createFallbackStore = vi.fn(() => new MinimalStaticStore());
     const factory = new NeverCandidateFactory();
     let error: unknown;
@@ -30,6 +33,7 @@ describe("IntegratedPlayer construction and resource admission", () => {
     try {
       new IntegratedPlayer({
         bytes,
+        selectedRenditionIndex: 0,
         createFallbackStore,
         candidateFactory: factory,
         hostMaxRuntimeBytes: bytes.byteLength
@@ -48,14 +52,14 @@ describe("IntegratedPlayer construction and resource admission", () => {
     const factory = new NeverCandidateFactory();
 
     expect(() => new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => ({ dispose } as unknown as IntegratedFallbackStore),
       candidateFactory: factory
     })).toThrow("missing installInitial");
     expect(dispose).toHaveBeenCalledOnce();
 
     expect(() => new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => ({
         dispose() {
           throw new Error("injected malformed-store cleanup failure");
@@ -96,7 +100,7 @@ describe("IntegratedPlayer construction and resource admission", () => {
     };
 
     expect(() => new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore,
       candidateFactory: factory
     })).toThrow("injected post-validation availability failure");
@@ -113,7 +117,7 @@ describe("IntegratedPlayer construction and resource admission", () => {
     const catalogs: RuntimeAssetCatalog[] = [];
     let motionPolicyReads = 0;
     const base = {
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: (ownedCatalog: RuntimeAssetCatalog) => {
         catalogs.push(ownedCatalog);
         return store;
@@ -165,7 +169,7 @@ describe("IntegratedPlayer construction and resource admission", () => {
 
     try {
       new IntegratedPlayer({
-        bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
         createFallbackStore,
         candidateFactory: factory
       });
@@ -200,7 +204,7 @@ describe("IntegratedPlayer construction and resource admission", () => {
       }
     });
     const player = new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => new MinimalStaticStore(),
       candidateFactory: candidateFactoryWithResourceHost(
         () => lease as RuntimeCanvasResourceLease
@@ -217,7 +221,7 @@ describe("IntegratedPlayer construction and resource admission", () => {
     const observedReadiness: string[] = [];
     let player: IntegratedPlayer | null = null;
     player = new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => new WrongInitialStateStore(),
       candidateFactory: new NeverCandidateFactory(),
       timers: new ManualTimers(),

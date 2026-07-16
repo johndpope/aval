@@ -1,20 +1,34 @@
-import {
-  avcLevelLimits,
-  maximumAvcDecodedRgbaBytes,
-  maximumAvcDecoderSurfaceDimension,
-  parseAvcCodec
-} from "@pixel-point/aval-format";
+import { parseVideoCodecString } from "@pixel-point/aval-format";
 
 import {
   DECODER_WORKER_HARD_LIMITS,
   type DecoderWorkerColorSpaceExpectation,
-  type DecoderWorkerAvcConfig,
-  type DecoderWorkerAvcProfile,
   type DecoderWorkerErrorCode,
   type DecoderWorkerLimits,
   type DecoderWorkerOutputExpectation,
-  type DecoderWorkerSample
+  type DecoderWorkerProbeConfig,
+  type DecoderWorkerSample,
+  type DecoderWorkerVideoConfig,
+  type DecoderWorkerVideoProfile
 } from "./protocol.js";
+
+const MAX_CODED_DIMENSION = 0xffff_ffff;
+type BrowserVideoDecoderConfig = VideoDecoderConfig & {
+  readonly rotation?: unknown;
+  readonly flip?: unknown;
+};
+const VIDEO_CONFIG_KEYS = new Set<string>([
+  "codec",
+  "codedWidth",
+  "codedHeight",
+  "displayAspectWidth",
+  "displayAspectHeight",
+  "colorSpace",
+  "hardwareAcceleration",
+  "optimizeForLatency",
+  "rotation",
+  "flip"
+]);
 
 export class DecoderWorkerCoreError extends Error {
   public readonly code: DecoderWorkerErrorCode;
@@ -33,72 +47,65 @@ export class DecoderWorkerCoreError extends Error {
 }
 
 export function validateConfiguration(
-  config: DecoderWorkerAvcConfig | VideoDecoderConfig,
-  avcProfile: DecoderWorkerAvcProfile,
+  config: DecoderWorkerVideoConfig,
+  profile: DecoderWorkerVideoProfile,
   expected: DecoderWorkerOutputExpectation,
   limits: DecoderWorkerLimits
 ): void {
-  if (!isRecord(config) || !hasExactKeys(config, [
-    "codec",
-    "codedWidth",
-    "codedHeight",
-    "hardwareAcceleration",
-    "optimizeForLatency"
-  ])) {
-    throw protocolError("decoder config has unknown or missing fields");
-  }
-  let level: ReturnType<typeof parseAvcCodec>;
-  try {
-    level = parseAvcCodec(config.codec);
-  } catch {
-    throw protocolError("decoder codec is invalid");
-  }
-  if (
-    config.hardwareAcceleration !== "no-preference" &&
-    config.hardwareAcceleration !== "prefer-hardware" &&
-    config.hardwareAcceleration !== "prefer-software"
-  ) {
-    throw protocolError("decoder hardwareAcceleration is invalid");
-  }
-  if (config.optimizeForLatency !== true) {
-    throw protocolError("decoder optimizeForLatency must be true");
-  }
-  validateAvcProfile(avcProfile, level.levelIdc);
+  const parsed = validateVideoConfig(config, protocolError);
+  validateVideoProfile(profile);
   validateOutputExpectation(expected);
   validateLimits(limits);
 
-  if (
-    config.codedWidth !== undefined &&
-    config.codedWidth !== expected.codedWidth
-  ) {
-    throw protocolError("decoder config codedWidth does not match expected output");
+  if (parsed.family !== profile.codecFamily) {
+    throw protocolError("decoder codec family does not match the video profile");
+  }
+  if (parsed.bitDepth !== undefined && parsed.bitDepth !== profile.bitDepth) {
+    throw protocolError("decoder codec bit depth does not match the video profile");
   }
   if (
-    config.codedHeight !== undefined &&
+    profile.codecFamily !== "av1" &&
+    profile.bitDepth !== 8
+  ) {
+    throw protocolError("only AV1 supports a 10-bit worker profile");
+  }
+  if (
+    config.codedWidth !== profile.codedWidth ||
+    config.codedHeight !== profile.codedHeight
+  ) {
+    throw protocolError("decoder config geometry does not match the video profile");
+  }
+  if (
+    config.codedWidth !== expected.codedWidth ||
     config.codedHeight !== expected.codedHeight
   ) {
-    throw protocolError("decoder config codedHeight does not match expected output");
+    throw protocolError("decoder config geometry does not match expected output");
   }
   if (
-    config.codedWidth !== avcProfile.codedWidth ||
-    config.codedHeight !== avcProfile.codedHeight
+    config.displayAspectWidth !== undefined &&
+    config.displayAspectWidth !== expected.displayWidth
   ) {
-    throw protocolError("decoder config geometry does not match the AVC profile");
+    throw protocolError("decoder displayAspectWidth does not match expected output");
   }
-  let decodedBytesPerSurface: number;
-  try {
-    decodedBytesPerSurface = maximumAvcDecodedRgbaBytes(
-      config.codedWidth,
-      config.codedHeight
-    );
-  } catch {
-    throw protocolError("decoder decoded-surface byte count is unsafe");
+  if (
+    config.displayAspectHeight !== undefined &&
+    config.displayAspectHeight !== expected.displayHeight
+  ) {
+    throw protocolError("decoder displayAspectHeight does not match expected output");
   }
+  if (config.colorSpace !== undefined) {
+    requireBt709Limited(config.colorSpace, "decoder config colorSpace");
+  }
+
+  const decodedBytesPerSurface = checkedDecodedBytes(
+    expected.codedWidth,
+    expected.codedHeight
+  );
   if (
     decodedBytesPerSurface >
       Math.floor(Number.MAX_SAFE_INTEGER / limits.maxOutstandingFrames)
   ) {
-    throw protocolError("decoder decoded-surface budget is unsafe");
+    throw protocolError("decoder decoded-surface byte count is unsafe");
   }
   const exactDecodedBytes =
     decodedBytesPerSurface * limits.maxOutstandingFrames;
@@ -109,42 +116,73 @@ export function validateConfiguration(
   }
 }
 
+/** Validate the closed structured-clone request used before configuration. */
+export function validateProbeConfiguration(
+  config: DecoderWorkerProbeConfig
+): void {
+  validateVideoConfig(config, protocolError);
+}
+
+/** Validate WebCodecs' browser-owned dictionary and return its strict boolean. */
+export function validateProbeSupportResult(
+  support: VideoDecoderSupport,
+  requested: DecoderWorkerProbeConfig
+): boolean {
+  if (!isRecord(support)) {
+    throw probeResultError("decoder probe result is not an object");
+  }
+  const keys = Object.keys(support);
+  if (keys.some((key) => key !== "supported" && key !== "config")) {
+    throw probeResultError("decoder probe result has unknown fields");
+  }
+  if (typeof support.supported !== "boolean") {
+    throw probeResultError("decoder probe result support flag is invalid");
+  }
+  if (!isRecord(support.config)) {
+    throw probeResultError("decoder probe result omitted its config echo");
+  }
+  validateSupportResultConfiguration(
+    support.config as unknown as BrowserVideoDecoderConfig,
+    requested,
+    probeResultError
+  );
+  return support.supported;
+}
+
 /**
- * Validate the user agent's support-probe echo without treating standard
- * defaulted members as caller protocol fields. The decoder is configured with
- * the already validated request, never with this browser-owned object.
+ * Validate the browser-owned support echo. Standard defaulted fields are
+ * accepted, but every requested member must remain exactly unchanged.
  */
 export function validateSupportResultConfiguration(
-  config: VideoDecoderConfig,
-  requested: DecoderWorkerAvcConfig
+  config: BrowserVideoDecoderConfig,
+  requested: DecoderWorkerVideoConfig,
+  error: (message: string) => DecoderWorkerCoreError = supportResultError
 ): void {
-  const required = [
-    "codec",
-    "codedWidth",
-    "codedHeight",
-    "hardwareAcceleration",
-    "optimizeForLatency"
-  ] as const;
-  const allowed = new Set<string>([...required, "flip", "rotation"]);
-  if (
-    !isRecord(config) ||
-    !required.every((key) => key in config) ||
-    Object.keys(config).some((key) => !allowed.has(key))
-  ) {
-    throw supportResultError("decoder support result has unexpected fields");
-  }
-  for (const key of required) {
-    if (config[key] !== requested[key]) {
-      throw supportResultError(
-        `decoder support result changed requested ${key}`
-      );
+  validateVideoConfig(config, error);
+  for (const key of Object.keys(requested)) {
+    if (!VIDEO_CONFIG_KEYS.has(key)) {
+      throw error("decoder support result request contains an unsupported field");
+    }
+    if (!sameConfigMember(
+      config[key as keyof VideoDecoderConfig],
+      requested[key as keyof VideoDecoderConfig]
+    )) {
+      throw error(`decoder support result changed requested ${key}`);
     }
   }
-  if ("flip" in config && config.flip !== false) {
-    throw supportResultError("decoder support result returned non-default flip");
+  if (
+    !("hardwareAcceleration" in requested) &&
+    config.hardwareAcceleration !== undefined &&
+    config.hardwareAcceleration !== "no-preference"
+  ) {
+    throw error("decoder support result returned non-default hardwareAcceleration");
   }
-  if ("rotation" in config && config.rotation !== 0) {
-    throw supportResultError("decoder support result returned non-default rotation");
+  if (
+    !("optimizeForLatency" in requested) &&
+    config.optimizeForLatency !== undefined &&
+    config.optimizeForLatency !== false
+  ) {
+    throw error("decoder support result returned non-default optimizeForLatency");
   }
 }
 
@@ -154,51 +192,87 @@ export function validateGeneration(generation: number): void {
   }
 }
 
-export function validateSample(
-  sample: DecoderWorkerSample,
-  expectedOrdinal: number,
-  previousTimestamp: number | null
-): void {
+export function validateSampleShape(sample: DecoderWorkerSample): void {
   if (!isRecord(sample) || !hasExactKeys(sample, [
-    "ordinal",
     "unitId",
     "unitInstance",
-    "unitFrame",
+    "decodeIndex",
+    "unitChunkCount",
     "unitFrameCount",
-    "type",
-    "timestamp",
+    "presentationOrdinalBase",
+    "presentationIndices",
+    "presentationTimestamp",
     "duration",
+    "randomAccess",
+    "displayedFrameCount",
     "data"
   ])) {
     throw protocolError("decode sample has unknown or missing fields");
   }
-  if (sample.ordinal !== expectedOrdinal) {
-    throw protocolError(
-      `decode ordinal must be ${String(expectedOrdinal)}`
-    );
-  }
-  if (sample.ordinal >= Number.MAX_SAFE_INTEGER) {
-    throw protocolError("decode ordinal leaves no safe successor");
-  }
-  if (typeof sample.unitId !== "string" || sample.unitId.length < 1 || sample.unitId.length > 128) {
+  if (
+    typeof sample.unitId !== "string" ||
+    sample.unitId.length < 1 ||
+    sample.unitId.length > 128
+  ) {
     throw protocolError("decode sample unitId length must be between 1 and 128");
   }
   requireNonNegativeInteger(sample.unitInstance, "unitInstance");
-  requireNonNegativeInteger(sample.unitFrame, "unitFrame");
+  requireNonNegativeInteger(sample.decodeIndex, "decodeIndex");
+  requirePositiveInteger(sample.unitChunkCount, "unitChunkCount");
+  if (sample.decodeIndex >= sample.unitChunkCount) {
+    throw protocolError("decodeIndex exceeds unitChunkCount");
+  }
   requirePositiveInteger(sample.unitFrameCount, "unitFrameCount");
-  if (sample.unitFrame >= sample.unitFrameCount) {
-    throw protocolError("decode sample unitFrame exceeds its unitFrameCount");
+  requireNonNegativeInteger(
+    sample.presentationOrdinalBase,
+    "presentationOrdinalBase"
+  );
+  if (
+    sample.presentationOrdinalBase >
+      Number.MAX_SAFE_INTEGER - sample.unitFrameCount
+  ) {
+    throw protocolError("presentation ordinal range exceeds safe integers");
   }
-  if (sample.type !== "key" && sample.type !== "delta") {
-    throw protocolError("decode sample type must be key or delta");
+  requireNonNegativeInteger(
+    sample.presentationTimestamp,
+    "presentationTimestamp"
+  );
+  requireNonNegativeInteger(sample.duration, "duration");
+  requireNonNegativeInteger(sample.displayedFrameCount, "displayedFrameCount");
+  if (
+    !Array.isArray(sample.presentationIndices) ||
+    sample.presentationIndices.length !== sample.displayedFrameCount
+  ) {
+    throw protocolError(
+      "presentationIndices must match displayedFrameCount"
+    );
   }
-  requireNonNegativeInteger(sample.timestamp, "timestamp");
-  requirePositiveInteger(sample.duration, "duration");
-  if (sample.timestamp > Number.MAX_SAFE_INTEGER - sample.duration) {
-    throw protocolError("decode timestamp plus duration exceeds safe integer range");
+  if (sample.displayedFrameCount > 0 && sample.duration === 0) {
+    throw protocolError("displayed chunks must have a positive duration");
   }
-  if (previousTimestamp !== null && sample.timestamp <= previousTimestamp) {
-    throw protocolError("decode timestamps must be strictly increasing");
+  if (typeof sample.randomAccess !== "boolean") {
+    throw protocolError("randomAccess must be a boolean");
+  }
+  const localIndices = new Set<number>();
+  for (let index = 0; index < sample.presentationIndices.length; index += 1) {
+    const presentationIndex = sample.presentationIndices[index];
+    requireNonNegativeInteger(
+      presentationIndex,
+      `presentationIndices[${String(index)}]`
+    );
+    if (presentationIndex >= sample.unitFrameCount) {
+      throw protocolError("presentation index exceeds unitFrameCount");
+    }
+    if (localIndices.has(presentationIndex)) {
+      throw protocolError("presentation indices must be unique within a chunk");
+    }
+    localIndices.add(presentationIndex);
+    checkedTimestamp(
+      sample.presentationTimestamp,
+      sample.duration,
+      index,
+      "decode sample presentation timeline"
+    );
   }
   if (!(sample.data instanceof ArrayBuffer)) {
     throw protocolError("decode sample data must be an ArrayBuffer");
@@ -224,41 +298,33 @@ export function validateDecodedFrame(
   if (frame.timestamp !== timestamp || frame.duration !== duration) {
     throw new DecoderWorkerCoreError(
       "DECODER_OUTPUT_INVALID",
-      "decoder output timing did not match the submitted access unit",
+      "decoder output timing did not match its presentation metadata",
       true
     );
   }
   const rect = frame.visibleRect;
-  const maximumCodedWidth = maximumAvcDecoderSurfaceDimension(
-    expected.codedWidth
-  );
-  const maximumCodedHeight = maximumAvcDecoderSurfaceDimension(
-    expected.codedHeight
-  );
+  // WebCodecs coded dimensions describe UA-owned allocation and may include
+  // non-visible padding; only the visible storage dimensions are authored.
   if (
     rect === null ||
+    !Number.isSafeInteger(frame.codedWidth) ||
+    frame.codedWidth < 1 ||
+    !Number.isSafeInteger(frame.codedHeight) ||
+    frame.codedHeight < 1 ||
     frame.displayWidth !== expected.displayWidth ||
     frame.displayHeight !== expected.displayHeight ||
-    rect.x !== expected.visibleRect.x ||
-    rect.y !== expected.visibleRect.y ||
+    !Number.isSafeInteger(rect.x) ||
+    rect.x < 0 ||
+    !Number.isSafeInteger(rect.y) ||
+    rect.y < 0 ||
     rect.width !== expected.visibleRect.width ||
     rect.height !== expected.visibleRect.height ||
-    frame.codedWidth < rect.x + rect.width ||
-    frame.codedHeight < rect.y + rect.height ||
-    frame.codedWidth > maximumCodedWidth ||
-    frame.codedHeight > maximumCodedHeight
+    rect.x > frame.codedWidth - rect.width ||
+    rect.y > frame.codedHeight - rect.height
   ) {
     throw new DecoderWorkerCoreError(
       "DECODER_OUTPUT_INVALID",
-      `decoder output geometry ${String(frame.codedWidth)}x${String(
-        frame.codedHeight
-      )}/${String(frame.displayWidth)}x${String(
-        frame.displayHeight
-      )} did not match the bounded ${String(expected.codedWidth)}x${String(
-        expected.codedHeight
-      )} rendition surface and exact ${String(expected.displayWidth)}x${String(
-        expected.displayHeight
-      )} display/visible rectangle`,
+      "decoder output geometry did not expose the exact rendition storage dimensions",
       true
     );
   }
@@ -269,50 +335,22 @@ export function validateDecodedFrame(
       true
     );
   }
+  return checkedDecodedBytes(expected.codedWidth, expected.codedHeight);
+}
 
-  const pixels = checkedProduct(
-    frame.codedWidth,
-    frame.codedHeight,
-    "decoded frame pixels"
+export function expectedTimestamp(
+  sample: Pick<
+    DecoderWorkerSample,
+    "presentationTimestamp" | "duration"
+  >,
+  displayedIndex: number
+): number {
+  return checkedTimestamp(
+    sample.presentationTimestamp,
+    sample.duration,
+    displayedIndex,
+    "decode sample presentation timeline"
   );
-  return checkedProduct(pixels, 4, "decoded frame RGBA bytes");
-}
-
-function isNonContradictoryBt709Limited(actual: VideoColorSpace): boolean {
-  return (
-    actual.fullRange !== true &&
-    (actual.matrix === null || actual.matrix === "bt709") &&
-    (actual.primaries === null || actual.primaries === "bt709") &&
-    (actual.transfer === null || actual.transfer === "bt709")
-  );
-}
-
-function matchesDecodedBt709ColorSpace(
-  actual: VideoColorSpace,
-  expected: DecoderWorkerColorSpaceExpectation | null
-): boolean {
-  if (isNonContradictoryBt709Limited(actual)) {
-    return expected === null || matchesColorSpace(actual, expected);
-  }
-  return isWebKitNormalizedBt709(actual) &&
-    (expected === null || isExactBt709Limited(expected));
-}
-
-/** WebKit exposes decoded BT.709 video through this complete normalized tuple. */
-function isWebKitNormalizedBt709(actual: VideoColorSpace): boolean {
-  return actual.fullRange === true &&
-    actual.matrix === "bt709" &&
-    actual.primaries === "bt709" &&
-    actual.transfer === "iec61966-2-1";
-}
-
-function isExactBt709Limited(
-  expected: DecoderWorkerColorSpaceExpectation
-): boolean {
-  return expected.fullRange === false &&
-    expected.matrix === "bt709" &&
-    expected.primaries === "bt709" &&
-    expected.transfer === "bt709";
 }
 
 export function normalizeCoreError(
@@ -321,11 +359,109 @@ export function normalizeCoreError(
   message: string,
   fatal: boolean
 ): DecoderWorkerCoreError {
-  if (error instanceof DecoderWorkerCoreError) {
-    return error;
-  }
-  // Browser codec exceptions and driver text are intentionally not exposed.
+  if (error instanceof DecoderWorkerCoreError) return error;
   return new DecoderWorkerCoreError(code, message, fatal);
+}
+
+function validateVideoConfig(
+  config: BrowserVideoDecoderConfig,
+  error: (message: string) => DecoderWorkerCoreError
+): NonNullable<ReturnType<typeof parseVideoCodecString>> {
+  const unsupportedKeys = isRecord(config)
+    ? Object.keys(config).filter((key) => !VIDEO_CONFIG_KEYS.has(key))
+    : [];
+  if (
+    !isRecord(config) ||
+    unsupportedKeys.length > 0
+  ) {
+    throw error(
+      `decoder config has an unsupported field: ${unsupportedKeys.join(",")}`
+    );
+  }
+  if (typeof config.codec !== "string") {
+    throw error("decoder codec is invalid");
+  }
+  const parsed = parseVideoCodecString(config.codec);
+  if (parsed === undefined) throw error("decoder codec is invalid");
+  requireBoundedPositive(config.codedWidth, MAX_CODED_DIMENSION, "codedWidth", error);
+  requireBoundedPositive(config.codedHeight, MAX_CODED_DIMENSION, "codedHeight", error);
+  if (config.displayAspectWidth !== undefined) {
+    requireBoundedPositive(
+      config.displayAspectWidth,
+      MAX_CODED_DIMENSION,
+      "displayAspectWidth",
+      error
+    );
+  }
+  if (config.displayAspectHeight !== undefined) {
+    requireBoundedPositive(
+      config.displayAspectHeight,
+      MAX_CODED_DIMENSION,
+      "displayAspectHeight",
+      error
+    );
+  }
+  if (
+    config.hardwareAcceleration !== undefined &&
+    config.hardwareAcceleration !== "no-preference" &&
+    config.hardwareAcceleration !== "prefer-hardware" &&
+    config.hardwareAcceleration !== "prefer-software"
+  ) {
+    throw error("decoder hardwareAcceleration is invalid");
+  }
+  if (
+    config.optimizeForLatency !== undefined &&
+    typeof config.optimizeForLatency !== "boolean"
+  ) {
+    throw error("decoder optimizeForLatency is invalid");
+  }
+  if (config.rotation !== undefined && config.rotation !== 0) {
+    throw error("decoder rotation must be zero");
+  }
+  if (config.flip !== undefined && config.flip !== false) {
+    throw error("decoder flip must be false");
+  }
+  if (config.colorSpace !== undefined) {
+    requireBt709Limited(config.colorSpace, "decoder config colorSpace", error);
+  }
+  return parsed;
+}
+
+function validateVideoProfile(profile: DecoderWorkerVideoProfile): void {
+  if (!isRecord(profile) || !hasExactKeys(profile, [
+    "codecFamily",
+    "bitDepth",
+    "codedWidth",
+    "codedHeight",
+    "frameRate",
+    "requireBt709LimitedRange"
+  ])) {
+    throw protocolError("video profile has unknown or missing fields");
+  }
+  if (
+    profile.codecFamily !== "h264" &&
+    profile.codecFamily !== "h265" &&
+    profile.codecFamily !== "vp9" &&
+    profile.codecFamily !== "av1"
+  ) {
+    throw protocolError("video profile codec family is invalid");
+  }
+  if (profile.bitDepth !== 8 && profile.bitDepth !== 10) {
+    throw protocolError("video profile bit depth is invalid");
+  }
+  requireDimension(profile.codedWidth, "videoProfile.codedWidth");
+  requireDimension(profile.codedHeight, "videoProfile.codedHeight");
+  if (!isRecord(profile.frameRate) || !hasExactKeys(profile.frameRate, [
+    "numerator",
+    "denominator"
+  ])) {
+    throw protocolError("video profile frame rate is invalid");
+  }
+  requirePositiveInteger(profile.frameRate.numerator, "frameRate.numerator");
+  requirePositiveInteger(profile.frameRate.denominator, "frameRate.denominator");
+  if (profile.requireBt709LimitedRange !== true) {
+    throw protocolError("video profile must require BT.709 limited range");
+  }
 }
 
 function validateOutputExpectation(
@@ -359,96 +495,10 @@ function validateOutputExpectation(
   ) {
     throw protocolError("expected visible rectangle exceeds coded dimensions");
   }
-  if (expected.colorSpace !== null) {
-    validateColorSpace(expected.colorSpace);
-  }
+  if (expected.colorSpace !== null) validateColorSpace(expected.colorSpace);
 }
 
-function validateAvcProfile(
-  profile: DecoderWorkerAvcProfile,
-  levelIdc: number
-): void {
-  if (!isRecord(profile) || !hasExactKeys(profile, [
-    "codedWidth",
-    "codedHeight",
-    "frameRate",
-    "averageBitrate",
-    "peakBitrate",
-    "cpbBufferBits",
-    "requireBt709LimitedRange",
-    "quantizationPolicy"
-  ])) {
-    throw protocolError("AVC profile has unknown or missing fields");
-  }
-  requirePositiveInteger(profile.codedWidth, "avcProfile.codedWidth");
-  requirePositiveInteger(profile.codedHeight, "avcProfile.codedHeight");
-  if (!isRecord(profile.frameRate) || !hasExactKeys(profile.frameRate, [
-    "numerator",
-    "denominator"
-  ])) {
-    throw protocolError("AVC frame rate has unknown or missing fields");
-  }
-  requirePositiveInteger(
-    profile.frameRate.numerator,
-    "avcProfile.frameRate.numerator"
-  );
-  requireBoundedPositive(
-    profile.frameRate.denominator,
-    1_001,
-    "avcProfile.frameRate.denominator"
-  );
-  if (
-    profile.frameRate.numerator > 60 * profile.frameRate.denominator ||
-    greatestCommonDivisor(
-      profile.frameRate.numerator,
-      profile.frameRate.denominator
-    ) !== 1
-  ) {
-    throw protocolError("AVC frame rate must be reduced and no greater than 60 fps");
-  }
-  const macroblockWidth = Math.ceil(profile.codedWidth / 16);
-  const macroblockHeight = Math.ceil(profile.codedHeight / 16);
-  const macroblocksPerFrame = macroblockWidth * macroblockHeight;
-  const level = avcLevelLimits(levelIdc);
-  if (
-    macroblockWidth > level.maximumMacroblockDimension ||
-    macroblockHeight > level.maximumMacroblockDimension ||
-    macroblocksPerFrame > level.maximumMacroblocksPerFrame ||
-    BigInt(macroblocksPerFrame) * BigInt(profile.frameRate.numerator) >
-      BigInt(level.maximumMacroblocksPerSecond) *
-        BigInt(profile.frameRate.denominator)
-  ) {
-    throw protocolError("AVC profile exceeds its declared level macroblock limits");
-  }
-  requirePositiveInteger(profile.averageBitrate, "averageBitrate");
-  requirePositiveInteger(profile.peakBitrate, "peakBitrate");
-  requirePositiveInteger(profile.cpbBufferBits, "cpbBufferBits");
-  if (
-    profile.peakBitrate > level.maximumBitrate ||
-    profile.cpbBufferBits > level.maximumCpbBits
-  ) {
-    throw protocolError("AVC bitrate or CPB exceeds its declared level");
-  }
-  if (
-    profile.averageBitrate > profile.peakBitrate ||
-    profile.cpbBufferBits !== profile.peakBitrate
-  ) {
-    throw protocolError("AVC bitrate and CPB fields are inconsistent");
-  }
-  if (profile.requireBt709LimitedRange !== true) {
-    throw protocolError("AVC profile must require BT.709 limited range");
-  }
-  if (
-    profile.quantizationPolicy !== "fixed-qp26-v0" &&
-    profile.quantizationPolicy !== "bounded-qp-v1"
-  ) {
-    throw protocolError("AVC quantization policy is invalid");
-  }
-}
-
-function validateColorSpace(
-  value: DecoderWorkerColorSpaceExpectation
-): void {
+function validateColorSpace(value: DecoderWorkerColorSpaceExpectation): void {
   if (!isRecord(value) || !hasExactKeys(value, [
     "fullRange",
     "matrix",
@@ -498,43 +548,93 @@ function validateLimits(limits: DecoderWorkerLimits): void {
   );
 }
 
-function matchesColorSpace(
+function requireBt709Limited(
+  value: VideoColorSpaceInit,
+  label: string,
+  error: (message: string) => DecoderWorkerCoreError = protocolError
+): void {
+  if (!isRecord(value) || !hasExactKeys(value, [
+    "primaries",
+    "transfer",
+    "matrix",
+    "fullRange"
+  ])) {
+    throw error(`${label} has unknown or missing fields`);
+  }
+  if (
+    value.primaries !== "bt709" ||
+    value.transfer !== "bt709" ||
+    value.matrix !== "bt709" ||
+    value.fullRange !== false
+  ) {
+    throw error(`${label} must be BT.709 limited range`);
+  }
+}
+
+function matchesDecodedBt709ColorSpace(
   actual: VideoColorSpace,
-  expected: DecoderWorkerColorSpaceExpectation
+  expected: DecoderWorkerColorSpaceExpectation | null
 ): boolean {
-  return (
-    actual.fullRange === expected.fullRange &&
+  const nonContradictory = actual.fullRange !== true &&
+    (actual.matrix === null || actual.matrix === "bt709") &&
+    (actual.primaries === null || actual.primaries === "bt709") &&
+    (actual.transfer === null || actual.transfer === "bt709");
+  const webkitNormalized = actual.fullRange === true &&
+    actual.matrix === "bt709" &&
+    actual.primaries === "bt709" &&
+    actual.transfer === "iec61966-2-1";
+  if (!nonContradictory && !webkitNormalized) return false;
+  if (expected === null) return true;
+  if (webkitNormalized) {
+    return expected.fullRange === false &&
+      expected.matrix === "bt709" &&
+      expected.primaries === "bt709" &&
+      expected.transfer === "bt709";
+  }
+  return actual.fullRange === expected.fullRange &&
     actual.matrix === expected.matrix &&
     actual.primaries === expected.primaries &&
-    actual.transfer === expected.transfer
-  );
+    actual.transfer === expected.transfer;
+}
+
+function sameConfigMember(left: unknown, right: unknown): boolean {
+  if (isRecord(left) && isRecord(right)) {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length &&
+      leftKeys.every((key) => key in right && left[key] === right[key]);
+  }
+  return left === right;
+}
+
+function checkedDecodedBytes(width: number, height: number): number {
+  const pixels = checkedProduct(width, height, "decoded frame pixels");
+  return checkedProduct(pixels, 4, "decoded frame RGBA bytes");
+}
+
+function checkedTimestamp(
+  timestamp: number,
+  duration: number,
+  index: number,
+  label: string
+): number {
+  const result = BigInt(timestamp) + BigInt(duration) * BigInt(index);
+  if (result > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw protocolError(`${label} exceeds safe integers`);
+  }
+  return Number(result);
 }
 
 function checkedProduct(left: number, right: number, label: string): number {
-  const product = left * right;
-  if (!Number.isSafeInteger(product) || product <= 0) {
-    throw new DecoderWorkerCoreError(
-      "DECODER_OUTPUT_INVALID",
-      `${label} exceeds safe integer range`,
-      true
-    );
+  const product = BigInt(left) * BigInt(right);
+  if (product > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw protocolError(`${label} exceeds safe integers`);
   }
-  return product;
+  return Number(product);
 }
 
 function requireDimension(value: number, label: string): void {
-  requirePositiveInteger(value, label);
-}
-
-function requireBoundedPositive(
-  value: number,
-  maximum: number,
-  label: string
-): void {
-  requirePositiveInteger(value, label);
-  if (value > maximum) {
-    throw protocolError(`${label} exceeds ${String(maximum)}`);
-  }
+  requireBoundedPositive(value, MAX_CODED_DIMENSION, label);
 }
 
 function requirePositiveInteger(value: number, label: string): void {
@@ -549,27 +649,20 @@ function requireNonNegativeInteger(value: number, label: string): void {
   }
 }
 
-function protocolError(message: string): DecoderWorkerCoreError {
-  return new DecoderWorkerCoreError("PROTOCOL_ERROR", message, true);
-}
-
-function supportResultError(message: string): DecoderWorkerCoreError {
-  return new DecoderWorkerCoreError(
-    "DECODER_CONFIGURE_FAILED",
-    message,
-    true
-  );
-}
-
-function greatestCommonDivisor(left: number, right: number): number {
-  let a = left;
-  let b = right;
-  while (b !== 0) {
-    const remainder = a % b;
-    a = b;
-    b = remainder;
+function requireBoundedPositive(
+  value: number | undefined,
+  maximum: number,
+  label: string,
+  error: (message: string) => DecoderWorkerCoreError = protocolError
+): void {
+  if (
+    value === undefined ||
+    !Number.isSafeInteger(value) ||
+    value <= 0 ||
+    value > maximum
+  ) {
+    throw error(`${label} must be an integer from 1 through ${String(maximum)}`);
   }
-  return a;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -578,8 +671,20 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasExactKeys(
   value: Record<string, unknown>,
-  expected: readonly string[]
+  keys: readonly string[]
 ): boolean {
   const actual = Object.keys(value);
-  return actual.length === expected.length && expected.every((key) => key in value);
+  return actual.length === keys.length && keys.every((key) => key in value);
+}
+
+function protocolError(message: string): DecoderWorkerCoreError {
+  return new DecoderWorkerCoreError("PROTOCOL_ERROR", message, true);
+}
+
+function supportResultError(message: string): DecoderWorkerCoreError {
+  return new DecoderWorkerCoreError("DECODER_CONFIGURE_FAILED", message, true);
+}
+
+function probeResultError(message: string): DecoderWorkerCoreError {
+  return new DecoderWorkerCoreError("DECODER_PROBE_FAILED", message, false);
 }

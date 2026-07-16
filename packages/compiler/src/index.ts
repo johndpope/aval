@@ -9,57 +9,62 @@ export type {
   CompilerErrorDetails
 } from "./diagnostics.js";
 export {
-  AVC_ENCODER_PRESETS,
   COMPILER_PROJECT_VERSION,
-  DEFAULT_MEDIA_TIMEOUT_MS,
   DEFAULT_PROBE_TIMEOUT_MS,
-  DEFAULT_PROCESS_TIMEOUT_MS,
+  H264_ENCODER_PRESETS,
+  H265_ENCODER_PRESETS,
   MAX_PROCESS_OUTPUT_BYTES,
-  MAX_PROCESS_STDERR_BYTES
+  MAX_PROCESS_STDERR_BYTES,
+  VP9_DEADLINES
 } from "./model.js";
 export type {
-  AvcEncoderPreset,
-  AvcEncodingV03,
-  AvcRateControlV03,
-  CompileArtifact,
   AlphaAuditSummary,
-  AlphaErrorStatistics,
-  AlphaFrameQualitySummary,
   AlphaPixelLocation,
   AlphaPolicyDecision,
-  AlphaQualitySummary,
-  CompositeBackground,
-  CompositeBackgroundQualitySummary,
-  CompositeQualitySummary,
-  CompileBuildDetails,
-  CompileContinuityDetails,
+  Av1Encoding,
+  Av1TileLayout,
+  Canvas,
+  CompileBundleArtifact,
+  CompileBundleAssetArtifact,
+  CompileBundleAssetResult,
+  CompileBundleBuildReport,
+  CompileBundleResult,
   CompileInvocationDetails,
-  CompileRenditionDetails,
-  CompileResult,
-  CompileSourceDetails,
   DirectArtifactOptions,
+  DirectCodecOptions,
   DirectCompileOptions,
+  H264EncoderPreset,
+  H264Encoding,
+  H265EncoderPreset,
+  H265Encoding,
   MediaProbe,
   MediaProbeFrame,
-  NormalizedAvcEncoding,
   NormalizedSourceProject,
   NormalizedSourceRenditionTarget,
-  OpaqueRenditionTargetV01,
+  NormalizedVideoEncoding,
   ProcessLimits,
-  ProjectArtifactOptions,
   ProjectCompileOptions,
-  SourceDescriptorV01,
+  Rational,
   SourceAlphaPolicy,
-  SourceAvcProfileV02,
-  SourceAvcProfileV03,
-  SourceProjectV01,
-  SourceProjectV02,
-  SourceProjectV03,
-  SourceRangeV01,
-  SourceRenditionTargetV02,
-  SourceRenditionTargetV03,
-  SourceStateV01,
-  SourceUnitV01,
+  SourceBinding,
+  SourceBindingName,
+  SourceDescriptor,
+  SourceEdge,
+  SourcePort,
+  SourceProject,
+  SourceRange,
+  SourceRenditionDimension,
+  SourceRenditionTarget,
+  SourceResidencyEndpoint,
+  SourceStart,
+  SourceState,
+  SourceTransition,
+  SourceTrigger,
+  SourceUnit,
+  VideoCodec,
+  VideoEncoding,
+  Vp9Deadline,
+  Vp9Encoding,
   ToolProvenance
 } from "./model.js";
 export { HELP_TEXT, runCli } from "./cli.js";
@@ -75,8 +80,16 @@ export type {
   UnpackCliArguments,
   ValidateCliArguments
 } from "./cli-args.js";
-export { compileDirectInput } from "./compile/direct-compiler.js";
-export { compileProjectFile } from "./compile/project-compiler.js";
+export {
+  compileDirectInput,
+  compileProjectFile
+} from "./compile/project-compiler.js";
+export type {
+  CompileBundleReport,
+  CompileBundleReportAsset,
+  CompileBundleReportTool,
+  CompileBundleReportToolchain
+} from "./compile/compile-bundle-report.js";
 export {
   bt709LimitedAlphaLuma,
   bt709LimitedChroma2x2,
@@ -84,17 +97,6 @@ export {
   roundSignedRatio
 } from "./compile/bt709-limited.js";
 export type { Bt709LimitedChroma } from "./compile/bt709-limited.js";
-export {
-  packRgbaToPlanarYuv420
-} from "./compile/packed-yuv420.js";
-export type {
-  PackedPlanarYuv420Frame,
-  PackRgbaToPlanarYuv420Input,
-  PlanarYuv420Plane,
-  PlanarYuv420Planes
-} from "./compile/packed-yuv420.js";
-export { dilateTransparentRgba } from "./compile/rgba-dilation.js";
-export type { RgbaDilationInput } from "./compile/rgba-dilation.js";
 export {
   inspectAssetFile,
   unpackAssetFile,
@@ -104,18 +106,11 @@ export {
 export type {
   AssetInspection,
   AssetValidationReport,
-  AvcRenditionSummary,
-  InspectedAccessUnitRange,
-  OpaqueRenditionSummary,
+  InspectedChunkRange,
+  VideoRenditionInspection,
   UnpackReport
 } from "./commands/asset.js";
 export { startDevCommand } from "./commands/dev.js";
-export {
-  createCompileAdoptionSummary,
-  formatCompileAdoptionSummary,
-  type CompileAdoptionSummary,
-  type CompileAdoptionUnitSummary
-} from "./adoption-summary.js";
 export type {
   DevBuildEvent,
   DevCommandDependencies,

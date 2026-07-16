@@ -1,46 +1,39 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import type { CompileCliArguments } from "../cli-args.js";
-import { buildDirectArtifact } from "../compile/direct-compiler.js";
-import { buildProjectArtifact } from "../compile/project-compiler.js";
-import { CompilerError } from "../diagnostics.js";
 import {
-  createCompileAdoptionSummary,
-  type CompileAdoptionSummary
-} from "../adoption-summary.js";
+  buildDirectBundleArtifact,
+  buildProjectBundleArtifact
+} from "../compile/project-compiler.js";
+import { CompilerError } from "../diagnostics.js";
 import type {
-  CompileArtifact,
-  CompileResult,
+  CompileBundleArtifact,
+  CompileBundleResult,
   DirectArtifactOptions,
   ProjectArtifactOptions
 } from "../model.js";
-import {
-  buildReportInvocation,
-  prepareCompilePublication
-} from "./compile-publication.js";
+import { publishCompileBundleDirectory } from "./compile-bundle-publication.js";
 import { assertDistinctCompileOutputs } from "./compile-collisions.js";
 
 export interface CompileCommandDependencies {
-  readonly buildDirectArtifact: (
+  readonly buildDirectBundleArtifact: (
     options: DirectArtifactOptions
-  ) => Promise<Readonly<CompileArtifact>>;
-  readonly buildProjectArtifact: (
+  ) => Promise<Readonly<CompileBundleArtifact>>;
+  readonly buildProjectBundleArtifact: (
     options: ProjectArtifactOptions
-  ) => Promise<Readonly<CompileArtifact>>;
+  ) => Promise<Readonly<CompileBundleArtifact>>;
 }
 
-export interface CompileCommandResult extends CompileResult {
+export interface CompileCommandResult extends CompileBundleResult {
   readonly command: "compile";
-  readonly reportPath: string;
-  readonly adoption: Readonly<CompileAdoptionSummary>;
 }
 
 const DEFAULT_DEPENDENCIES: CompileCommandDependencies = {
-  buildDirectArtifact,
-  buildProjectArtifact
+  buildDirectBundleArtifact,
+  buildProjectBundleArtifact
 };
 
-/** Run one preflighted compile and publish its deterministic JSON build report. */
+/** Build and atomically publish one complete codec bundle directory. */
 export async function runCompileCommand(
   arguments_: CompileCliArguments,
   options: {
@@ -52,27 +45,16 @@ export async function runCompileCommand(
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
   const inputPath = resolve(options.cwd, arguments_.input);
   const outputPath = resolve(options.cwd, arguments_.output);
-  const reportPath = resolve(
-    options.cwd,
-    arguments_.report ?? `${arguments_.output}.build.json`
-  );
-  if (outputPath === reportPath) {
-    throw new CompilerError("CLI_USAGE", "Asset and report paths must differ");
-  }
+  const reportPath = join(outputPath, "build.json");
   await assertDistinctCompileOutputs(
     arguments_,
     inputPath,
     outputPath,
     reportPath
   );
-  const publication = await prepareCompilePublication(
-    outputPath,
-    reportPath,
-    arguments_.force
-  );
 
   const artifact = inputPath.toLowerCase().endsWith(".json")
-    ? await dependencies.buildProjectArtifact({
+    ? await dependencies.buildProjectBundleArtifact({
         projectPath: inputPath,
         ...(arguments_.ffmpegPath === undefined
           ? {}
@@ -85,30 +67,36 @@ export async function runCompileCommand(
           : { mediaTimeoutMs: arguments_.mediaTimeoutMs }),
         ...(options.signal === undefined ? {} : { signal: options.signal })
       })
-    : await dependencies.buildDirectArtifact(directOptions(
+    : await dependencies.buildDirectBundleArtifact(directOptions(
         arguments_,
         inputPath,
         options.signal
       ));
 
-  await publication.publishArtifact(
-    artifact,
-    buildReportInvocation(arguments_, inputPath, outputPath),
-    options.signal
-  );
-  const result: CompileResult = Object.freeze({
+  await publishCompileBundleDirectory(
     outputPath,
-    bytes: artifact.bytes,
-    sha256: artifact.sha256,
+    {
+      assets: artifact.assets.map(({ codec, assetBytes }) => ({
+        codec,
+        bytes: assetBytes
+      })),
+      buildReportBytes: artifact.buildReportBytes
+    },
+    {
+      force: arguments_.force,
+      ...(options.signal === undefined ? {} : { signal: options.signal })
+    }
+  );
+  return Object.freeze({
+    command: "compile" as const,
+    outputPath,
+    reportPath,
+    assets: Object.freeze(artifact.buildReport.assets.map((asset) =>
+      Object.freeze({ ...asset, path: join(outputPath, asset.path) })
+    )),
     provenance: artifact.provenance,
     warnings: artifact.warnings,
-    buildDetails: artifact.buildDetails
-  });
-  return Object.freeze({
-    command: "compile",
-    reportPath,
-    ...result,
-    adoption: createCompileAdoptionSummary(result)
+    sourceMarkup: artifact.buildReport.sourceMarkup
   });
 }
 
@@ -120,19 +108,16 @@ function directOptions(
   if (arguments_.loop === undefined) {
     throw new CompilerError("CLI_USAGE", "Direct compile requires --loop");
   }
-  const extended = {
+  if (arguments_.codec === undefined) {
+    throw new CompilerError("CLI_USAGE", "Direct compile requires --codec");
+  }
+  const base = {
     inputPath,
     loop: arguments_.loop,
     ...(arguments_.fps === undefined ? {} : { fps: arguments_.fps }),
     normalizeVfr:
       arguments_.normalizeVfr ||
       (arguments_.fps !== undefined && !inputPath.includes("%")),
-    ...(arguments_.bitrate === undefined ? {} : { bitrate: arguments_.bitrate }),
-    ...(arguments_.crf === undefined ? {} : { crf: arguments_.crf }),
-    ...(arguments_.maxBitrate === undefined
-      ? {}
-      : { maxBitrate: arguments_.maxBitrate }),
-    ...(arguments_.preset === undefined ? {} : { preset: arguments_.preset }),
     ...(arguments_.alpha === undefined ? {} : { alpha: arguments_.alpha }),
     ...(arguments_.ffmpegPath === undefined
       ? {}
@@ -147,5 +132,61 @@ function directOptions(
     ...(arguments_.canvas === undefined ? {} : { canvas: arguments_.canvas }),
     ...(arguments_.frames === undefined ? {} : { frames: arguments_.frames })
   };
-  return extended;
+  switch (arguments_.codec) {
+    case "h264":
+      return Object.freeze({
+        ...base,
+        codec: arguments_.codec,
+        ...(arguments_.crf === undefined ? {} : { crf: arguments_.crf }),
+        ...(arguments_.preset === undefined
+          ? {}
+          : { preset: arguments_.preset })
+      });
+    case "h265":
+      return Object.freeze({
+        ...base,
+        codec: arguments_.codec,
+        ...(arguments_.crf === undefined ? {} : { crf: arguments_.crf }),
+        ...(arguments_.preset === undefined
+          ? {}
+          : { preset: arguments_.preset }),
+        ...(arguments_.threads === undefined
+          ? {}
+          : { threads: arguments_.threads })
+      });
+    case "vp9":
+      return Object.freeze({
+        ...base,
+        codec: arguments_.codec,
+        ...(arguments_.crf === undefined ? {} : { crf: arguments_.crf }),
+        ...(arguments_.deadline === undefined
+          ? {}
+          : { deadline: arguments_.deadline }),
+        ...(arguments_.cpuUsed === undefined
+          ? {}
+          : { cpuUsed: arguments_.cpuUsed }),
+        ...(arguments_.threads === undefined
+          ? {}
+          : { threads: arguments_.threads })
+      });
+    case "av1":
+      return Object.freeze({
+        ...base,
+        codec: arguments_.codec,
+        ...(arguments_.crf === undefined ? {} : { crf: arguments_.crf }),
+        ...(arguments_.bitDepth === undefined
+          ? {}
+          : { bitDepth: arguments_.bitDepth }),
+        ...(arguments_.cpuUsed === undefined
+          ? {}
+          : { cpuUsed: arguments_.cpuUsed }),
+        ...(arguments_.tiles === undefined
+          ? {}
+          : { tiles: arguments_.tiles }),
+        rowMt: arguments_.rowMt,
+        ...(arguments_.threads === undefined
+          ? {}
+          : { threads: arguments_.threads })
+      });
+  }
 }

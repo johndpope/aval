@@ -1,15 +1,13 @@
 import {
-  deriveAvcRenditionGeometry,
-  type AvcRenditionGeometry,
-  type Rect
+  PACKED_ALPHA_GUTTER,
+  type Rect,
+  type VideoRenditionGeometry
 } from "@pixel-point/aval-format";
 
 import { STREAMING_TEXTURE_LAYER_COUNT } from "./checked-runtime-bytes.js";
 import type {
   FrameRendererBackend,
-  FrameTextureLayout,
-  LegacyOpaqueFrameRendererBackend,
-  LegacyOpaqueFrameTextureLayout
+  FrameTextureLayout
 } from "./frame-renderer.js";
 
 export interface FrameUvTransform {
@@ -56,95 +54,6 @@ export function freezeFrameLayout(
     logicalHeight,
     residentLayerCount
   });
-}
-
-export function createLegacyOpaqueFrameLayout(
-  layout: LegacyOpaqueFrameTextureLayout
-): Readonly<FrameTextureLayout> {
-  validateFrameObject(layout, "opaque texture layout");
-  const codedWidth = validateFrameDimension(
-    layout.codedWidth,
-    "coded texture width"
-  );
-  const codedHeight = validateFrameDimension(
-    layout.codedHeight,
-    "coded texture height"
-  );
-  const decodedRgbaBytes = checkedFrameRgbaBytes(codedWidth, codedHeight);
-  const rect = Object.freeze([0, 0, codedWidth, codedHeight]) as Rect;
-  const geometry: Readonly<AvcRenditionGeometry> = Object.freeze({
-    profile: "avc-annexb-opaque-v0",
-    visibleColorRect: rect,
-    decodedStorageRect: rect,
-    codedWidth,
-    codedHeight,
-    visibleColorArea: codedWidth * codedHeight,
-    decodedRgbaBytes,
-    codedRgbaBytes: decodedRgbaBytes
-  });
-  return freezeLegacyFrameLayout({
-    geometry,
-    logicalWidth: layout.logicalWidth,
-    logicalHeight: layout.logicalHeight,
-    residentLayerCount: layout.residentLayerCount
-  });
-}
-
-/** Package-internal compatibility path for the deprecated opaque adapter. */
-export function freezeLegacyFrameLayout(
-  layout: FrameTextureLayout
-): Readonly<FrameTextureLayout> {
-  validateFrameObject(layout, "frame texture layout");
-  const geometry = freezeFrameGeometryStructure(layout.geometry);
-  const logicalWidth = validateFrameDimension(
-    layout.logicalWidth,
-    "logical width"
-  );
-  const logicalHeight = validateFrameDimension(
-    layout.logicalHeight,
-    "logical height"
-  );
-  const residentLayerCount = validateFrameNonNegativeDimension(
-    layout.residentLayerCount,
-    "resident texture layer count"
-  );
-  checkedFrameRgbaBytes(logicalWidth, logicalHeight);
-  return Object.freeze({
-    geometry,
-    logicalWidth,
-    logicalHeight,
-    residentLayerCount
-  });
-}
-
-export function toLegacyOpaqueFrameLayout(
-  layout: Readonly<FrameTextureLayout>
-): Readonly<LegacyOpaqueFrameTextureLayout> {
-  return Object.freeze({
-    codedWidth: layout.geometry.codedWidth,
-    codedHeight: layout.geometry.codedHeight,
-    logicalWidth: layout.logicalWidth,
-    logicalHeight: layout.logicalHeight,
-    residentLayerCount: layout.residentLayerCount
-  });
-}
-
-/** @deprecated Compatibility validator for the old opaque-only surface. */
-export function freezeLegacyOpaqueFrameLayout(
-  layout: LegacyOpaqueFrameTextureLayout
-): Readonly<LegacyOpaqueFrameTextureLayout> {
-  return toLegacyOpaqueFrameLayout(createLegacyOpaqueFrameLayout(layout));
-}
-
-/** @deprecated Compatibility validator for the old opaque-only surface. */
-export function validateLegacyOpaqueBackendLimits(
-  backend: LegacyOpaqueFrameRendererBackend,
-  layout: Readonly<LegacyOpaqueFrameTextureLayout>
-): void {
-  validateFrameBackendLimits(
-    backend as unknown as FrameRendererBackend,
-    createLegacyOpaqueFrameLayout(layout)
-  );
 }
 
 export function deriveFrameSamplingLayout(
@@ -267,48 +176,69 @@ export function validateFrameObject(value: unknown, label: string): void {
 }
 
 function freezeFrameGeometry(
-  geometry: Readonly<AvcRenditionGeometry>,
+  geometry: Readonly<VideoRenditionGeometry>,
   logicalWidth: number,
   logicalHeight: number
-): Readonly<AvcRenditionGeometry> {
+): Readonly<VideoRenditionGeometry> {
   const normalized = freezeFrameGeometryStructure(geometry);
-  const derived = deriveAvcRenditionGeometry(
-    normalized.profile === "avc-annexb-packed-alpha-v0" ||
-      normalized.profile === "avc-annexb-packed-alpha-v1"
-      ? {
-          profile: normalized.profile,
-          canvasWidth: logicalWidth,
-          canvasHeight: logicalHeight,
-          colorRect: normalized.visibleColorRect,
-          alphaRect: normalized.visibleAlphaRect!,
-          codedWidth: normalized.codedWidth,
-          codedHeight: normalized.codedHeight
-        }
-      : {
-          profile: normalized.profile,
-          canvasWidth: logicalWidth,
-          canvasHeight: logicalHeight,
-          colorRect: normalized.visibleColorRect,
-          codedWidth: normalized.codedWidth,
-          codedHeight: normalized.codedHeight
-        }
-  );
+  const [colorX, colorY, visibleWidth, visibleHeight] =
+    normalized.visibleColorRect;
   if (
-    !sameRect(normalized.decodedStorageRect, derived.decodedStorageRect) ||
-    normalized.visibleColorArea !== derived.visibleColorArea ||
-    normalized.decodedRgbaBytes !== derived.decodedRgbaBytes ||
-    normalized.codedRgbaBytes !== derived.codedRgbaBytes
+    colorX !== 0 ||
+    colorY !== 0 ||
+    visibleWidth > logicalWidth ||
+    visibleHeight > logicalHeight ||
+    BigInt(visibleWidth) * BigInt(logicalHeight) !==
+      BigInt(visibleHeight) * BigInt(logicalWidth)
   ) {
     throw new RangeError(
-      "frame geometry does not match the canonical AVC rendition geometry"
+      "frame geometry visible color does not match the logical canvas"
     );
   }
-  return derived;
+  const paneWidth = visibleWidth % 2 === 0 ? visibleWidth : visibleWidth + 1;
+  const paneHeight = visibleHeight % 2 === 0 ? visibleHeight : visibleHeight + 1;
+  const storageHeight = normalized.layout === "opaque"
+    ? paneHeight
+    : paneHeight * 2 + PACKED_ALPHA_GUTTER;
+  const expectedStorage = Object.freeze([
+    0,
+    0,
+    paneWidth,
+    storageHeight
+  ]) as Rect;
+  if (
+    normalized.layout === "packed-alpha" &&
+    !sameRect(
+      normalized.visibleAlphaRect!,
+      Object.freeze([
+        0,
+        paneHeight + PACKED_ALPHA_GUTTER,
+        visibleWidth,
+        visibleHeight
+      ]) as Rect
+    )
+  ) {
+    throw new RangeError(
+      "frame geometry alpha pane does not match canonical video storage"
+    );
+  }
+  if (
+    !sameRect(normalized.decodedStorageRect, expectedStorage) ||
+    normalized.decodedRgbaBytes !== checkedFrameRgbaBytes(
+      paneWidth,
+      storageHeight
+    )
+  ) {
+    throw new RangeError(
+      "frame geometry does not match canonical video storage"
+    );
+  }
+  return normalized;
 }
 
 function freezeFrameGeometryStructure(
-  geometry: Readonly<AvcRenditionGeometry>
-): Readonly<AvcRenditionGeometry> {
+  geometry: Readonly<VideoRenditionGeometry>
+): Readonly<VideoRenditionGeometry> {
   validateFrameObject(geometry, "frame texture layout geometry");
   const codedWidth = validateFrameDimension(
     geometry.codedWidth,
@@ -348,15 +278,13 @@ function freezeFrameGeometryStructure(
 
   let visibleAlphaRect: Rect | undefined;
   if (
-    geometry.profile === "avc-annexb-opaque-v0" ||
-    geometry.profile === "avc-annexb-opaque-v1"
+    geometry.layout === "opaque"
   ) {
     if (geometry.visibleAlphaRect !== undefined) {
       throw new RangeError("opaque frame geometry must not contain alpha");
     }
   } else if (
-    geometry.profile === "avc-annexb-packed-alpha-v0" ||
-    geometry.profile === "avc-annexb-packed-alpha-v1"
+    geometry.layout === "packed-alpha"
   ) {
     if (geometry.visibleAlphaRect === undefined) {
       throw new RangeError("packed-alpha frame geometry requires alpha");
@@ -374,7 +302,7 @@ function freezeFrameGeometryStructure(
       throw new RangeError("color and alpha rectangles must have equal size");
     }
   } else {
-    throw new RangeError("frame geometry profile is unsupported");
+    throw new RangeError("frame geometry layout is unsupported");
   }
 
   requireRectInside(
@@ -391,7 +319,7 @@ function freezeFrameGeometryStructure(
   }
 
   return Object.freeze({
-    profile: geometry.profile,
+    layout: geometry.layout,
     visibleColorRect,
     ...(visibleAlphaRect === undefined ? {} : { visibleAlphaRect }),
     decodedStorageRect,

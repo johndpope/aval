@@ -3,11 +3,9 @@ import {
   normalizeBindings,
   normalizeCrossOrigin,
   normalizeFit,
-  normalizeIntegrity,
   normalizeInteractionFor,
   normalizeMotion,
   normalizeSize,
-  normalizeSource,
   normalizeState,
   readElementConfiguration
 } from "./element-configuration.js";
@@ -24,12 +22,6 @@ export class ElementAttributeReflection {
   readonly #host: HTMLElement;
   public constructor(host: HTMLElement) { this.#host = host; }
 
-  public get src(): string { return this.#read().src; }
-  public set src(value: string) { this.#host.setAttribute("src", normalizeSource(value)); }
-  public get integrity(): string { return this.#read().integrity; }
-  public set integrity(value: string) {
-    this.#optional("integrity", normalizeIntegrity(value));
-  }
   public get crossOrigin(): AvalCrossOrigin { return this.#read().crossOrigin; }
   public set crossOrigin(value: AvalCrossOrigin) {
     this.#host.setAttribute("crossorigin", normalizeCrossOrigin(value));

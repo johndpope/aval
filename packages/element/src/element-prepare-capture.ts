@@ -14,8 +14,8 @@ export async function capturePreparedSource(input: Readonly<{
   if (snapshot.sourceToken !== input.invocationSourceToken) {
     throw avalAbortError("prepare source was superseded");
   }
-  if (snapshot.configuration?.src === "") {
-    throw new AvalNotReadyError("aval-player src is empty");
+  if ((snapshot.configuration?.sourceCandidates.length ?? 0) === 0) {
+    throw new AvalNotReadyError("aval-player has no valid source candidates");
   }
   const asset = input.active();
   if (asset === null || snapshot.terminal || !snapshot.connected) {

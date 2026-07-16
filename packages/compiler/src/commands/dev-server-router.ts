@@ -1,19 +1,24 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { join } from "node:path";
 
-import { servePublishedAsset } from "./dev-asset-responder.js";
+import { servePublishedBundleFile } from "./dev-asset-responder.js";
 import type { DevEventStreamHub } from "./dev-event-stream.js";
 import type { BoundedReadAdmission } from "./dev-file-reader.js";
 import { writeError, writeText } from "./dev-http-response.js";
 import { rewriteDevModuleImports, type PackageModuleStore } from "./dev-package-modules.js";
 import { authorizeBrowserRequest, authorizeHost, rawHeaderValues, type DevBrowserEndpoint, type DevRequestAuthority } from "./dev-request-security.js";
-import type { DevServerBuild } from "./dev-server-model.js";
+import {
+  MAX_ASSET_BYTES,
+  MAX_BUILD_REPORT_BYTES,
+  type DevServerBuild
+} from "./dev-server-model.js";
 import { DEV_CLIENT, DEV_CONTENT_SECURITY_POLICY, DEV_CSS, DEV_HTML, DEV_WORKER_CONTENT_SECURITY_POLICY } from "./dev-ui-assets.js";
 
 const MAX_URL_LENGTH = 2_048;
 
 export interface DevServerRouterOptions {
   readonly sessionPath: string;
-  readonly assetPath: string;
+  readonly bundlePath: string;
   readonly authority: () => DevRequestAuthority | null;
   readonly current: () => Readonly<DevServerBuild> | null;
   readonly eventStreams: DevEventStreamHub;
@@ -65,21 +70,45 @@ export function createDevServerRequestHandler(options: DevServerRouterOptions): 
     const module = /^modules\/(element|player-web|format|graph)\/(.+)$/u.exec(relativePath);
     if (module !== null) return serveModule(response, method, module[1] as "element" | "player-web" | "format" | "graph", module[2]!, relativePath === "modules/player-web/decoder-worker/entry.js");
     if (relativePath === "events") return options.eventStreams.connect(request, response, method, options.current());
-    if (relativePath === "report.json") {
-      const current = options.current();
-      return current === null
-        ? writeError(response, method, 404, "no-valid-build")
-        : writeText(response, method, "application/json; charset=utf-8", JSON.stringify(current));
-    }
-    if (relativePath !== "asset.avl") return writeError(response, method, 404, "not-found");
     const published = options.current();
-    if (published === null) return writeError(response, method, 404, "no-valid-build");
-    await servePublishedAsset({
+    if (relativePath === "build.json") {
+      if (published === null) {
+        return writeError(response, method, 404, "no-valid-build");
+      }
+      await servePublishedBundleFile({
+        response,
+        method,
+        rangeHeader: request.headers.range,
+        ifRangeHeader: request.headers["if-range"],
+        filePath: join(options.bundlePath, published.buildReport.path),
+        file: published.buildReport,
+        maximumBytes: MAX_BUILD_REPORT_BYTES,
+        contentType: "application/json; charset=utf-8",
+        published,
+        current: options.current,
+        admission: options.assetReads
+      });
+      return;
+    }
+    if (!/^(?:h264|h265|vp9|av1)\.avl$/u.test(relativePath)) {
+      return writeError(response, method, 404, "not-found");
+    }
+    if (published === null) {
+      return writeError(response, method, 404, "no-valid-build");
+    }
+    const asset = published.assets.find(({ path }) => path === relativePath);
+    if (asset === undefined) {
+      return writeError(response, method, 404, "codec-not-built");
+    }
+    await servePublishedBundleFile({
       response,
       method,
       rangeHeader: request.headers.range,
       ifRangeHeader: request.headers["if-range"],
-      assetPath: options.assetPath,
+      filePath: join(options.bundlePath, asset.path),
+      file: asset,
+      maximumBytes: MAX_ASSET_BYTES,
+      contentType: asset.type,
       published,
       current: options.current,
       admission: options.assetReads

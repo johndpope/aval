@@ -67,11 +67,9 @@ export function exitStatusForCode(code: CompilerErrorCode): number {
     case "PROCESS_TIMEOUT":
     case "PATH_OUTSIDE_ROOT":
       return 3;
-    case "AVC_PROFILE_INVALID":
+    case "H264_BITSTREAM_INVALID":
     case "ALPHA_POLICY_REJECTED":
-    case "ALPHA_QUALITY_REJECTED":
     case "FFMPEG_FAILED":
-    case "OPAQUE_ONLY_M5":
       return 4;
     case "ASSET_INVALID":
     case "OUTPUT_LIMIT":

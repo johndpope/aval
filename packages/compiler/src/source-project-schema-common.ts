@@ -1,13 +1,13 @@
 import {
-  FORMAT_DEFAULT_BUDGETS,
-  type PortV01,
-  type ResidencyEndpointV01
+  FORMAT_DEFAULT_BUDGETS
 } from "@pixel-point/aval-format";
 
 import type {
-  SourceDescriptorV01,
-  SourceStateV01,
-  SourceUnitV01
+  SourceDescriptor,
+  SourcePort,
+  SourceResidencyEndpoint,
+  SourceState,
+  SourceUnit
 } from "./model.js";
 import {
   boundedArray,
@@ -51,7 +51,7 @@ export function cloneSourceFrameRate(value: unknown): {
 
 export function cloneSourceDescriptors(
   value: unknown
-): readonly SourceDescriptorV01[] {
+): readonly SourceDescriptor[] {
   const inputs = boundedArray(value, "sources", 1, 32);
   return sortUniqueById(inputs.map((entry, index) => {
     const path = `sources[${String(index)}]`;
@@ -111,8 +111,8 @@ export function cloneSourceDescriptors(
 
 export function cloneSourceUnits(
   value: unknown,
-  sources: readonly SourceDescriptorV01[]
-): readonly SourceUnitV01[] {
+  sources: readonly SourceDescriptor[]
+): readonly SourceUnit[] {
   const inputs = boundedArray(
     value,
     "units",
@@ -182,7 +182,7 @@ function clonePorts(
   value: unknown,
   frameCount: number,
   path: string
-): readonly PortV01[] {
+): readonly SourcePort[] {
   const inputs = boundedArray(value, path, 0, FORMAT_DEFAULT_BUDGETS.maxPortsPerBody);
   return sortUniqueById(inputs.map((entry, index) => {
     const portPath = `${path}[${String(index)}]`;
@@ -216,7 +216,7 @@ function clonePorts(
 function cloneResidency(
   value: unknown,
   path: string
-): { readonly endpoints: readonly [ResidencyEndpointV01, ResidencyEndpointV01] } {
+): { readonly endpoints: readonly [SourceResidencyEndpoint, SourceResidencyEndpoint] } {
   const input = record(value, path);
   exactKeys(input, ["endpoints"], path);
   const endpoints = tuple(input.endpoints, 2, `${path}.endpoints`).map(
@@ -239,16 +239,16 @@ function cloneResidency(
   }
   return Object.freeze({
     endpoints: Object.freeze(endpoints) as unknown as readonly [
-      ResidencyEndpointV01,
-      ResidencyEndpointV01
+      SourceResidencyEndpoint,
+      SourceResidencyEndpoint
     ]
   });
 }
 
 export function cloneSourceStates(
   value: unknown,
-  units: readonly SourceUnitV01[]
-): readonly SourceStateV01[] {
+  units: readonly SourceUnit[]
+): readonly SourceState[] {
   const inputs = boundedArray(
     value,
     "states",
@@ -281,9 +281,9 @@ export function cloneSourceStates(
 
 export function validateSourceReferences(input: {
   readonly initialState: string;
-  readonly sources: readonly SourceDescriptorV01[];
-  readonly units: readonly SourceUnitV01[];
-  readonly states: readonly SourceStateV01[];
+  readonly sources: readonly SourceDescriptor[];
+  readonly units: readonly SourceUnit[];
+  readonly states: readonly SourceState[];
   readonly edges: ReturnType<typeof cloneSourceEdges>;
   readonly bindings: ReturnType<typeof cloneSourceBindings>;
 }): void {

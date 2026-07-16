@@ -1,12 +1,15 @@
-import type { CompiledManifestV01 } from "../src/model.js";
+import type { CompiledManifest } from "../src/model.js";
 
 const DIGEST = "0".repeat(64);
 
-/** A fresh compact manifest covering every graph-bearing 0.1 unit kind. */
-export function validManifest(): CompiledManifestV01 {
+/** A fresh compact manifest covering every graph-bearing 1.0 unit kind. */
+export function validManifest(): CompiledManifest {
   return {
-    formatVersion: "0.1",
+    formatVersion: "1.0",
     generator: "aval-tests",
+    codec: "h264",
+    bitstream: "annex-b",
+    layout: "opaque",
     canvas: {
       width: 2,
       height: 2,
@@ -17,13 +20,13 @@ export function validManifest(): CompiledManifestV01 {
     frameRate: { numerator: 30, denominator: 1 },
     renditions: [
       {
-        id: "reference",
-        profile: "reference-rgba-v0",
-        codec: "aval.reference-rgba",
-        codedWidth: 2,
-        codedHeight: 2,
-        alphaLayout: { type: "straight-rgba-v0" },
-        capabilities: []
+        id: "video",
+        codec: "avc1.640020",
+        bitDepth: 8,
+        codedWidth: 16,
+        codedHeight: 16,
+        alphaLayout: { type: "opaque", colorRect: [0, 0, 2, 2] },
+        bitrate: { average: 1_000, peak: 2_000 }
       }
     ],
     units: [
@@ -42,7 +45,7 @@ export function validManifest(): CompiledManifestV01 {
             { state: "a-c", port: "default", frames: 6 }
           ]
         },
-        samples: [sample(12, 6)]
+        chunks: [chunk(12, 6)]
       }
     ],
     initialState: "a-a",
@@ -143,25 +146,26 @@ export function validManifest(): CompiledManifestV01 {
     limits: {
       maxCompiledBytes: 32 * 1024,
       maxRuntimeBytes: 64 * 1024,
-      decodedPixelBytes: 16,
+      decodedPixelBytes: 1_024,
       persistentCacheBytes: 0,
-      runtimeWorkingSetBytes: 16
+      runtimeWorkingSetBytes: 1_024
     }
   };
 }
 
 /** A valid manifest exactly at the state/edge/unit/blob/frame ceilings. */
-export function limitManifest(): CompiledManifestV01 {
+export function limitManifest(): CompiledManifest {
   const bodyUnits = Array.from({ length: 32 }, (_, index) => ({
     id: numbered("body", index),
     kind: "body" as const,
     playback: "finite" as const,
     frameCount: 1,
     ports: [{ id: "default", entryFrame: 0 as const, portalFrames: [0] }],
-    samples: [] as {
+    chunks: [] as {
       rendition: string;
-      sampleStart: number;
-      sampleCount: number;
+      chunkStart: number;
+      chunkCount: number;
+      frameCount: number;
       sha256: string;
     }[]
   }));
@@ -169,23 +173,25 @@ export function limitManifest(): CompiledManifestV01 {
     id: numbered("bridge", index),
     kind: "bridge" as const,
     frameCount: index < 36 ? 14 : 13,
-    samples: [] as {
+    chunks: [] as {
       rendition: string;
-      sampleStart: number;
-      sampleCount: number;
+      chunkStart: number;
+      chunkCount: number;
+      frameCount: number;
       sha256: string;
     }[]
   }));
   const units = [...bodyUnits, ...bridgeUnits];
-  let sampleStart = 0;
+  let chunkStart = 0;
   for (const unit of units) {
-    unit.samples.push({
-      rendition: "reference",
-      sampleStart,
-      sampleCount: unit.frameCount,
+    unit.chunks.push({
+      rendition: "video",
+      chunkStart,
+      chunkCount: unit.frameCount,
+      frameCount: unit.frameCount,
       sha256: DIGEST
     });
-    sampleStart += unit.frameCount;
+    chunkStart += unit.frameCount;
   }
 
   const states = Array.from({ length: 32 }, (_, index) => ({
@@ -214,8 +220,11 @@ export function limitManifest(): CompiledManifestV01 {
   });
 
   return {
-    formatVersion: "0.1",
+    formatVersion: "1.0",
     generator: "aval-limit-tests",
+    codec: "h264",
+    bitstream: "annex-b",
+    layout: "opaque",
     canvas: {
       width: 2,
       height: 2,
@@ -226,13 +235,13 @@ export function limitManifest(): CompiledManifestV01 {
     frameRate: { numerator: 60, denominator: 1 },
     renditions: [
       {
-        id: "reference",
-        profile: "reference-rgba-v0",
-        codec: "aval.reference-rgba",
-        codedWidth: 2,
-        codedHeight: 2,
-        alphaLayout: { type: "straight-rgba-v0" },
-        capabilities: []
+        id: "video",
+        codec: "avc1.640020",
+        bitDepth: 8,
+        codedWidth: 16,
+        codedHeight: 16,
+        alphaLayout: { type: "opaque", colorRect: [0, 0, 2, 2] },
+        bitrate: { average: 1_000, peak: 2_000 }
       }
     ],
     units,
@@ -254,9 +263,9 @@ export function limitManifest(): CompiledManifestV01 {
     limits: {
       maxCompiledBytes: 32 * 1024 * 1024,
       maxRuntimeBytes: 64 * 1024 * 1024,
-      decodedPixelBytes: 16,
+      decodedPixelBytes: 1_024,
       persistentCacheBytes: 0,
-      runtimeWorkingSetBytes: 16
+      runtimeWorkingSetBytes: 1_024
     }
   };
 }
@@ -270,15 +279,15 @@ function body(
   playback: "loop" | "finite",
   frameCount: number,
   portalFrames: readonly number[],
-  sampleStart: number
-): Extract<CompiledManifestV01["units"][number], { readonly kind: "body" }> {
+  chunkStart: number
+): Extract<CompiledManifest["units"][number], { readonly kind: "body" }> {
   return {
     id,
     kind: "body",
     playback,
     frameCount,
     ports: [{ id: "default", entryFrame: 0, portalFrames }],
-    samples: [sample(sampleStart, frameCount)]
+    chunks: [chunk(chunkStart, frameCount)]
   };
 }
 
@@ -286,11 +295,17 @@ function basicUnit(
   id: string,
   kind: "bridge" | "one-shot",
   frameCount: number,
-  sampleStart: number
-): Extract<CompiledManifestV01["units"][number], { readonly kind: typeof kind }> {
-  return { id, kind, frameCount, samples: [sample(sampleStart, frameCount)] };
+  chunkStart: number
+): Extract<CompiledManifest["units"][number], { readonly kind: typeof kind }> {
+  return { id, kind, frameCount, chunks: [chunk(chunkStart, frameCount)] };
 }
 
-function sample(sampleStart: number, sampleCount: number) {
-  return { rendition: "reference", sampleStart, sampleCount, sha256: DIGEST };
+function chunk(chunkStart: number, chunkCount: number) {
+  return {
+    rendition: "video",
+    chunkStart,
+    chunkCount,
+    frameCount: chunkCount,
+    sha256: DIGEST
+  };
 }

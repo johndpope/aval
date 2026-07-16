@@ -1,11 +1,11 @@
 import type {
-  BindingSourceV01,
-  BindingV01,
-  EdgeV01,
-  StartV01,
-  TransitionV01,
-  TriggerV01
-} from "@pixel-point/aval-format";
+  SourceBinding,
+  SourceBindingName,
+  SourceEdge,
+  SourceStart,
+  SourceTransition,
+  SourceTrigger
+} from "./model.js";
 
 import {
   boundedArray,
@@ -30,12 +30,12 @@ const BINDING_SOURCES = [
   "pointer.enter",
   "pointer.leave",
   "visible"
-] as const satisfies readonly BindingSourceV01[];
+] as const satisfies readonly SourceBindingName[];
 
 export function cloneSourceEdges(
   value: unknown,
   maximum: number
-): readonly EdgeV01[] {
+): readonly SourceEdge[] {
   const inputs = boundedArray(value, "edges", 0, maximum);
   return sortUniqueById(inputs.map((entry, index) =>
     cloneEdge(entry, `edges[${String(index)}]`)
@@ -45,7 +45,7 @@ export function cloneSourceEdges(
 export function cloneSourceBindings(
   value: unknown,
   maximum: number
-): readonly BindingV01[] {
+): readonly SourceBinding[] {
   const inputs = boundedArray(value, "bindings", 0, maximum);
   const bindings = inputs.map((entry, index) => {
     const path = `bindings[${String(index)}]`;
@@ -68,7 +68,7 @@ export function cloneSourceBindings(
   return Object.freeze(bindings);
 }
 
-function cloneEdge(value: unknown, path: string): EdgeV01 {
+function cloneEdge(value: unknown, path: string): SourceEdge {
   const input = record(value, path);
   const startInput = record(input.start, `${path}.start`);
   const startType = oneOf(
@@ -96,7 +96,7 @@ function cloneEdge(value: unknown, path: string): EdgeV01 {
       from,
       to,
       ...(trigger === undefined ? {} : { trigger }),
-      start: start as Extract<StartV01, { readonly type: "cut" }>,
+      start: start as Extract<SourceStart, { readonly type: "cut" }>,
       continuity: "cut",
       targetRunwayFrames: integer(
         input.targetRunwayFrames,
@@ -117,13 +117,13 @@ function cloneEdge(value: unknown, path: string): EdgeV01 {
     from,
     to,
     ...(trigger === undefined ? {} : { trigger }),
-    start: start as Exclude<StartV01, { readonly type: "cut" }>,
+    start: start as Exclude<SourceStart, { readonly type: "cut" }>,
     ...(transition === undefined ? {} : { transition }),
     continuity
   });
 }
 
-function cloneTrigger(value: unknown, path: string): TriggerV01 | undefined {
+function cloneTrigger(value: unknown, path: string): SourceTrigger | undefined {
   if (value === undefined) return undefined;
   const input = record(value, path);
   const type = oneOf(input.type, ["event", "completion"] as const, `${path}.type`);
@@ -139,7 +139,7 @@ function cloneStart(
   input: Record<string, unknown>,
   type: "portal" | "finish" | "cut",
   path: string
-): StartV01 {
+): SourceStart {
   if (type === "portal") {
     exactKeys(
       input,
@@ -169,7 +169,7 @@ function cloneStart(
 function cloneTransition(
   value: unknown,
   path: string
-): TransitionV01 | undefined {
+): SourceTransition | undefined {
   if (value === undefined) return undefined;
   const input = record(value, path);
   const kind = oneOf(input.kind, ["locked", "reversible"] as const, `${path}.kind`);

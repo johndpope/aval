@@ -1,5 +1,5 @@
 import type {
-  BindingV01,
+  Binding,
   MotionPolicy,
   RuntimeFailureCode,
   RuntimeReadiness,
@@ -16,6 +16,13 @@ export type AvalCrossOrigin = "anonymous" | "use-credentials";
 export type AvalFit = "contain" | "cover" | "fill" | "none";
 export type AvalMotion = MotionPolicy;
 export type AvalMode = "animated" | "static" | null;
+
+export interface AvalSourceCandidate {
+  readonly src: string;
+  readonly type: `application/vnd.aval; codecs="${string}"`;
+  readonly codec: string;
+  readonly integrity: string;
+}
 
 export interface AvalPrepareOptions {
   readonly signal?: AbortSignal;
@@ -235,7 +242,7 @@ export interface AvalDiagnostics {
   readonly effectivelyVisible: boolean;
   readonly stateNames: readonly string[];
   readonly eventNames: readonly string[];
-  readonly inputBindings: readonly Readonly<BindingV01>[];
+  readonly inputBindings: readonly Readonly<Binding>[];
   readonly configuredMotion: AvalMotion;
   readonly hostReducedMotion: boolean | null;
   readonly autoplay: AvalAutoplay;
@@ -248,7 +255,8 @@ export interface AvalDiagnostics {
   readonly outstanding: Readonly<Record<string, number>>;
   readonly runtime: Readonly<{
     selectedRendition: string | null;
-    selectedProfile: string | null;
+    selectedCodec: string | null;
+    selectedBitDepth: 8 | 10 | null;
     transportMode: "range" | "full" | null;
     declaredFileBytes: number;
     metadataBytes: number;
@@ -302,8 +310,6 @@ export interface AvalDiagnostics {
 }
 
 export interface AvalElementAttributes {
-  readonly src?: string;
-  readonly integrity?: string;
   readonly crossorigin?: AvalCrossOrigin | "";
   readonly motion?: AvalMotion;
   readonly autoplay?: AvalAutoplay;
@@ -316,8 +322,6 @@ export interface AvalElementAttributes {
 }
 
 export interface AvalElement extends HTMLElement {
-  src: string;
-  integrity: string;
   crossOrigin: AvalCrossOrigin;
   motion: AvalMotion;
   autoplay: AvalAutoplay;
@@ -340,7 +344,7 @@ export interface AvalElement extends HTMLElement {
   readonly effectivelyVisible: boolean;
   readonly stateNames: readonly string[];
   readonly eventNames: readonly string[];
-  readonly inputBindings: readonly Readonly<BindingV01>[];
+  readonly inputBindings: readonly Readonly<Binding>[];
 
   prepare(options?: Readonly<AvalPrepareOptions>): Promise<RuntimeReadinessResult>;
   setState(name: string): Promise<void>;
@@ -394,7 +398,7 @@ declare global {
 }
 
 export type {
-  BindingV01,
+  Binding,
   RuntimeReadiness,
   RuntimeReadinessResult,
   StaticReason

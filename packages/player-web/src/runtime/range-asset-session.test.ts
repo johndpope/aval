@@ -12,7 +12,7 @@ import {
   type RuntimeFetchInit,
   type RuntimeFetchResponseView
 } from "./asset-fetch-contracts.js";
-import { createOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createRuntimeTestAsset } from "./asset-test-support.js";
 import type {
   BoundedBodyByteLease,
   BoundedBodyByteResourceHost,
@@ -676,7 +676,7 @@ function request(integrity?: string, timeoutMs?: number) {
 }
 
 function rangeFixture() {
-  const asset = createOpaqueTestAsset();
+  const asset = createRuntimeTestAsset();
   const layout = validateCompleteAsset({ bytes: asset });
   const frontEnd = layout.frontIndex.frontIndexRange.length;
   const firstBlob = layout.frontIndex.unitBlobs[0]!;

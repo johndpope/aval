@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 
 import { CompilerError } from "../diagnostics.js";
-import { throwIfAborted } from "./output.js";
+import { throwIfAborted } from "../cancellation.js";
 import {
   createMaterializeRgbaInvocation,
   mediaTimeout,
@@ -15,15 +15,19 @@ import {
   MAX_PROCESS_STDERR_BYTES,
   type AlphaAuditSummary,
   type MediaProbe,
-  type RationalV01
+  type Rational
 } from "../model.js";
 import { runBoundedProcess } from "../process-runner.js";
 import { createCanonicalAlphaAuditor } from "./alpha-policy.js";
+import {
+  decodeRgba64Le,
+  downconvertRgba16ToRgba8
+} from "./canonical-rgba16.js";
 
 const DISK_HEADROOM_BYTES = 64 * 1024 * 1024;
 
 export interface MaterializedRgbaSource {
-  readonly input: Extract<FfmpegFrameInput, { readonly type: "raw-rgba" }>;
+  readonly input: Extract<FfmpegFrameInput, { readonly type: "raw-rgba64" }>;
   readonly frameCount: number;
   /** Exact FFmpeg invocation that produced this canonical spool. */
   readonly invocation: MaterializeRgbaInvocation;
@@ -37,7 +41,7 @@ export type MaterializeRgbaInvocation = FfmpegInvocation;
 export async function materializeNormalizedRgbaSource(input: {
   readonly source: FfmpegFrameInput;
   readonly probe: MediaProbe;
-  readonly frameRate: RationalV01;
+  readonly frameRate: Rational;
   readonly outputWidth: number;
   readonly outputHeight: number;
   readonly sourceFrameByOutputFrame: readonly number[];
@@ -59,7 +63,7 @@ export async function materializeNormalizedRgbaSource(input: {
     "normalized RGBA frame bytes",
     input.outputWidth,
     input.outputHeight,
-    4
+    8
   );
   const outputBytes = checkedProduct(
     "normalized RGBA spool bytes",
@@ -109,7 +113,7 @@ export async function materializeNormalizedRgbaSource(input: {
   }
   return Object.freeze({
     input: Object.freeze({
-      type: "raw-rgba" as const,
+      type: "raw-rgba64" as const,
       path,
       width: input.outputWidth,
       height: input.outputHeight,
@@ -238,7 +242,7 @@ async function streamSelectedCanonicalFrames(
           ...reference,
           width: input.outputWidth,
           height: input.outputHeight,
-          rgba: frame
+          rgba: downconvertRgba16ToRgba8(decodeRgba64Le(frame))
         });
         await writeAll(handle, frame, input.signal);
         outputIndex += 1;
@@ -260,7 +264,9 @@ async function streamSelectedCanonicalFrames(
     arguments: invocation.arguments,
     cwd: invocation.cwd,
     limits: {
-      timeoutMs: mediaTimeout(input.timeoutMs),
+      ...(input.timeoutMs === undefined
+        ? {}
+        : { timeoutMs: mediaTimeout(input.timeoutMs) }),
       maxStdoutBytes: expectedDecodedBytes,
       maxStderrBytes: MAX_PROCESS_STDERR_BYTES
     },
@@ -286,12 +292,24 @@ async function streamSelectedCanonicalFrames(
 
 /** Read exact caller-owned copies from a compiler-private canonical spool. */
 export async function readCanonicalRgbaRange(input: {
-  readonly source: Extract<FfmpegFrameInput, { readonly type: "raw-rgba" }>;
+  readonly source: Extract<FfmpegFrameInput, { readonly type: "raw-rgba64" }>;
   readonly frameCount: number;
   readonly startFrame: number;
   readonly endFrame: number;
   readonly signal?: AbortSignal;
 }): Promise<readonly Uint8Array[]> {
+  const frames = await readCanonicalRgba16Range(input);
+  return Object.freeze(frames.map(downconvertRgba16ToRgba8));
+}
+
+/** Read exact caller-owned canonical RGBA16 frames from the private spool. */
+export async function readCanonicalRgba16Range(input: {
+  readonly source: Extract<FfmpegFrameInput, { readonly type: "raw-rgba64" }>;
+  readonly frameCount: number;
+  readonly startFrame: number;
+  readonly endFrame: number;
+  readonly signal?: AbortSignal;
+}): Promise<readonly Uint16Array[]> {
   throwIfAborted(input.signal);
   if (
     !Number.isSafeInteger(input.startFrame) ||
@@ -309,7 +327,7 @@ export async function readCanonicalRgbaRange(input: {
     "canonical RGBA frame bytes",
     input.source.width,
     input.source.height,
-    4
+    8
   );
   const count = input.endFrame - input.startFrame;
   const length = checkedProduct("canonical RGBA read bytes", frameBytes, count);
@@ -347,7 +365,10 @@ export async function readCanonicalRgbaRange(input: {
   }
   try {
     return Object.freeze(Array.from({ length: count }, (_, index) =>
-      bytes.slice(index * frameBytes, (index + 1) * frameBytes)
+      decodeRgba64Le(bytes.subarray(
+        index * frameBytes,
+        (index + 1) * frameBytes
+      ))
     ));
   } catch (error) {
     throw new CompilerError(

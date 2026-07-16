@@ -67,12 +67,16 @@
             <aval-player
               id="grass-rabbit"
               class="video-reveal size-full"
-              src="%BASE_URL%grass-rabbit.avl"
               width="640"
               height="360"
               tabindex="0"
               aria-label="Interactive grass rabbit animation. Hover or focus to change its state."
-            ></aval-player>
+            >
+              <source src="%BASE_URL%grass-rabbit/av1.avl" type='application/vnd.aval; codecs="av01.0.01M.08.0.110.01.01.01.0"' integrity="sha256-l8jy9AkXV3yyh6WbUvIdv4H6CFm5ohooic02LPCLRLU=">
+              <source src="%BASE_URL%grass-rabbit/vp9.avl" type='application/vnd.aval; codecs="vp09.00.21.08.01.01.01.01.00"' integrity="sha256-dLEj7I6BV2yqcTu/N0HY2S/MOFHn5NRnahaYaN1WxoE=">
+              <source src="%BASE_URL%grass-rabbit/h265.avl" type='application/vnd.aval; codecs="hvc1.1.6.L63.90"' integrity="sha256-R6eY7xWcUQVwKbPe0I7ikpYD1zOPte86LOCKIcSqAOM=">
+              <source src="%BASE_URL%grass-rabbit/h264.avl" type='application/vnd.aval; codecs="avc1.64001E"' integrity="sha256-OtPl6deRncdRc/CTEjV9TrNVlKfeDAj+lp5gvAN75oE=">
+            </aval-player>
           </div>
           <p id="rabbit-state" class="state-badge inline-flex h-9 items-center justify-center overflow-hidden rounded-full bg-white px-4 text-base font-medium whitespace-nowrap text-black">
             loading

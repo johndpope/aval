@@ -1,4 +1,4 @@
-import type { AvcCandidateResourceAuthority } from "./avc-candidate-factory-model.js";
+import type { VideoCandidateResourceAuthority } from "./video-candidate-model.js";
 import type { BrowserCanvasBackingResourceHost } from "./browser-canvas-backing-resources.js";
 import { PageDecoderLeases } from "./page-decoder-leases.js";
 import {
@@ -14,7 +14,7 @@ import type { RuntimeAssetSessionResources } from "./runtime-asset-session.js";
 /** One-account composition used by the public player and the M8 element. */
 export interface PlayerWebRuntimeResources {
   readonly assetSession: Readonly<RuntimeAssetSessionResources>;
-  readonly candidate: Readonly<AvcCandidateResourceAuthority>;
+  readonly candidate: Readonly<VideoCandidateResourceAuthority>;
   readonly participant: IntegratedPlayerParticipantBinding;
   readonly canvasBacking: Readonly<BrowserCanvasBackingResourceHost>;
 }

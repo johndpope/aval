@@ -1,30 +1,33 @@
 import { describe, expect, it } from "vitest";
 
-// @ts-expect-error Vite exposes the checked-in binary as a data URL in tests.
-import packedFixtureDataUrl from "../../../../fixtures/conformance/m7/reference-packed.avl?url&inline";
-
 import * as api from "../index.js";
+import { createRuntimeTestAsset } from "./asset-test-support.js";
 
-const PUBLIC_M7_RUNTIME_EXPORTS = Object.freeze([
+const PUBLIC_RUNTIME_EXPORTS = Object.freeze([
   "PageDecoderLeases",
   "PageReclamationCoordinator",
   "PageResourceManager",
   "PlayerWebPageRuntime",
   "PlayerResourceAccount",
   "RuntimeSessionLifecycle",
+  "SourceSupportProbe",
   "StateFallbackStore",
+  "VideoCandidateFactory",
+  "VideoSourceSelectionError",
   "VisibilityPolicyCoordinator",
+  "createBrowserVideoCandidateComposition",
   "createPlayerRuntimeAssetSessionResources",
   "createPlayerWebRuntimeResources",
   "createRuntimePageResourcePolicy",
+  "createSourceSupportProbe",
   "openRuntimeAsset",
-  "openRuntimeAssetBytes"
+  "openRuntimeAssetBytes",
+  "selectVideoSource"
 ] as const);
 
 const PRIVATE_RESOURCE_EXPORTS = Object.freeze([
   "BlobAssembly",
   "LEASED_STATIC_PNG_DECODER",
-  "RUNTIME_CATALOG_AVC_INSPECTION",
   "RuntimeEntityIdentity",
   "VerifiedBlobStore",
   "adoptPlayerResourceLease",
@@ -41,7 +44,6 @@ const PRIVATE_RESOURCE_EXPORTS = Object.freeze([
   "createPlayerStaticSurfaceResourceHost",
   "createPlayerVerifiedBlobResourceHost",
   "captureLeasedStaticPngDecoder",
-  "inspectBorrowedAvcRendition",
   "openRangeAssetSession",
   "parseCanonicalContentRange",
   "readBoundedBody",
@@ -61,13 +63,13 @@ const PRIVATE_RESOURCE_EXPORTS = Object.freeze([
   "verifySha256AndPromote"
 ] as const);
 
-const PACKED_FIXTURE = decodeFixture(packedFixtureDataUrl);
+const VIDEO_FIXTURE = createRuntimeTestAsset();
 
-describe("M7 player-web public boundary", () => {
+describe("player-web public boundary", () => {
   it("publishes the complete composition surface without raw ownership bridges", () => {
     const runtime = api as Record<string, unknown>;
 
-    for (const name of PUBLIC_M7_RUNTIME_EXPORTS) {
+    for (const name of PUBLIC_RUNTIME_EXPORTS) {
       expect(runtime[name], name).toBeTypeOf("function");
     }
     for (const name of PRIVATE_RESOURCE_EXPORTS) {
@@ -112,35 +114,35 @@ describe("M7 player-web public boundary", () => {
       "verified"
     ]);
 
-    const session = await api.openRuntimeAssetBytes(PACKED_FIXTURE, {
+    const session = await api.openRuntimeAssetBytes(VIDEO_FIXTURE, {
       resources,
       generation: lifecycle.current().generation
     });
     const rendition = session.catalog.renditions.keys()[0];
     if (rendition === undefined) {
-      throw new Error("M7 public fixture has no rendition");
+      throw new Error("public video fixture has no rendition");
     }
     await session.ensureAllUnits(rendition);
-    const renditionRecord = session.catalog.records.values().find((record) =>
+    const renditionRecord = session.catalog.chunks.values().find((record) =>
       record.rendition === rendition
     );
     if (renditionRecord === undefined) {
-      throw new Error("M7 public fixture rendition has no access units");
+      throw new Error("public video fixture rendition has no chunks");
     }
-    const sampleBeforeEviction = new Uint8Array(session.catalog.copySample(
+    const chunkBeforeEviction = new Uint8Array(session.catalog.copyChunk(
       renditionRecord.rendition,
       renditionRecord.unit,
-      renditionRecord.localFrame
+      renditionRecord.decodeIndex
     ));
     const beforeEviction = session.snapshot();
     const evictedBytes = session.evictRenditionUnits(rendition);
     expect(evictedBytes).toBe(beforeEviction.unitBlobs.verifiedBytes);
     expect(evictedBytes).toBeGreaterThan(0);
     expect(session.evictRenditionUnits(rendition)).toBe(0);
-    expect(() => session.catalog.copySample(
+    expect(() => session.catalog.copyChunk(
       renditionRecord.rendition,
       renditionRecord.unit,
-      renditionRecord.localFrame
+      renditionRecord.decodeIndex
     )).toThrow();
     expect(session.snapshot().unitBlobs).toMatchObject({
       verified: 0,
@@ -148,11 +150,11 @@ describe("M7 player-web public boundary", () => {
     });
     await session.ensureAllUnits(rendition);
     expect(session.snapshot().unitBlobs.verifiedBytes).toBe(evictedBytes);
-    expect(new Uint8Array(session.catalog.copySample(
+    expect(new Uint8Array(session.catalog.copyChunk(
       renditionRecord.rendition,
       renditionRecord.unit,
-      renditionRecord.localFrame
-    ))).toEqual(sampleBeforeEviction);
+      renditionRecord.decodeIndex
+    ))).toEqual(chunkBeforeEviction);
 
     const ticket = decoders.request(
       account.participantId,
@@ -216,7 +218,7 @@ describe("M7 player-web public boundary", () => {
   it("offers one production page composition for replacement and terminal cleanup", async () => {
     const page = new api.PlayerWebPageRuntime();
     const participant = page.createParticipant();
-    const session = await participant.openAssetBytes(PACKED_FIXTURE);
+    const session = await participant.openAssetBytes(VIDEO_FIXTURE);
     participant.ownPlayer({ dispose: () => undefined });
 
     expect(participant.resources.participant.candidateResourceAuthority)
@@ -244,16 +246,3 @@ describe("M7 player-web public boundary", () => {
     });
   });
 });
-
-function decodeFixture(dataUrl: string): Uint8Array {
-  const separator = dataUrl.indexOf(",");
-  if (
-    !dataUrl.startsWith("data:") ||
-    separator < 0 ||
-    !dataUrl.slice(0, separator).endsWith(";base64")
-  ) {
-    throw new Error("Vite did not inline the M7 fixture as base64");
-  }
-  const binary = atob(dataUrl.slice(separator + 1));
-  return Uint8Array.from(binary, (value) => value.charCodeAt(0));
-}

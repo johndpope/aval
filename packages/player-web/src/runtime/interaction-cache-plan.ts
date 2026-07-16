@@ -1,8 +1,8 @@
 import type {
-  CompiledManifestV01,
-  EdgeV01,
-  RenditionV01,
-  UnitV01
+  CompiledManifest,
+  Edge,
+  ProductionRendition,
+  Unit
 } from "@pixel-point/aval-format";
 
 import type { RuntimeFrameKey } from "./model.js";
@@ -30,7 +30,7 @@ export interface InteractionCacheDeviceLimits {
 }
 
 export interface InteractionCachePlanInput {
-  readonly manifest: CompiledManifestV01;
+  readonly manifest: CompiledManifest;
   readonly rendition: string;
   readonly deviceLimits: Readonly<InteractionCacheDeviceLimits>;
 }
@@ -118,7 +118,7 @@ export function createInteractionCachePlan(
 ): Readonly<InteractionCachePlan> {
   validateObject(input, "interaction cache plan input");
   validateObject(input.manifest, "interaction cache manifest");
-  const rendition = requireProductionAvcRendition(
+  const rendition = requireProductionVideoRendition(
     input.manifest.renditions,
     input.rendition
   );
@@ -126,7 +126,7 @@ export function createInteractionCachePlan(
   const units = new Map(input.manifest.units.map((unit) => [unit.id, unit]));
   const states = new Map(input.manifest.states.map((state) => [state.id, state]));
   const reversibleClips = input.manifest.units
-    .filter((unit): unit is Extract<UnitV01, { readonly kind: "reversible" }> =>
+    .filter((unit): unit is Extract<Unit, { readonly kind: "reversible" }> =>
       unit.kind === "reversible"
     )
     .map((unit) => {
@@ -151,7 +151,7 @@ export function createInteractionCachePlan(
       };
     });
   const cutRunways = input.manifest.edges
-    .filter((edge): edge is Extract<EdgeV01, { readonly continuity: "cut" }> =>
+    .filter((edge): edge is Extract<Edge, { readonly continuity: "cut" }> =>
       edge.start.type === "cut"
     )
     .map((edge) => {
@@ -190,29 +190,13 @@ export function createInteractionCachePlan(
   });
 }
 
-type ProductionAvcRendition = Extract<
-  RenditionV01,
-  {
-    readonly profile:
-      | "avc-annexb-opaque-v0"
-      | "avc-annexb-packed-alpha-v0"
-      | "avc-annexb-opaque-v1"
-      | "avc-annexb-packed-alpha-v1";
-  }
->;
-
-function requireProductionAvcRendition(
-  renditions: readonly RenditionV01[],
+function requireProductionVideoRendition(
+  renditions: readonly ProductionRendition[],
   id: string
-): Readonly<ProductionAvcRendition> {
+): Readonly<ProductionRendition> {
   const selected = renditions.find((candidate) => candidate.id === id);
-  if (
-    selected?.profile !== "avc-annexb-opaque-v0" &&
-    selected?.profile !== "avc-annexb-packed-alpha-v0" &&
-    selected?.profile !== "avc-annexb-opaque-v1" &&
-    selected?.profile !== "avc-annexb-packed-alpha-v1"
-  ) {
-    throw new RangeError("selected rendition must be a production AVC rendition");
+  if (selected === undefined) {
+    throw new RangeError("selected production video rendition is unavailable");
   }
   return selected;
 }
@@ -404,8 +388,8 @@ export function createInteractionCachePlanFromSemanticSequences(
 function expandEndpointRunway(input: {
   readonly endpoint: { readonly state: string; readonly port: string; readonly frames: number };
   readonly rendition: string;
-  readonly units: ReadonlyMap<string, UnitV01>;
-  readonly states: ReadonlyMap<string, CompiledManifestV01["states"][number]>;
+  readonly units: ReadonlyMap<string, Unit>;
+  readonly states: ReadonlyMap<string, CompiledManifest["states"][number]>;
 }): SemanticEndpointRunwayInput {
   const state = input.states.get(input.endpoint.state);
   if (state === undefined) {
@@ -433,7 +417,7 @@ function expandEndpointRunway(input: {
 
 function expandBodyRunway(
   rendition: string,
-  body: Extract<UnitV01, { readonly kind: "body" }>,
+  body: Extract<Unit, { readonly kind: "body" }>,
   entryFrame: number,
   length: number
 ): readonly RuntimeFrameKey[] {
@@ -457,9 +441,9 @@ function frameKeys(
 }
 
 function requirePrimaryReversibleEdge(
-  edges: readonly EdgeV01[],
+  edges: readonly Edge[],
   unit: string
-): EdgeV01 & {
+): Edge & {
   readonly transition: {
     readonly kind: "reversible";
     readonly unit: string;
@@ -478,7 +462,7 @@ function requirePrimaryReversibleEdge(
 }
 
 function requireEndpoint(
-  unit: Extract<UnitV01, { readonly kind: "reversible" }>,
+  unit: Extract<Unit, { readonly kind: "reversible" }>,
   state: string
 ): { readonly state: string; readonly port: string; readonly frames: number } {
   const endpoint = unit.residency.endpoints.find(

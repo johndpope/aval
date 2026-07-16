@@ -4,7 +4,8 @@ import type {
 } from "@pixel-point/aval-graph";
 import { describe, expect, it } from "vitest";
 
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
+import { createIntegratedTestVideoSource } from "./integrated-player-video-test-support.js";
 import type { EffectHostEvent } from "./effect-host.js";
 import {
   RuntimePlaybackError,
@@ -676,7 +677,7 @@ async function createHarness(): Promise<RecoveryHarness> {
   const events: Readonly<EffectHostEvent>[] = [];
   const failures: Readonly<RuntimeFailure>[] = [];
   const player = new IntegratedPlayer({
-    bytes: createIntegratedOpaqueTestAsset(),
+    ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
     createFallbackStore: () => store,
     candidateFactory: factory,
     eventSink(event) {

@@ -2,17 +2,16 @@ import {
   DecoderWorkerCoreError,
   normalizeCoreError,
   validateConfiguration,
-  validateDecodedFrame,
   validateGeneration,
+  validateProbeConfiguration,
+  validateProbeSupportResult,
   validateSupportResultConfiguration
 } from "./core-validation.js";
 import {
-  createDefaultWorkerAvcInspector,
-  inspectWorkerSample,
-  type WorkerAvcInspector,
-  type WorkerAvcInspectorFactory
-} from "./avc-inspector-adapter.js";
-import { FrameCreditLedger } from "./frame-credit-ledger.js";
+  DecoderUnitPipeline,
+  type DecoderUnitPipelineMetrics,
+  type WorkerVideoDecoderAdapter
+} from "./decoder-unit-pipeline.js";
 import {
   DECODER_WORKER_PROTOCOL_VERSION,
   type DecoderWorkerCommand,
@@ -25,13 +24,7 @@ import {
 } from "./protocol.js";
 import { DecoderSampleSequence } from "./sample-sequence.js";
 
-export interface WorkerVideoDecoderAdapter {
-  readonly decodeQueueSize: number;
-  setDequeueCallback(callback: () => void): void;
-  configure(config: VideoDecoderConfig): void;
-  decode(chunk: EncodedVideoChunk): void;
-  close(): void;
-}
+export type { WorkerVideoDecoderAdapter } from "./decoder-unit-pipeline.js";
 
 export type WorkerVideoDecoderFactory = (
   init: VideoDecoderInit
@@ -55,7 +48,6 @@ export interface DecoderWorkerCoreOptions {
   readonly decoderFactory?: WorkerVideoDecoderFactory;
   readonly chunkFactory?: WorkerEncodedVideoChunkFactory;
   readonly supportProbe?: WorkerVideoDecoderSupportProbe;
-  readonly inspectorFactory?: WorkerAvcInspectorFactory;
 }
 
 interface PendingSample {
@@ -63,13 +55,9 @@ interface PendingSample {
   readonly sample: DecoderWorkerSample;
 }
 
-interface SubmittedSample {
-  readonly generation: number;
-  readonly sample: Omit<DecoderWorkerSample, "data">;
-}
-
-interface MutableMetrics {
+interface MutableMetrics extends DecoderUnitPipelineMetrics {
   configureCalls: number;
+  flushCalls: number;
   acceptedSamples: number;
   submittedChunks: number;
   outputFrames: number;
@@ -81,26 +69,22 @@ interface MutableMetrics {
 }
 
 /**
- * Worker-local owner of the sole VideoDecoder.
+ * Worker-local protocol and generation owner of the sole VideoDecoder.
  *
- * Generation changes retire obsolete work but deliberately never invoke
- * configure, reset, or flush. Input is bounded by both WebCodecs queue depth
- * and explicit frame credits; transferred frames retain a credit until the
- * main-thread owner releases them.
+ * DecoderUnitPipeline owns independent-unit submission boundaries, output
+ * ordering, frame credit, and retirement. Keeping those invariants separate
+ * leaves this class responsible for commands, configuration, and lifecycle.
  */
 export class DecoderWorkerCore {
   readonly #emitEvent: DecoderWorkerEventSink;
   readonly #decoderFactory: WorkerVideoDecoderFactory;
   readonly #chunkFactory: WorkerEncodedVideoChunkFactory;
   readonly #supportProbe: WorkerVideoDecoderSupportProbe;
-  readonly #inspectorFactory: WorkerAvcInspectorFactory;
   readonly #pending: PendingSample[] = [];
-  readonly #submittedByTimestamp = new Map<number, SubmittedSample>();
-  readonly #credits = new FrameCreditLedger();
   readonly #sequence = new DecoderSampleSequence();
-  readonly #settledOrdinals = new Set<number>();
   readonly #metrics: MutableMetrics = {
     configureCalls: 0,
+    flushCalls: 0,
     acceptedSamples: 0,
     submittedChunks: 0,
     outputFrames: 0,
@@ -110,15 +94,14 @@ export class DecoderWorkerCore {
     closedFrames: 0,
     errors: 0
   };
+  readonly #unitPipeline: DecoderUnitPipeline;
 
   #decoder: WorkerVideoDecoderAdapter | null = null;
-  #inspector: WorkerAvcInspector | null = null;
   #expectedOutput: DecoderWorkerOutputExpectation | null = null;
   #limits: DecoderWorkerLimits | null = null;
   #activeGeneration: number | null = null;
   #lastGeneration = 0;
   #lastRequestId = 0;
-  #nextOutputOrdinal = 0;
   #failure: DecoderWorkerCoreError | null = null;
   #disposed = false;
   #decoderClosed = false;
@@ -129,8 +112,15 @@ export class DecoderWorkerCore {
     this.#decoderFactory = options.decoderFactory ?? defaultDecoderFactory;
     this.#chunkFactory = options.chunkFactory ?? defaultChunkFactory;
     this.#supportProbe = options.supportProbe ?? defaultSupportProbe;
-    this.#inspectorFactory =
-      options.inspectorFactory ?? createDefaultWorkerAvcInspector;
+    this.#unitPipeline = new DecoderUnitPipeline({
+      emit: (event, transfer) => this.#emitEvent(event, transfer),
+      fail: (error) => this.#fail(error, null),
+      pump: () => this.#pump(),
+      activeGeneration: () => this.#activeGeneration,
+      terminal: () => this.#disposed || this.#failure !== null,
+      closeFrame: (frame) => this.#closeFrame(frame),
+      metrics: this.#metrics
+    });
   }
 
   public async handle(command: DecoderWorkerCommand): Promise<void> {
@@ -178,6 +168,9 @@ export class DecoderWorkerCore {
 
     try {
       switch (command.type) {
+        case "probe-config":
+          await this.#probeConfig(command);
+          break;
         case "configure":
           await this.#configure(command);
           break;
@@ -204,7 +197,10 @@ export class DecoderWorkerCore {
         false
       );
       if (normalized.fatal) {
-        this.#fail(normalized, command.type === "release-frame" ? null : command.requestId);
+        this.#fail(
+          normalized,
+          command.type === "release-frame" ? null : command.requestId
+        );
       } else {
         this.#emitError(
           command.type === "release-frame" ? null : command.requestId,
@@ -229,8 +225,8 @@ export class DecoderWorkerCore {
     return Object.freeze({
       configureCalls: this.#metrics.configureCalls,
       resetCalls: 0 as const,
-      flushCalls: 0 as const,
-      boundaryFlushCalls: 0 as const,
+      flushCalls: this.#metrics.flushCalls,
+      boundaryFlushCalls: this.#metrics.flushCalls,
       acceptedSamples: this.#metrics.acceptedSamples,
       submittedChunks: this.#metrics.submittedChunks,
       outputFrames: this.#metrics.outputFrames,
@@ -239,15 +235,53 @@ export class DecoderWorkerCore {
       staleFrames: this.#metrics.staleFrames,
       closedFrames: this.#metrics.closedFrames,
       pendingSamples: this.#pending.length,
-      submittedFrames: this.#submittedByTimestamp.size,
-      leasedFrames: this.#credits.count,
-      leasedDecodedBytes: this.#credits.decodedBytes,
+      submittedFrames:
+        this.#pendingDisplayedFrameCount() +
+        this.#unitPipeline.expectedFrameCount +
+        this.#unitPipeline.bufferedFrameCount,
+      leasedFrames: this.#unitPipeline.leasedFrameCount,
+      leasedDecodedBytes: this.#unitPipeline.leasedDecodedBytes,
       decodeQueueSize: this.#readDecodeQueueSize(),
       activeGeneration: this.#activeGeneration,
-      nextSubmissionOrdinal: this.#sequence.nextOrdinal,
-      nextOutputOrdinal: this.#nextOutputOrdinal,
+      nextSubmissionOrdinal: this.#sequence.acceptedChunks,
+      nextOutputOrdinal:
+        this.#metrics.deliveredFrames + this.#metrics.staleFrames,
       errors: this.#metrics.errors,
       disposed: this.#disposed
+    });
+  }
+
+  async #probeConfig(
+    command: Extract<DecoderWorkerCommand, { readonly type: "probe-config" }>
+  ): Promise<void> {
+    if (
+      this.#decoder !== null ||
+      this.#metrics.configureCalls !== 0 ||
+      this.#configuring
+    ) {
+      throw new DecoderWorkerCoreError(
+        "ALREADY_CONFIGURED",
+        "decoder support probes are allowed only before configuration"
+      );
+    }
+    validateProbeConfiguration(command.config);
+    let support: VideoDecoderSupport;
+    try {
+      support = await this.#supportProbe(command.config);
+    } catch (error) {
+      throw normalizeCoreError(
+        error,
+        "DECODER_PROBE_FAILED",
+        "WebCodecs decoder support probe failed",
+        false
+      );
+    }
+    const supported = validateProbeSupportResult(support, command.config);
+    this.#emit({
+      type: "probe-result",
+      protocolVersion: DECODER_WORKER_PROTOCOL_VERSION,
+      requestId: command.requestId,
+      supported
     });
   }
 
@@ -266,7 +300,7 @@ export class DecoderWorkerCore {
     }
     validateConfiguration(
       command.config,
-      command.avcProfile,
+      command.videoProfile,
       command.expectedOutput,
       command.limits
     );
@@ -283,13 +317,9 @@ export class DecoderWorkerCore {
         );
       }
       validateSupportResultConfiguration(support.config, command.config);
-      this.#inspector = this.#inspectorFactory(
-        command.avcProfile,
-        command.expectedOutput
-      );
       decoder = this.#decoderFactory({
         output: (frame) => {
-          this.#handleOutput(frame);
+          this.#unitPipeline.handleOutput(frame);
         },
         error: (error) => {
           this.#fail(
@@ -307,9 +337,7 @@ export class DecoderWorkerCore {
         this.#pump();
       });
       decoder.configure(command.config);
-      if (this.#failure !== null) {
-        throw this.#failure;
-      }
+      if (this.#failure !== null) throw this.#failure;
     } catch (error) {
       const normalized = normalizeCoreError(
         error,
@@ -320,7 +348,7 @@ export class DecoderWorkerCore {
       try {
         decoder?.close();
       } catch {
-        // The original configure failure is the actionable error.
+        // Preserve the original configure failure.
       }
       throw normalized;
     } finally {
@@ -337,6 +365,11 @@ export class DecoderWorkerCore {
     this.#decoder = decoder;
     this.#expectedOutput = command.expectedOutput;
     this.#limits = command.limits;
+    this.#unitPipeline.configure(
+      decoder,
+      command.expectedOutput,
+      command.limits
+    );
     this.#metrics.configureCalls += 1;
     this.#emitAck(command.requestId, "configure");
   }
@@ -351,9 +384,9 @@ export class DecoderWorkerCore {
       );
     }
 
-    this.#retirePending(generation, false);
+    this.#retirePendingBefore(generation);
+    this.#unitPipeline.retireBefore(generation);
     this.#sequence.activate(generation);
-    this.#requireInspector().resetUnitSequence();
     this.#activeGeneration = generation;
     this.#lastGeneration = generation;
     this.#emitAck(requestId, "activate-generation");
@@ -386,12 +419,14 @@ export class DecoderWorkerCore {
         "decode submission exceeds the pending-sample budget"
       );
     }
+    const newDisplayedFrames = sumDisplayedFrames(samples);
+    const outstandingFrames =
+      this.#pendingDisplayedFrameCount() +
+      this.#unitPipeline.expectedFrameCount +
+      this.#unitPipeline.bufferedFrameCount +
+      this.#unitPipeline.leasedFrameCount;
     if (
-      this.#pending.length +
-        this.#submittedByTimestamp.size +
-        this.#credits.count +
-        samples.length >
-      limits.maxOutstandingFrames
+      newDisplayedFrames > limits.maxOutstandingFrames - outstandingFrames
     ) {
       throw new DecoderWorkerCoreError(
         "BACKPRESSURE_LIMIT",
@@ -400,21 +435,7 @@ export class DecoderWorkerCore {
     }
 
     this.#sequence.accept(generation, samples);
-    const inspector = this.#requireInspector();
-    const inspected: DecoderWorkerSample[] = [];
-    try {
-      for (const sample of samples) {
-        inspected.push(inspectWorkerSample(inspector, sample));
-      }
-    } catch (error) {
-      throw normalizeCoreError(
-        error,
-        "DECODER_SUBMIT_FAILED",
-        "strict AVC access-unit inspection failed",
-        true
-      );
-    }
-    for (const sample of inspected) {
+    for (const sample of samples) {
       this.#pending.push({ generation, sample });
     }
     this.#metrics.acceptedSamples += samples.length;
@@ -432,15 +453,15 @@ export class DecoderWorkerCore {
       );
     }
     this.#activeGeneration = null;
-    this.#retirePending(generation, true);
+    this.#retirePendingGeneration(generation);
+    this.#unitPipeline.retireGeneration(generation);
     this.#sequence.abort(generation);
     this.#emitAck(requestId, "abort-generation");
+    this.#pump();
   }
 
   #releaseFrame(frameId: number): void {
-    this.#credits.release(frameId);
-    this.#metrics.releasedFrames += 1;
-    this.#pump();
+    this.#unitPipeline.releaseFrame(frameId);
   }
 
   #pump(): void {
@@ -452,55 +473,34 @@ export class DecoderWorkerCore {
     ) {
       return;
     }
+    this.#unitPipeline.drain();
+    if (this.#unitPipeline.flushing) return;
 
     while (
       this.#pending.length > 0 &&
-      this.#readDecodeQueueSize() < this.#limits.maxDecodeQueueSize &&
-      this.#credits.hasSubmissionCredit(
-        this.#submittedByTimestamp.size,
-        this.#limits.maxOutstandingFrames
-      )
+      this.#readDecodeQueueSize() < this.#limits.maxDecodeQueueSize
     ) {
-      const pending = this.#pending.shift();
-      if (pending === undefined) {
-        return;
-      }
+      const pending = this.#pending[0]!;
       if (pending.generation !== this.#activeGeneration) {
-        this.#settleWithoutOutput(pending.sample.ordinal);
+        this.#pending.shift();
         continue;
       }
-
+      if (!this.#unitPipeline.beginSample(pending.generation, pending.sample)) {
+        return;
+      }
+      this.#pending.shift();
       const sample = pending.sample;
       let chunk: EncodedVideoChunk;
       try {
         chunk = this.#chunkFactory({
-          type: sample.type,
-          timestamp: sample.timestamp,
+          type: sample.randomAccess ? "key" : "delta",
+          timestamp: sample.presentationTimestamp,
           duration: sample.duration,
           data: sample.data
         });
-      } catch (error) {
-        this.#fail(
-          normalizeCoreError(
-            error,
-            "DECODER_SUBMIT_FAILED",
-            "failed to construct EncodedVideoChunk",
-            true
-          ),
-          null
-        );
-        return;
-      }
-
-      this.#submittedByTimestamp.set(sample.timestamp, Object.freeze({
-        generation: pending.generation,
-        sample: submittedSampleMetadata(sample)
-      }));
-      this.#metrics.submittedChunks += 1;
-      try {
+        this.#unitPipeline.registerExpectedFrames(sample);
         this.#decoder.decode(chunk);
       } catch (error) {
-        this.#submittedByTimestamp.delete(sample.timestamp);
         this.#fail(
           normalizeCoreError(
             error,
@@ -512,126 +512,18 @@ export class DecoderWorkerCore {
         );
         return;
       }
-    }
-  }
-
-  #handleOutput(frame: VideoFrame): void {
-    const outputCallbackMicroseconds = workerClockMicroseconds();
-    this.#metrics.outputFrames += 1;
-    if (this.#disposed || this.#failure !== null) {
-      this.#closeFrame(frame);
-      return;
-    }
-
-    const submitted = this.#submittedByTimestamp.get(frame.timestamp);
-    if (submitted === undefined) {
-      this.#closeFrame(frame);
-      this.#fail(
-        new DecoderWorkerCoreError(
-          "DECODER_OUTPUT_INVALID",
-          "decoder produced an output with an unknown timestamp",
-          true
-        ),
-        null
-      );
-      return;
-    }
-    this.#submittedByTimestamp.delete(frame.timestamp);
-    let ownsFrame = true;
-
-    try {
-      this.#advanceSettledOrdinals();
-      if (submitted.sample.ordinal !== this.#nextOutputOrdinal) {
-        throw new DecoderWorkerCoreError(
-          "DECODER_OUTPUT_INVALID",
-          "decoder output order violated the low-delay profile",
-          true
-        );
-      }
-      const expected = this.#requireExpectedOutput();
-      const decodedBytes = validateDecodedFrame(
-        frame,
-        expected,
-        submitted.sample.timestamp,
-        submitted.sample.duration
-      );
-      // Each accepted unit instance is contiguous and bounded by
-      // unitFrameCount. Timestamp metadata is consumed exactly once, so this
-      // output cannot increase that unit's count beyond its submitted count.
-      this.#nextOutputOrdinal += 1;
-      this.#advanceSettledOrdinals();
-
-      if (submitted.generation !== this.#activeGeneration) {
-        this.#metrics.staleFrames += 1;
-        this.#closeFrame(frame);
-        ownsFrame = false;
-        this.#pump();
+      this.#metrics.submittedChunks += 1;
+      if (sample.decodeIndex === sample.unitChunkCount - 1) {
+        this.#unitPipeline.finishUnit();
         return;
       }
-
-      const limits = this.#requireLimits();
-      const frameId = this.#credits.lease(
-        submitted.generation,
-        decodedBytes,
-        limits.maxDecodedBytes
-      );
-      this.#metrics.deliveredFrames += 1;
-
-      try {
-        this.#emitEvent(
-          {
-            type: "frame",
-            protocolVersion: DECODER_WORKER_PROTOCOL_VERSION,
-            frameId,
-            generation: submitted.generation,
-            ordinal: submitted.sample.ordinal,
-            unitId: submitted.sample.unitId,
-            unitInstance: submitted.sample.unitInstance,
-            unitFrame: submitted.sample.unitFrame,
-            timestamp: submitted.sample.timestamp,
-            duration: submitted.sample.duration,
-            outputCallbackMicroseconds,
-            decodedBytes,
-            frame
-          },
-          [frame]
-        );
-        ownsFrame = false;
-      } catch (error) {
-        this.#credits.revoke(frameId);
-        throw normalizeCoreError(
-          error,
-          "TRANSPORT_FAILED",
-          "failed to transfer decoded frame",
-          true
-        );
-      }
-      this.#pump();
-    } catch (error) {
-      if (ownsFrame) {
-        this.#closeFrame(frame);
-      }
-      this.#fail(
-        normalizeCoreError(
-          error,
-          "DECODER_OUTPUT_INVALID",
-          "decoder output validation failed",
-          true
-        ),
-        null
-      );
     }
   }
 
-  #retirePending(generation: number, inclusive: boolean): void {
+  #retirePendingBefore(generation: number): void {
     let write = 0;
     for (const pending of this.#pending) {
-      if (
-        pending.generation < generation ||
-        (inclusive && pending.generation === generation)
-      ) {
-        this.#settleWithoutOutput(pending.sample.ordinal);
-      } else {
+      if (pending.generation >= generation) {
         this.#pending[write] = pending;
         write += 1;
       }
@@ -639,30 +531,31 @@ export class DecoderWorkerCore {
     this.#pending.length = write;
   }
 
-  #settleWithoutOutput(ordinal: number): void {
-    if (ordinal < this.#nextOutputOrdinal) {
-      return;
+  #retirePendingGeneration(generation: number): void {
+    let write = 0;
+    for (const pending of this.#pending) {
+      if (pending.generation !== generation) {
+        this.#pending[write] = pending;
+        write += 1;
+      }
     }
-    this.#settledOrdinals.add(ordinal);
-    this.#advanceSettledOrdinals();
+    this.#pending.length = write;
   }
 
-  #advanceSettledOrdinals(): void {
-    while (this.#settledOrdinals.delete(this.#nextOutputOrdinal)) {
-      this.#nextOutputOrdinal += 1;
+  #pendingDisplayedFrameCount(): number {
+    let count = 0;
+    for (const pending of this.#pending) {
+      count += pending.sample.displayedFrameCount;
     }
+    return count;
   }
 
   #dispose(requestId: number): void {
     if (!this.#disposed) {
       this.#disposed = true;
       this.#activeGeneration = null;
-      this.#pending.length = 0;
-      this.#submittedByTimestamp.clear();
-      this.#settledOrdinals.clear();
+      this.#clearOwnedState();
       this.#sequence.clearActive();
-      this.#credits.clear();
-      this.#inspector = null;
       this.#closeDecoder();
     }
     this.#emit({
@@ -673,25 +566,24 @@ export class DecoderWorkerCore {
   }
 
   #fail(error: DecoderWorkerCoreError, requestId: number | null): void {
-    if (this.#failure !== null || this.#disposed) {
-      return;
-    }
+    if (this.#failure !== null || this.#disposed) return;
     this.#failure = error;
     this.#metrics.errors += 1;
     this.#activeGeneration = null;
-    this.#pending.length = 0;
-    this.#submittedByTimestamp.clear();
-    this.#settledOrdinals.clear();
+    this.#clearOwnedState();
     this.#sequence.clearActive();
-    this.#credits.clear();
-    this.#inspector = null;
     this.#closeDecoder();
     this.#emitError(requestId, error);
   }
 
+  #clearOwnedState(): void {
+    this.#pending.length = 0;
+    this.#unitPipeline.clear();
+  }
+
   #emitAck(
     requestId: number,
-    operation: Extract<DecoderWorkerEvent, { type: "ack" }>['operation']
+    operation: Extract<DecoderWorkerEvent, { type: "ack" }>["operation"]
   ): void {
     this.#emit({
       type: "ack",
@@ -733,24 +625,16 @@ export class DecoderWorkerCore {
   }
 
   #assertConfigured(): void {
-    if (this.#decoder === null || this.#expectedOutput === null || this.#limits === null) {
+    if (
+      this.#decoder === null ||
+      this.#expectedOutput === null ||
+      this.#limits === null
+    ) {
       throw new DecoderWorkerCoreError(
         "NOT_CONFIGURED",
         "decoder worker must be configured before use"
       );
     }
-  }
-
-  #requireExpectedOutput(): DecoderWorkerOutputExpectation {
-    const expected = this.#expectedOutput;
-    if (expected === null) {
-      throw new DecoderWorkerCoreError(
-        "NOT_CONFIGURED",
-        "decoder output expectation is unavailable",
-        true
-      );
-    }
-    return expected;
   }
 
   #requireLimits(): DecoderWorkerLimits {
@@ -765,22 +649,8 @@ export class DecoderWorkerCore {
     return limits;
   }
 
-  #requireInspector(): WorkerAvcInspector {
-    const inspector = this.#inspector;
-    if (inspector === null) {
-      throw new DecoderWorkerCoreError(
-        "NOT_CONFIGURED",
-        "AVC inspector is unavailable",
-        true
-      );
-    }
-    return inspector;
-  }
-
   #readDecodeQueueSize(): number {
-    if (this.#decoder === null || this.#decoderClosed) {
-      return 0;
-    }
+    if (this.#decoder === null || this.#decoderClosed) return 0;
     const size = this.#decoder.decodeQueueSize;
     if (!Number.isSafeInteger(size) || size < 0) {
       this.#fail(
@@ -805,9 +675,7 @@ export class DecoderWorkerCore {
   }
 
   #closeDecoder(): void {
-    if (this.#decoder === null || this.#decoderClosed) {
-      return;
-    }
+    if (this.#decoder === null || this.#decoderClosed) return;
     this.#decoderClosed = true;
     try {
       this.#decoder.close();
@@ -815,34 +683,21 @@ export class DecoderWorkerCore {
       // Decoder closure is best effort after a terminal failure.
     }
   }
-
 }
 
-function workerClockMicroseconds(): number {
-  const value = Math.floor(performance.timeOrigin * 1_000 + performance.now() * 1_000);
-  if (!Number.isSafeInteger(value) || value < 0) {
-    throw new DecoderWorkerCoreError(
-      "DECODER_OUTPUT_INVALID",
-      "worker output callback clock is invalid",
-      true
-    );
+function sumDisplayedFrames(samples: readonly DecoderWorkerSample[]): number {
+  let count = 0;
+  for (const sample of samples) {
+    count += sample.displayedFrameCount;
+    if (!Number.isSafeInteger(count)) {
+      throw new DecoderWorkerCoreError(
+        "PROTOCOL_ERROR",
+        "decode batch displayed-frame count is unsafe",
+        true
+      );
+    }
   }
-  return value;
-}
-
-function submittedSampleMetadata(
-  sample: DecoderWorkerSample
-): Readonly<Omit<DecoderWorkerSample, "data">> {
-  return Object.freeze({
-    ordinal: sample.ordinal,
-    unitId: sample.unitId,
-    unitInstance: sample.unitInstance,
-    unitFrame: sample.unitFrame,
-    unitFrameCount: sample.unitFrameCount,
-    type: sample.type,
-    timestamp: sample.timestamp,
-    duration: sample.duration
-  });
+  return count;
 }
 
 function defaultDecoderFactory(init: VideoDecoderInit): WorkerVideoDecoderAdapter {
@@ -864,6 +719,9 @@ function defaultDecoderFactory(init: VideoDecoderInit): WorkerVideoDecoderAdapte
     },
     decode(chunk): void {
       decoder.decode(chunk);
+    },
+    flush(): Promise<void> {
+      return decoder.flush();
     },
     close(): void {
       if (dequeue !== undefined) {

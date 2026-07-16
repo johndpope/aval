@@ -1,7 +1,7 @@
 import type {
-  AccessUnitInputV01,
-  AvcRenditionGeometry,
-  DeclaredLimitsV01
+  DeclaredLimits,
+  EncodedChunkInput,
+  VideoRenditionGeometry
 } from "@pixel-point/aval-format";
 import { FORMAT_DEFAULT_BUDGETS } from "@pixel-point/aval-format";
 
@@ -11,10 +11,13 @@ import type { NormalizedSourceProject } from "../model.js";
 /** Compute diagnostic runtime terms without inventing a hard host policy. */
 export function estimateRuntimeLimits(
   project: NormalizedSourceProject,
-  accessUnits: readonly AccessUnitInputV01[],
-  geometries: readonly Readonly<AvcRenditionGeometry>[]
-): DeclaredLimitsV01 {
-  if (geometries.length !== project.renditions.length || geometries.length < 1) {
+  accessUnits: readonly EncodedChunkInput[],
+  geometries: readonly Readonly<VideoRenditionGeometry>[]
+): DeclaredLimits {
+  // A wire asset contains one codec-major encoding, not every encoding in the
+  // source project. Its geometry set is therefore intentionally local to the
+  // asset currently being assembled.
+  if (geometries.length < 1) {
     throw new CompilerError("INPUT_INVALID", "Rendition geometry set is incomplete");
   }
   const decodedPixelBytes = Math.max(

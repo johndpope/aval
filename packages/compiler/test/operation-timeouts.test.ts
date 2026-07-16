@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { deriveVideoRenditionGeometry } from "@pixel-point/aval-format";
 
-import { compileDirectInput } from "../src/compile/direct-compiler.js";
+import { compileDirectInput } from "../src/compile/project-compiler.js";
 import { compileProjectFile } from "../src/compile/project-compiler.js";
-import { encodeAvcUnit } from "../src/ffmpeg/encode-unit.js";
+import { encodeElementaryVideoUnit } from "../src/ffmpeg/video-encode-unit.js";
 import { probeMedia } from "../src/ffmpeg/probe.js";
 
 describe("configurable operation timeouts", () => {
@@ -40,30 +41,39 @@ describe("configurable operation timeouts", () => {
     )).rejects.toMatchObject({ code: "PROCESS_TIMEOUT" });
   });
 
-  it("lowers the 120-second media default", async () => {
-    await expect(encodeAvcUnit({
+  it("enforces an explicitly configured media timeout", async () => {
+    const rendition = {
+      id: "video.main",
+      width: 32,
+      height: 32,
+      crf: 20
+    } as const;
+    const geometry = deriveVideoRenditionGeometry({
+      canvasWidth: 32,
+      canvasHeight: 32,
+      layout: "opaque",
+      visibleWidth: 32,
+      visibleHeight: 32,
+      storage: { widthAlignment: 2, heightAlignment: 2 }
+    });
+    await expect(encodeElementaryVideoUnit({
       source: {
-        type: "raw-yuv420p",
         path: yuvPath,
         width: 32,
         height: 32,
+        bitDepth: 8,
         frameRate: { numerator: 30, denominator: 1 },
         frameBytes: 1_536
       },
       startFrame: 0,
       endFrame: 1,
-      codedWidth: 32,
-      codedHeight: 32,
       encoding: {
         codec: "h264",
         preset: "medium",
-        legacyZeroLatency: true,
-        rateControl: {
-          mode: "abr",
-          averageBitrate: 100_000,
-          maxBitrate: 200_000
-        }
+        renditions: [rendition]
       },
+      rendition,
+      geometry,
       executable: hangingTool,
       timeoutMs: 20
     })).rejects.toMatchObject({ code: "PROCESS_TIMEOUT" });
@@ -72,8 +82,9 @@ describe("configurable operation timeouts", () => {
   it("threads positive timeout validation through both public compiler entries", async () => {
     await expect(compileDirectInput({
       inputPath: "/input/never-opened.mov",
-      outputPath: "/output/never-written.avl",
+      outputPath: "/output/never-written",
       loop: [0, 1],
+      codec: "h264",
       probeTimeoutMs: 0,
       mediaTimeoutMs: 20
     })).rejects.toMatchObject({
@@ -83,7 +94,7 @@ describe("configurable operation timeouts", () => {
 
     await expect(compileProjectFile({
       projectPath: "/input/never-opened.json",
-      outputPath: "/output/never-written.avl",
+      outputPath: "/output/never-written",
       probeTimeoutMs: 20,
       mediaTimeoutMs: 0
     })).rejects.toMatchObject({

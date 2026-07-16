@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { RuntimeAssetCatalog } from "./asset-catalog.js";
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import { RuntimePlaybackError, normalizeRuntimeFailure } from "./errors.js";
 import {
   IntegratedPlayer,
@@ -27,6 +27,7 @@ import type {
   BrowserContextRecoveryEvent,
   BrowserContextRecoveryEventTarget
 } from "./browser-context-recovery.js";
+import { selectIntegratedTestVideoRendition } from "./integrated-player-video-test-support.js";
 
 describe("IntegratedPlayer sparse asset-session composition", () => {
   it.each(["range", "full"] satisfies readonly RuntimeTransportMode[])(
@@ -34,7 +35,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     async (mode) => {
       const timeline: string[] = [];
       const session = new FakeAssetSession(mode, timeline);
-      const copySample = vi.spyOn(session.catalog, "copySample");
+      const copyChunk = vi.spyOn(session.catalog, "copyChunk");
       const store = new RecordingStaticStore(timeline);
       const factory = new RecordingCandidateFactory(timeline);
       let factoryCatalog: RuntimeAssetCatalog | null = null;
@@ -47,6 +48,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
       const player = new IntegratedPlayer({
         assetSession: session,
         assetSessionOwnership: "external",
+        selectedRendition: selectIntegratedTestVideoRendition(session.catalog),
         createFallbackStore,
         candidateFactory: factory,
         timers: new ManualTimers()
@@ -60,7 +62,10 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
       expect(factoryCatalog).toBe(session.catalog);
       expect(timeline.indexOf("session:units:opaque-high"))
         .toBeLessThan(timeline.indexOf("candidate:create:opaque-high"));
-      expect(copySample).not.toHaveBeenCalled();
+      expect(copyChunk).toHaveBeenCalledTimes(6);
+      expect(copyChunk.mock.calls.every(([rendition]) =>
+        rendition === "opaque-high"
+      )).toBe(true);
       expect(createFallbackStore).toHaveBeenCalledOnce();
 
       await player.dispose();
@@ -76,11 +81,12 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     const unitSession = new FakeAssetSession("range", unitTimeline, {
       rejectedRendition: "opaque-high"
     });
-    const copySample = vi.spyOn(unitSession.catalog, "copySample");
+    const copyChunk = vi.spyOn(unitSession.catalog, "copyChunk");
     const unitFactory = new RecordingCandidateFactory(unitTimeline);
     const unitPlayer = new IntegratedPlayer({
       assetSession: unitSession,
       assetSessionOwnership: "external",
+      selectedRendition: selectIntegratedTestVideoRendition(unitSession.catalog),
       createFallbackStore: () => new RecordingStaticStore(unitTimeline),
       candidateFactory: unitFactory,
       timers: new ManualTimers()
@@ -93,7 +99,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
         candidates: [{ rendition: "opaque-high", outcome: "rejected" }]
       }
     });
-    expect(copySample).not.toHaveBeenCalled();
+    expect(copyChunk).not.toHaveBeenCalled();
     expect(unitSession.calls).toContain("evict:opaque-high");
     expect(unitFactory.calls).not.toContain("create:opaque-high");
     expect(unitFactory.calls).not.toContain("create:opaque-low");
@@ -109,6 +115,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     const player = new IntegratedPlayer({
       assetSession: session,
       assetSessionOwnership: "external",
+      selectedRendition: selectIntegratedTestVideoRendition(session.catalog),
       initialVisibility: "hidden",
       createFallbackStore: () => new RecordingStaticStore(timeline),
       candidateFactory: factory,
@@ -144,6 +151,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     const player = new IntegratedPlayer({
       assetSession: session,
       assetSessionOwnership: "player",
+      selectedRendition: selectIntegratedTestVideoRendition(session.catalog),
       createFallbackStore: () => new RecordingStaticStore(timeline),
       candidateFactory: factory,
       timers: new ManualTimers()
@@ -165,6 +173,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     const hidePlayer = new IntegratedPlayer({
       assetSession: hideSession,
       assetSessionOwnership: "external",
+      selectedRendition: selectIntegratedTestVideoRendition(hideSession.catalog),
       createFallbackStore: () => new RecordingStaticStore(hideTimeline),
       candidateFactory: new RecordingCandidateFactory(hideTimeline),
       timers: new ManualTimers()
@@ -186,6 +195,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     const contextPlayer = new IntegratedPlayer({
       assetSession: contextSession,
       assetSessionOwnership: "external",
+      selectedRendition: selectIntegratedTestVideoRendition(contextSession.catalog),
       createFallbackStore: () => new RecordingStaticStore(contextTimeline),
       candidateFactory: contextFactory,
       timers: new ManualTimers()
@@ -211,7 +221,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     } as never)).toThrow("assetSessionOwnership");
     expect(() => new IntegratedPlayer({
       ...common,
-      bytes: createIntegratedOpaqueTestAsset(),
+      bytes: createIntegratedTestAsset(),
       assetSession: session,
       assetSessionOwnership: "external"
     } as never)).toThrow("exactly one asset source");
@@ -223,6 +233,7 @@ describe("IntegratedPlayer sparse asset-session composition", () => {
     const options = () => ({
       assetSession: session,
       assetSessionOwnership: "external" as const,
+      selectedRendition: selectIntegratedTestVideoRendition(session.catalog),
       createFallbackStore: () => new RecordingStaticStore([]),
       candidateFactory: new RecordingCandidateFactory([]),
       timers: new ManualTimers()
@@ -349,7 +360,7 @@ interface FakeAssetSessionBehavior {
 
 class FakeAssetSession implements RuntimeAssetSession {
   public readonly catalog = new RuntimeAssetCatalog(
-    createIntegratedOpaqueTestAsset()
+    createIntegratedTestAsset()
   );
   public readonly calls: string[] = [];
   public disposeCalls = 0;

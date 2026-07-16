@@ -12,7 +12,7 @@ describe("ElementConfigurationScheduler", () => {
     const blocker = ledger.acquire("command");
     let publications = 0;
     const scheduler = new ElementConfigurationScheduler({
-      host: { getAttribute: () => null } as unknown as HTMLElement,
+      host: host(),
       ledger,
       authority: authority(() => { publications += 1; })
     });
@@ -29,7 +29,7 @@ describe("ElementConfigurationScheduler", () => {
     const ledger = new ElementOwnershipLedger();
     let failures = 0;
     const scheduler = new ElementConfigurationScheduler({
-      host: { getAttribute: () => null } as unknown as HTMLElement,
+      host: host(),
       ledger,
       authority: {
         configurationReady: () => { throw new Error("hostile authority"); },
@@ -48,4 +48,14 @@ function authority(publish: () => void): ElementConfigurationAuthority {
     configurationReady: publish,
     configurationFailed: () => undefined
   };
+}
+
+function host(): HTMLElement {
+  return {
+    getAttribute: () => null,
+    children: {
+      length: 0,
+      item: () => null
+    }
+  } as unknown as HTMLElement;
 }

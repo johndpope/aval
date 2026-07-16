@@ -1,15 +1,9 @@
-import {
-  maximumAvcDecoderSurfaceDimension,
-  type AvcRenditionGeometry
-} from "@pixel-point/aval-format";
+import type { VideoRenditionGeometry } from "@pixel-point/aval-format";
 
 import { STREAMING_TEXTURE_LAYER_COUNT } from "./checked-runtime-bytes.js";
 import {
   checkedFrameTextureBytes,
-  createLegacyOpaqueFrameLayout,
   freezeFrameLayout,
-  freezeLegacyFrameLayout,
-  toLegacyOpaqueFrameLayout,
   validateFrameBackendLimits,
   validateFrameGeneration,
   validateFrameIndex,
@@ -22,16 +16,7 @@ export const FRAME_STREAMING_SLOT_COUNT = STREAMING_TEXTURE_LAYER_COUNT;
 export type FrameRendererState = "active" | "lost" | "error" | "disposed";
 
 export interface FrameTextureLayout {
-  readonly geometry: Readonly<AvcRenditionGeometry>;
-  readonly logicalWidth: number;
-  readonly logicalHeight: number;
-  readonly residentLayerCount: number;
-}
-
-/** @deprecated Use FrameTextureLayout with explicit rendition geometry. */
-export interface LegacyOpaqueFrameTextureLayout {
-  readonly codedWidth: number;
-  readonly codedHeight: number;
+  readonly geometry: Readonly<VideoRenditionGeometry>;
   readonly logicalWidth: number;
   readonly logicalHeight: number;
   readonly residentLayerCount: number;
@@ -74,22 +59,6 @@ export interface FrameRendererBackend {
   allocate(layout: FrameTextureLayout, streamingSlots: number): void;
   upload(kind: FrameTextureKind, index: number, pixels: Uint8Array): void;
   /** Optional native-source path for browsers without VideoFrame RGBA copy. */
-  uploadFrame?(
-    kind: FrameTextureKind,
-    index: number,
-    frame: CopyableVideoFrame,
-    layout: Readonly<FrameSourceLayout>
-  ): void;
-  draw(kind: FrameTextureKind, index: number): void;
-  readPixels?(): Uint8Array;
-  dispose(): void;
-}
-
-/** @deprecated Compatibility boundary for the pre-geometry opaque renderer. */
-export interface LegacyOpaqueFrameRendererBackend {
-  readonly limits: Readonly<FrameRendererBackendLimits>;
-  allocate(layout: LegacyOpaqueFrameTextureLayout, streamingSlots: number): void;
-  upload(kind: FrameTextureKind, index: number, pixels: Uint8Array): void;
   uploadFrame?(
     kind: FrameTextureKind,
     index: number,
@@ -159,12 +128,6 @@ const DEFAULT_RENDERER_TIMERS: Readonly<FrameRendererTimerHost> =
       globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>)
   });
 
-// Legacy WebCodecs experiments accepted implementation-selected coded padding
-// around an exact visible rectangle. A private WeakSet keeps that policy
-// available only to the deprecated adapter; format-backed AVC always uses the
-// strict geometry branch below.
-const LEGACY_VISIBLE_FRAME_OPTIONS = new WeakSet<object>();
-
 /**
  * Serializes native frame uploads and owns one bounded RGBA staging fallback.
  * Source frames are always closed exactly once after ownership is transferred.
@@ -177,7 +140,6 @@ export class FrameRenderer {
   readonly #timers: Readonly<FrameRendererTimerHost>;
   readonly #codedTextureBytesPerLayer: number;
   readonly #allocatedTextureBytes: number;
-  readonly #legacyVisibleFrameGeometry: boolean;
   #staging: Uint8Array;
   readonly #claimedSources = new WeakSet<object>();
   readonly #uploadedResidentLayers = new Set<number>();
@@ -205,10 +167,7 @@ export class FrameRenderer {
     layout: FrameTextureLayout,
     options: FrameRendererOptions = {}
   ) {
-    this.#legacyVisibleFrameGeometry = LEGACY_VISIBLE_FRAME_OPTIONS.has(options);
-    this.#layout = this.#legacyVisibleFrameGeometry
-      ? freezeLegacyFrameLayout(layout)
-      : freezeFrameLayout(layout);
+    this.#layout = freezeFrameLayout(layout);
     this.#streamingSlots = validateFrameStreamingSlots(
       options.streamingSlots ?? FRAME_STREAMING_SLOT_COUNT
     );
@@ -556,8 +515,7 @@ export class FrameRenderer {
         }
         const copyLayout = validateFrameGeometry(
           source.frame,
-          this.#layout,
-          this.#legacyVisibleFrameGeometry
+          this.#layout
         );
         const backend = this.#requireActiveBackend();
         let uploaded = false;
@@ -740,30 +698,6 @@ export class FrameRenderer {
   }
 }
 
-/**
- * @deprecated Use FrameRenderer and pass an AvcRenditionGeometry explicitly.
- * This class only adapts the old opaque constructor to the same renderer core.
- */
-export class LegacyOpaqueFrameRenderer extends FrameRenderer {
-  public constructor(
-    backend: LegacyOpaqueFrameRendererBackend,
-    layout: LegacyOpaqueFrameTextureLayout,
-    options: FrameRendererOptions = {}
-  ) {
-    super(
-      adaptLegacyOpaqueBackend(backend),
-      createLegacyOpaqueFrameLayout(layout),
-      createLegacyVisibleFrameOptions(options)
-    );
-  }
-
-  public override restore(
-    backend: FrameRendererBackend | LegacyOpaqueFrameRendererBackend
-  ): void {
-    super.restore(adaptLegacyOpaqueBackend(backend));
-  }
-}
-
 export class RendererDisposedError extends Error {
   public constructor() {
     super("the WebGL frame renderer is disposed");
@@ -806,51 +740,29 @@ class FrameRendererValidationError extends RangeError {}
 
 function validateFrameGeometry(
   frame: CopyableVideoFrame,
-  layout: Readonly<FrameTextureLayout>,
-  legacyVisibleFrameGeometry: boolean
+  layout: Readonly<FrameTextureLayout>
 ): Readonly<FrameCopyLayout> {
   const geometry = layout.geometry;
   const [x, y, width, height] = geometry.decodedStorageRect;
   const visible = frame.visibleRect;
-  if (legacyVisibleFrameGeometry) {
-    const maximumCodedWidth = Math.ceil(width / 16) * 16 + 16;
-    const maximumCodedHeight = Math.ceil(height / 16) * 16 + 16;
-    if (
-      visible === null ||
-      frame.displayWidth !== width ||
-      frame.displayHeight !== height ||
-      visible.width !== width ||
-      visible.height !== height ||
-      visible.x < 0 ||
-      visible.y < 0 ||
-      frame.codedWidth < visible.x + visible.width ||
-      frame.codedHeight < visible.y + visible.height ||
-      frame.codedWidth > maximumCodedWidth ||
-      frame.codedHeight > maximumCodedHeight
-    ) {
-      throw new FrameRendererValidationError(
-        "decoded frame geometry does not match texture layout"
-      );
-    }
-    return Object.freeze({
-      rect: visible,
-      offset: 0,
-      stride: width * 4,
-      source: Object.freeze({ x: 0, y: 0, width, height })
-    });
-  }
+  // Copy the UA's actual visible rectangle into the canonical destination;
+  // coded allocation padding and visible origin are implementation details.
   if (
     visible === null ||
+    !Number.isSafeInteger(frame.codedWidth) ||
+    frame.codedWidth < 1 ||
+    !Number.isSafeInteger(frame.codedHeight) ||
+    frame.codedHeight < 1 ||
     frame.displayWidth !== width ||
     frame.displayHeight !== height ||
-    visible.x !== x ||
-    visible.y !== y ||
+    !Number.isSafeInteger(visible.x) ||
+    visible.x < 0 ||
+    !Number.isSafeInteger(visible.y) ||
+    visible.y < 0 ||
     visible.width !== width ||
     visible.height !== height ||
-    frame.codedWidth < visible.x + visible.width ||
-    frame.codedHeight < visible.y + visible.height ||
-    frame.codedWidth > maximumAvcDecoderSurfaceDimension(geometry.codedWidth) ||
-    frame.codedHeight > maximumAvcDecoderSurfaceDimension(geometry.codedHeight)
+    visible.x > frame.codedWidth - visible.width ||
+    visible.y > frame.codedHeight - visible.height
   ) {
     throw new FrameRendererValidationError(
       "decoded frame geometry does not match texture layout"
@@ -862,14 +774,6 @@ function validateFrameGeometry(
     stride: geometry.codedWidth * 4,
     source: Object.freeze({ x, y, width, height })
   });
-}
-
-function createLegacyVisibleFrameOptions(
-  options: Readonly<FrameRendererOptions>
-): Readonly<FrameRendererOptions> {
-  const compatible = Object.freeze({ ...options });
-  LEGACY_VISIBLE_FRAME_OPTIONS.add(compatible);
-  return compatible;
 }
 
 interface FrameCopyLayout {
@@ -964,45 +868,4 @@ function awaitRendererCopy(
       (error: unknown) => finish(() => reject(error))
     );
   });
-}
-
-function adaptLegacyOpaqueBackend(
-  backend: LegacyOpaqueFrameRendererBackend | FrameRendererBackend
-): FrameRendererBackend {
-  const allocate = (
-    layout: FrameTextureLayout,
-    streamingSlots: number
-  ): void => {
-    const legacy = { ...toLegacyOpaqueFrameLayout(layout) };
-    Object.defineProperty(legacy, "geometry", {
-      configurable: false,
-      enumerable: false,
-      value: layout.geometry,
-      writable: false
-    });
-    Object.freeze(legacy);
-    backend.allocate(
-      legacy as LegacyOpaqueFrameTextureLayout & FrameTextureLayout,
-      streamingSlots
-    );
-  };
-  const base: FrameRendererBackend = {
-    limits: backend.limits,
-    allocate,
-    upload: (kind, index, pixels) => backend.upload(kind, index, pixels),
-    ...(backend.uploadFrame === undefined
-      ? {}
-      : {
-          uploadFrame: (kind, index, frame, layout) =>
-            backend.uploadFrame!(kind, index, frame, layout)
-        }),
-    draw: (kind, index) => backend.draw(kind, index),
-    dispose: () => backend.dispose()
-  };
-  return backend.readPixels === undefined
-    ? base
-    : {
-        ...base,
-        readPixels: () => backend.readPixels!()
-      };
 }

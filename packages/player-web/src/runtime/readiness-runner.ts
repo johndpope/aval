@@ -1,4 +1,4 @@
-import type { UnitV01 } from "@pixel-point/aval-format";
+import type { Unit } from "@pixel-point/aval-format";
 import type { GraphEdgeDefinition } from "@pixel-point/aval-graph";
 
 import {
@@ -26,9 +26,9 @@ import type {
   WarmupAdapterInput
 } from "./readiness-runner-types.js";
 
-type BodyUnit = Extract<UnitV01, { readonly kind: "body" }>;
+type BodyUnit = Extract<Unit, { readonly kind: "body" }>;
 type LoopBodyUnit = BodyUnit & { readonly playback: "loop" };
-type ReversibleUnit = Extract<UnitV01, { readonly kind: "reversible" }>;
+type ReversibleUnit = Extract<Unit, { readonly kind: "reversible" }>;
 
 interface RunnerMeasurementContext {
   readonly base: Readonly<WarmupAdapterInput>;
@@ -352,11 +352,11 @@ function requireMapValue<K, V>(
   return value;
 }
 
-function isLoopBodyUnit(unit: UnitV01): unit is LoopBodyUnit {
+function isLoopBodyUnit(unit: Unit): unit is LoopBodyUnit {
   return unit.kind === "body" && unit.playback === "loop";
 }
 
-function isReversibleUnit(unit: UnitV01): unit is ReversibleUnit {
+function isReversibleUnit(unit: Unit): unit is ReversibleUnit {
   return unit.kind === "reversible";
 }
 

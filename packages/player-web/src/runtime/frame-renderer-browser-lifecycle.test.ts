@@ -1,18 +1,17 @@
-import { deriveAvcRenditionGeometry } from "@pixel-point/aval-format";
+import { deriveVideoRenditionGeometry } from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
 
 import { BrowserFrameBackend } from "./frame-renderer-browser.js";
 import type { FrameTextureLayout } from "./frame-renderer.js";
 
 const LAYOUT: FrameTextureLayout = {
-  geometry: deriveAvcRenditionGeometry({
-    profile: "avc-annexb-packed-alpha-v0",
+  geometry: deriveVideoRenditionGeometry({
     canvasWidth: 3,
     canvasHeight: 1,
-    colorRect: [0, 0, 3, 1],
-    alphaRect: [0, 10, 3, 1],
-    codedWidth: 16,
-    codedHeight: 16
+    layout: "packed-alpha",
+    visibleWidth: 3,
+    visibleHeight: 1,
+    storage: { widthAlignment: 16, heightAlignment: 16 }
   }),
   logicalWidth: 3,
   logicalHeight: 1,

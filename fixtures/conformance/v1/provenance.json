@@ -1,0 +1,79 @@
+{
+  "provenanceVersion": "1.0",
+  "formatVersion": "1.0",
+  "fixture": "aval-v1-four-codec-bundle",
+  "license": "CC0-1.0 generated fixture sources",
+  "rebuild": "node packages/compiler/dist/cli.js compile fixtures/compiler/v1/source/motion.json --out fixtures/conformance/v1 --force",
+  "source": {
+    "path": "fixtures/compiler/v1/source/motion.json",
+    "bytes": 2214,
+    "sha256": "ea216a51b643f66b2ccf676451766a78e8a6f5863641b7d02300026a0fbd4528"
+  },
+  "sourceProvenance": {
+    "provenancePath": "fixtures/compiler/v1/provenance.json",
+    "provenanceSha256": "73a9c3dfdf8243e75b1bc8dd7753aadd03e901d23086101d3ac0ae4fe0e01047"
+  },
+  "buildReport": {
+    "path": "fixtures/conformance/v1/build.json",
+    "bytes": 23898,
+    "sha256": "723c4eed97a246903aafa227ce8f3a71aae7481d1e460b99d3408498d0bd5ced"
+  },
+  "outputs": [
+    {
+      "path": "fixtures/conformance/v1/av1.avl",
+      "bytes": 13416,
+      "sha256": "27eba60d8aa5496bd3bf3bbf7e8add55d236dcb4ad477674029a325cf42c6360"
+    },
+    {
+      "path": "fixtures/conformance/v1/vp9.avl",
+      "bytes": 13752,
+      "sha256": "4b1529835cbca758a61f82c91b833c14db1c275c14bb41eeaee19af7f990d335"
+    },
+    {
+      "path": "fixtures/conformance/v1/h265.avl",
+      "bytes": 12079,
+      "sha256": "f861a7d64b166ff58d705e8e4436eb90d422e0e366e4edb621275d331f1d4fcc"
+    },
+    {
+      "path": "fixtures/conformance/v1/h264.avl",
+      "bytes": 11471,
+      "sha256": "8981edcf6c105ea4d8f58165dbfed4453aff7bbd93545d73f3ddd4cd218b2984"
+    }
+  ],
+  "codecStrings": {
+    "av1": "av01.0.00M.10.0.110.01.01.01.0",
+    "vp9": "vp09.00.10.08.01.01.01.01.00",
+    "h265": "hvc1.1.6.L30.90",
+    "h264": "avc1.64000A"
+  },
+  "toolchain": {
+    "aggregateMemoryLimit": "derived",
+    "ffmpeg": {
+      "calibrationSha256": "bbbae147fe7b5b4dea2c0dd333bcefa0ac31407c3b610ba685ee99c0872cf1d9",
+      "configurationSha256": "b809566072f4ad92e517aaebc0a2701151e03e74a619be39a7196a37f7dc34d4",
+      "encodersOutputSha256": "e76ee773e9049d67796e3b5992b5374e9969ab3b80f14af260b295adc41bbdc2",
+      "executableIdentity": {
+        "ctimeNanoseconds": "1748013400844332625",
+        "device": "16777234",
+        "inode": "44492742",
+        "mtimeNanoseconds": "1748013399141372513",
+        "size": 421968
+      },
+      "executableSha256": "48cc76fa936aec61e6459da4366ad8d99da34e4a7f98be66ff5a9130d8ab366f",
+      "version": "ffmpeg version 7.1.1 Copyright (c) 2000-2025 the FFmpeg developers",
+      "versionOutputSha256": "b08f6794c8a16655b3c6f9d1bd3cdc8cfab7a9cf6db15276b35b2f8344d1674c"
+    },
+    "ffprobe": {
+      "executableIdentity": {
+        "ctimeNanoseconds": "1748013400844966835",
+        "device": "16777234",
+        "inode": "44492744",
+        "mtimeNanoseconds": "1748013399320771621",
+        "size": 351920
+      },
+      "executableSha256": "28c9fe73413260e2ea4eba2e7ab58f80dcc2e81c5f6f85477bc74c17904b9865",
+      "version": "ffprobe version 7.1.1 Copyright (c) 2007-2025 the FFmpeg developers",
+      "versionOutputSha256": "cdc08e833a8f4c33af29aaa8a0a880915edc8d5d72c291c52838573e2125c249"
+    }
+  }
+}

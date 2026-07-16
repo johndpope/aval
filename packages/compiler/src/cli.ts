@@ -19,13 +19,8 @@ import {
 } from "./cli-output.js";
 import {
   runCompileCommand,
-  type CompileCommandDependencies,
-  type CompileCommandResult
+  type CompileCommandDependencies
 } from "./commands/compile.js";
-import {
-  createCompileAdoptionSummary,
-  formatCompileAdoptionSummary
-} from "./adoption-summary.js";
 import {
   startDevCommand,
   type DevCommandDependencies
@@ -81,11 +76,14 @@ export async function runCli(
         const warnings = result.warnings.length === 0
           ? ""
           : `\n${result.warnings.map((warning) => `WARNING ${safe(warning)}`).join("\n")}`;
+        const assets = result.assets.map((asset) =>
+          `${asset.codec}: ${safe(asset.path)} (${String(asset.bytes)} bytes, ${asset.sha256})`
+        ).join("\n");
         outputResult(
           io,
           arguments_.json,
           result,
-          `Compiled ${safe(result.outputPath)} (${String(result.bytes)} bytes, ${result.sha256})\nReport ${safe(result.reportPath)}\n${formatCompileAdoptionSummary(result.adoption)}${encodingOutput(result)}${warnings}`
+          `Compiled bundle ${safe(result.outputPath)} (${count(result.assets.length, "codec asset")})\n${assets}\nReport ${safe(result.reportPath)}\nSources:\n${result.sourceMarkup}${warnings}`
         );
         return 0;
       }
@@ -100,7 +98,7 @@ export async function runCli(
           io,
           arguments_.json,
           result,
-          `Valid ${safe(result.file)} (${String(result.bytes)} bytes, ${String(result.accessUnits)} access units)\nAVC: ${result.avcClaim}; digests: ${result.digestClaim}`
+          `Valid ${safe(result.file)} (${String(result.bytes)} bytes, ${count(result.chunks, "chunk")})\nVideo ${safe(result.codec)}/${safe(result.bitstream)}/${safe(result.layout)}: ${result.videoClaim}; digests: ${result.digestClaim}`
         );
         return 0;
       }
@@ -110,7 +108,7 @@ export async function runCli(
           io,
           arguments_.json,
           result,
-          `Unpacked ${safe(result.source)} to ${safe(result.outputDirectory)} (${String(result.files.length)} files)`
+          `Unpacked ${safe(result.source)} to ${safe(result.outputDirectory)} (${count(result.chunks, "chunk")}, ${count(result.files.length, "file")})`
         );
         return 0;
       }
@@ -126,7 +124,7 @@ export async function runCli(
       }
       case "dev": {
         const server = await startDevServer({
-          assetPath: resolve(cwd, arguments_.output),
+          bundlePath: resolve(cwd, arguments_.output),
           port: arguments_.port ?? 4174
         });
         outputResult(io, arguments_.json, {
@@ -146,23 +144,8 @@ export async function runCli(
             ...(runtime.devDependencies === undefined
               ? {}
               : { dependencies: runtime.devDependencies }),
-            onBuild: ({ sequence, result }) => {
-              const adoption = createCompileAdoptionSummary(result);
-              server.publish({
-                generation: sequence,
-                bytes: result.bytes,
-                sha256: result.sha256,
-                warnings: result.warnings,
-                report: {
-                  frameRate: adoption.frameRate.text,
-                  units: adoption.units,
-                  geometry: adoption.geometry,
-                  alpha: adoption.alpha,
-                  continuityPassed: adoption.reports.continuityPassed,
-                  continuityCuts: adoption.reports.continuityCuts,
-                  alphaAuditedFrames: adoption.reports.alphaAuditedFrames
-                }
-              });
+            onBuild: ({ sequence, result, build }) => {
+              server.publish(build);
               outputResult(
                 io,
                 arguments_?.command === "dev" && arguments_.json,
@@ -171,11 +154,11 @@ export async function runCli(
                   event: "build",
                   sequence,
                   outputPath: result.outputPath,
-                  bytes: result.bytes,
-                  sha256: result.sha256,
+                  reportPath: result.reportPath,
+                  assets: result.assets,
                   warnings: result.warnings
                 },
-                `Build ${String(sequence)}: ${safe(result.outputPath)} (${String(result.bytes)} bytes)${encodingOutput(result)}`
+                `Build ${String(sequence)}: ${safe(result.outputPath)} (${count(result.assets.length, "codec asset")})`
               );
             },
             onFailure: ({ error }) => {
@@ -228,23 +211,23 @@ function outputDiagnostic(
 
 function inspectText(result: Awaited<ReturnType<typeof runInspectCommand>>): string {
   const lines = [
-    `${safe(result.file)}: AVAL ${result.formatVersion}, ${String(result.bytes)} bytes`,
-    `Canvas ${String(result.canvas.width)}x${String(result.canvas.height)} at ${result.frameRate} fps`,
+    `${safe(result.file)}: AVAL ${result.formatVersion}, ${safe(result.codec)}/${safe(result.bitstream)}, ${String(result.bytes)} bytes`,
+    `Canvas ${String(result.canvas.width)}x${String(result.canvas.height)} at ${result.frameRate} fps, layout ${safe(result.layout)}`,
     `Initial state ${safe(result.initialState)}; states ${result.states.map(safe).join(", ")}`,
     `SHA-256 ${result.sha256}`,
+    ...result.renditions.map((rendition) =>
+      `Rendition ${safe(rendition.id)}: ${safe(rendition.codec)}, ${String(rendition.bitDepth)}-bit, coded ${safe(rendition.coded)}, alpha ${safe(rendition.alphaLayout.type)}`
+    ),
     ...result.units.map((unit) =>
       `Unit ${safe(unit.id)}: ${safe(unit.kind)}, frames ${String(unit.startFrame)}:${String(unit.endFrame)}, time ${safe(unit.startTime)}:${safe(unit.endTime)}`
     ),
-    ...result.avc.flatMap((rendition) => [
-      `AVC ${safe(rendition.rendition)}: ${String(rendition.codedWidth)}x${String(rendition.codedHeight)}, ${String(rendition.macroblocksPerFrame)} macroblocks/frame, constraint_set2=${String(rendition.constraintSet2)}`,
-      ...rendition.units.flatMap((unit) => unit.frames.map((frame) =>
-        `AU ${safe(unit.id)}/${String(frame.frameIndex)}: ${frame.key ? "key" : "delta"}, ${frame.sliceType}, slices=${String(frame.sliceCount)}, NAL=${frame.nalUnitTypes.join(",")}`
-      ))
-    ]),
-    ...result.samples.map((sample) =>
-      `Sample ${safe(sample.rendition)}/${safe(sample.unit)}/${String(sample.frameIndex)}: offset=${String(sample.offset)}, length=${String(sample.length)}, sha256=${sample.sha256}`
+    ...result.video.map(({ codec, rendition, codecString, inspection }) =>
+      `Video ${safe(codec)} ${safe(rendition)}: ${safe(codecString)}, ${String(inspection.units.length)} units inspected`
     ),
-    `AVC: ${result.avcClaim}; digests: ${result.digestClaim}`
+    ...result.chunkRanges.map((chunk) =>
+      `Chunk ${safe(chunk.rendition)}/${safe(chunk.unit)}/${String(chunk.decodeIndex)}: pts=${String(chunk.presentationTimestamp)}, duration=${String(chunk.duration)}, ${chunk.randomAccess ? "random-access" : "dependent"}, displayed=${String(chunk.displayedFrameCount)}, offset=${String(chunk.byteOffset)}, length=${String(chunk.byteLength)}, sha256=${chunk.sha256}`
+    ),
+    `Video: ${result.videoClaim}; digests: ${result.digestClaim}`
   ];
   return lines.join("\n");
 }
@@ -253,43 +236,37 @@ function safe(value: string): string {
   return sanitizeTerminalText(value);
 }
 
+function count(value: number, noun: string): string {
+  return `${String(value)} ${noun}${value === 1 ? "" : "s"}`;
+}
+
 export const HELP_TEXT = `Usage:
-  avl compile <project.json> --out <asset.avl> [--report <report.json>]
-  avl compile <input.mov|input.mp4|input.m4v> --loop <start:end> [--crf <1..51> --max-bitrate <bits/second> | --bitrate <average:peak>] [--preset <name>] [--alpha auto|opaque|packed] --out <asset.avl>
-  avl compile <prefix%0Nd.png> --frames <first:count> --fps <n/d> --loop <start:end> [--crf <1..51> --max-bitrate <bits/second> | --bitrate <average:peak>] [--preset <name>] [--canvas <wxh>] [--alpha auto|opaque|packed] --out <asset.avl>
+  avl compile <project.json> --out <bundle-directory>
+  avl compile <input.mov|input.mp4|input.m4v> --codec <h264|h265|vp9|av1> --loop <start:end> [codec options] [--alpha auto|opaque|packed] --out <bundle-directory>
+  avl compile <prefix%0Nd.png> --codec <h264|h265|vp9|av1> --frames <first:count> --fps <n/d> --loop <start:end> [codec options] [--canvas <wxh>] [--alpha auto|opaque|packed] --out <bundle-directory>
   avl inspect <asset.avl> [--json]
   avl validate <asset.avl> [--json]
   avl unpack <asset.avl> --out <empty-directory> [--json]
   avl init <directory> [--json]
-  avl dev <project.json> --out <asset.avl> [--media-timeout-ms <integer>] [--port <0-65535>] [--open] [--force] [--json]
+  avl dev <project.json> --out <bundle-directory> [--media-timeout-ms <integer>] [--port <0-65535>] [--open] [--force] [--json]
 
-Direct AVC encoding options:
-  --bitrate <average:peak>       ABR average and peak in bits/second
-  --crf <1..51>                  constrained CRF for direct media
-  --max-bitrate <bits/second>    required ceiling with --crf
-  --preset <name>                allowlisted x264 preset through veryslow
+Direct encoding options:
+  --crf <integer>                constant quality (H.264/H.265 0..51; VP9/AV1 0..63)
+  --preset <name>                H.264/H.265 preset, ultrafast through placebo
+  --deadline <mode>              VP9 best, good, or realtime deadline
+  --cpu-used <integer>           VP9 -8..8 or AV1 0..8 speed/quality control
+  --bit-depth <8|10>             AV1 output bit depth
+  --tiles <columns>x<rows>       AV1 power-of-two tile layout, product at most 64
+  --row-mt                       enable AV1 row multithreading
+  --threads <1..64>              H.265, VP9, or AV1 encoder threads
 
 Operational options:
   --media-timeout-ms <integer>   per FFmpeg operation for slow/large encodes
 
-Project files own their rendition encoding policy. HEVC/WebM output, faststart,
-muxer tags, and arbitrary FFmpeg arguments are unavailable.
+Project files own their ordered codec-major rendition and compression policy.
+Muxer tags, faststart, arbitrary filters, audio, and raw FFmpeg arguments are unavailable.
 
 Common compile options: --ffmpeg <absolute-path> --ffprobe <absolute-path> --force --json`;
-
-function encodingOutput(
-  result: Pick<CompileCommandResult, "buildDetails">
-): string {
-  const renditions = result.buildDetails.renditions;
-  if (!Array.isArray(renditions) || renditions.length === 0) return "";
-  return `\n${renditions.map((rendition) => {
-    const rateControl = rendition.encoding.rateControl;
-    const configured = rateControl.mode === "crf"
-      ? `CRF ${String(rateControl.crf)}`
-      : `ABR ${String(rateControl.averageBitrate)} bit/s`;
-    return `Encoding ${safe(rendition.id)}: ${configured}, preset ${safe(rendition.encoding.preset)}; measured average ${String(rendition.encoding.measuredAverageBitrate)} bit/s, configured peak ${String(rendition.bitrate.peak)} bit/s`;
-  }).join("\n")}`;
-}
 
 async function main(): Promise<void> {
   const controller = new AbortController();

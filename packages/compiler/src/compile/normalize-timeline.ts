@@ -1,5 +1,5 @@
 import { CompilerError } from "../diagnostics.js";
-import type { MediaProbeFrame, RationalV01 } from "../model.js";
+import type { MediaProbeFrame, Rational } from "../model.js";
 
 export interface NormalizedTimeline {
   readonly sourceFrameByOutputFrame: readonly number[];
@@ -10,8 +10,8 @@ export interface NormalizedTimeline {
 /** Deterministic hold normalization: latest source PTS <= each target tick. */
 export function normalizeHoldTimeline(
   frames: readonly MediaProbeFrame[],
-  frameRate: RationalV01,
-  timeBase: RationalV01
+  frameRate: Rational,
+  timeBase: Rational
 ): Readonly<NormalizedTimeline> {
   if (frames.length < 1) {
     throw new CompilerError("VFR_UNSUPPORTED", "Cannot normalize an empty timeline");

@@ -8,9 +8,9 @@ const required = [
   "docs/compiler/authoring-video-and-states.md",
   "docs/network-and-integrity.md",
   "docs/accessibility-and-motion.md", "docs/performance-and-budgets.md",
-  "docs/troubleshooting.md", "docs/browser-support.md", "docs/format/0.1.md",
-  "docs/project/0.2.md", "docs/security.md", "docs/versioning.md",
-  "docs/migration/0.x-to-1.0.md", "docs/releases/1.0.0.md",
+  "docs/troubleshooting.md", "docs/browser-support.md", "docs/format/1.0.md",
+  "docs/project/1.0.md", "docs/security.md", "docs/versioning.md",
+  "docs/releases/1.0.0.md",
   "docs/certification/method.md", "SECURITY.md", "THREAT-MODEL.md",
   "THIRD_PARTY_NOTICES.md",
   "docs/evidence/2026-07-12-m8-public-element-authoring-experience.md"
@@ -157,8 +157,8 @@ if (plainPackage.devDependencies?.vite !== "8.1.4") failures.push(`${plainDirect
 if (!plainSource.includes('from "@pixel-point/aval-element"')) failures.push(`${plainDirectory}: example must use the public package root`);
 if (/<(?:script|style)[^>]*>[^<]/u.test(plainHtml)) failures.push(`${plainDirectory}: example must not require inline script or style authority`);
 if (!plainReadme.includes("illustrative") || !plainReadme.includes("placeholders")) failures.push(`${plainDirectory}: absent assets must be labeled illustrative placeholders`);
-const starterHtml = await readFile("fixtures/starter/m8-idle-hover/index.html", "utf8");
-const starterSource = await readFile("fixtures/starter/m8-idle-hover/main.js", "utf8");
+const starterHtml = await readFile("fixtures/starter/v1-idle-hover/index.html", "utf8");
+const starterSource = await readFile("fixtures/starter/v1-idle-hover/main.js", "utf8");
 if (/<(?:script|style)[^>]*>[^<]/u.test(starterHtml)) failures.push("generated starter must not require inline script or style authority");
 if (!starterSource.includes('"@pixel-point/aval-element/auto"')) failures.push("generated starter must use the public auto entry");
 if (failures.length > 0) throw new Error(failures.join("\n"));

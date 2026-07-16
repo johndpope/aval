@@ -1,8 +1,8 @@
 # Attributes and API
 
-The reflected attributes are exactly `src`, `integrity`, `crossorigin`,
-`motion`, `autoplay`, `fit`, `bindings`, `state`, `interaction-for`, `width`,
-and `height`.
+The reflected host attributes are exactly `crossorigin`, `motion`, `autoplay`,
+`fit`, `bindings`, `state`, `interaction-for`, `width`, and `height`. Source
+URLs and integrity belong only to direct-child `<source>` elements.
 
 | Attribute | Values | Default |
 |---|---|---|
@@ -12,10 +12,17 @@ and `height`.
 | `fit` | `contain`, `cover`, `fill`, `none` | asset fit |
 | `bindings` | `auto`, `none` | `auto` |
 
-`src`, `integrity`, and `crossorigin` form one retrieval identity. Same-task
-changes coalesce. A new identity first completely disposes the old generation;
-only the newest pending identity may start. Policy, fit, input, state, and size
-changes do not replace the asset.
+Each direct child requires nonempty `src` and an exact
+`application/vnd.aval; codecs="..."` type; its `integrity` is optional.
+`crossorigin` is shared by the host. Child order is author preference. The
+first file containing an eligible, exactly supported rendition wins. Same-task
+source mutations coalesce. A new source snapshot first completely disposes the
+old generation; only the newest pending snapshot may start. Policy, fit, input,
+state, and size changes do not replace the asset.
+
+Unsupported codec/configuration outcomes advance to the next source. Network,
+CORS/CSP, integrity, malformed-asset, resource, and decoder failures are
+terminal for that generation. The active codec never hot-switches.
 
 Properties validate synchronously and never mutate on invalid input. Invalid
 HTML attribute text falls back to the documented default and emits a nonfatal,

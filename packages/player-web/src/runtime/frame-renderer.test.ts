@@ -1,29 +1,25 @@
-import { deriveAvcRenditionGeometry } from "@pixel-point/aval-format";
+import { deriveVideoRenditionGeometry } from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
 
 import {
   FRAME_STREAMING_SLOT_COUNT,
   FrameRenderer,
-  LegacyOpaqueFrameRenderer,
   RendererFrameUnavailableError,
   RendererUploadTimeoutError,
   type BorrowedVideoFrame,
   type CopyableVideoFrame,
   type FrameRendererBackend,
-  type LegacyOpaqueFrameRendererBackend,
-  type LegacyOpaqueFrameTextureLayout,
   type FrameTextureKind,
   type FrameTextureLayout
 } from "./frame-renderer.js";
 
-const GEOMETRY = deriveAvcRenditionGeometry({
-  profile: "avc-annexb-packed-alpha-v0",
+const GEOMETRY = deriveVideoRenditionGeometry({
   canvasWidth: 3,
   canvasHeight: 1,
-  colorRect: [0, 0, 3, 1],
-  alphaRect: [0, 10, 3, 1],
-  codedWidth: 16,
-  codedHeight: 16
+  layout: "packed-alpha",
+  visibleWidth: 3,
+  visibleHeight: 1,
+  storage: { widthAlignment: 16, heightAlignment: 16 }
 });
 
 const LAYOUT: FrameTextureLayout = {
@@ -36,13 +32,13 @@ const LAYOUT: FrameTextureLayout = {
 describe("profile-neutral frame renderer", () => {
   it("applies MAX_TEXTURE_SIZE only to allocated coded textures", () => {
     const backend = new FakeBackend();
-    const geometry = deriveAvcRenditionGeometry({
-      profile: "avc-annexb-opaque-v0",
+    const geometry = deriveVideoRenditionGeometry({
       canvasWidth: 12_000,
       canvasHeight: 4_000,
-      colorRect: [0, 0, 3, 1],
-      codedWidth: 16,
-      codedHeight: 16
+      layout: "opaque",
+      visibleWidth: 3,
+      visibleHeight: 1,
+      storage: { widthAlignment: 16, heightAlignment: 16 }
     });
 
     expect(() => new FrameRenderer(backend, {
@@ -54,18 +50,6 @@ describe("profile-neutral frame renderer", () => {
     expect(backend.allocations).toHaveLength(1);
   });
 
-  it("keeps the legacy device check scoped to coded textures", () => {
-    const backend = new FakeLegacyBackend();
-
-    expect(() => new LegacyOpaqueFrameRenderer(backend, {
-      codedWidth: 16,
-      codedHeight: 16,
-      logicalWidth: 12_000,
-      logicalHeight: 4_000,
-      residentLayerCount: 0
-    })).not.toThrow();
-  });
-
   it("rejects a forged packed-alpha gutter before allocating a backend", () => {
     const backend = new FakeBackend();
     expect(() => new FrameRenderer(backend, {
@@ -74,7 +58,7 @@ describe("profile-neutral frame renderer", () => {
         ...GEOMETRY,
         visibleAlphaRect: [0, 8, 3, 1]
       }
-    })).toThrow(/fixed eight-pixel gutter/);
+    })).toThrow(/canonical video storage/);
     expect(backend.allocations).toHaveLength(0);
   });
 
@@ -87,7 +71,7 @@ describe("profile-neutral frame renderer", () => {
         decodedStorageRect: [0, 0, 4, 11],
         decodedRgbaBytes: 4 * 11 * 4
       }
-    })).toThrow(/canonical AVC rendition geometry/);
+    })).toThrow(/canonical video storage/);
     expect(backend.allocations).toHaveLength(0);
   });
 
@@ -197,12 +181,30 @@ describe("profile-neutral frame renderer", () => {
     });
   });
 
-  it("bounds browser-owned coded padding while copying only exact storage pixels", async () => {
+  it("rejects a decoder allocation that cannot cover the exact visible rect", async () => {
     const backend = new FakeBackend();
     const renderer = new FrameRenderer(backend, LAYOUT);
     const source = borrowedFrame(23, {
-      codedWidth: 32,
-      codedHeight: 34
+      codedWidth: 3,
+      codedHeight: 12
+    });
+
+    await expect(renderer.uploadResident(0, source.source)).rejects.toThrow(
+      /decoded frame geometry does not match texture layout/
+    );
+    expect(source.copyOptions()).toBeUndefined();
+    expect(source.closeCalls()).toBe(1);
+    expect(backend.uploads).toHaveLength(0);
+  });
+
+  it("accepts browser-owned decoder allocation padding", async () => {
+    const backend = new FakeBackend();
+    const renderer = new FrameRenderer(backend, LAYOUT);
+    const source = borrowedFrame(23, {
+      codedWidth: 128,
+      codedHeight: 130,
+      visibleX: 32,
+      visibleY: 8
     });
 
     await expect(renderer.uploadResident(0, source.source)).resolves.toMatchObject({
@@ -210,26 +212,12 @@ describe("profile-neutral frame renderer", () => {
       layer: 0
     });
     expect(source.copyOptions()).toEqual({
-      rect: { x: 0, y: 0, width: 4, height: 12 },
+      rect: { x: 32, y: 8, width: 4, height: 12 },
       format: "RGBA",
       layout: [{ offset: 0, stride: 64 }]
     });
-    expect(backend.uploads[0]?.pixels).toHaveLength(16 * 16 * 4);
-  });
-
-  it("rejects decoder allocation outside the reserved padding bound", async () => {
-    const backend = new FakeBackend();
-    const renderer = new FrameRenderer(backend, LAYOUT);
-    const source = borrowedFrame(23, {
-      codedWidth: 49,
-      codedHeight: 16
-    });
-
-    await expect(renderer.uploadResident(0, source.source)).rejects.toThrow(
-      /decoded frame geometry/
-    );
     expect(source.closeCalls()).toBe(1);
-    expect(backend.uploads).toHaveLength(0);
+    expect(backend.uploads).toHaveLength(1);
   });
 
   it("rejects a wrong copy layout, closes once, and terminalizes", async () => {
@@ -578,38 +566,6 @@ describe("profile-neutral frame renderer", () => {
     } as FrameTextureLayout)).toThrow(/geometry/);
   });
 
-  it("keeps implementation-selected coded padding inside the legacy adapter only", async () => {
-    const backend = new FakeLegacyBackend();
-    const layout: LegacyOpaqueFrameTextureLayout = {
-      codedWidth: 256,
-      codedHeight: 256,
-      logicalWidth: 256,
-      logicalHeight: 256,
-      residentLayerCount: 1
-    };
-    const renderer = new LegacyOpaqueFrameRenderer(backend, layout);
-    const source = borrowedFrame(9, {
-      codedWidth: 272,
-      codedHeight: 272,
-      displayWidth: 256,
-      displayHeight: 256,
-      visibleWidth: 256,
-      visibleHeight: 256,
-      copyStride: 1_024
-    });
-
-    await expect(renderer.uploadResident(0, source.source)).resolves.toMatchObject({
-      kind: "resident",
-      layer: 0
-    });
-    expect(source.copyOptions()).toEqual({
-      rect: { x: 0, y: 0, width: 256, height: 256 },
-      format: "RGBA",
-      layout: [{ offset: 0, stride: 1_024 }]
-    });
-    expect(source.closeCalls()).toBe(1);
-    expect(backend.uploads[0]?.pixels).toHaveLength(256 * 256 * 4);
-  });
 });
 
 class FakeBackend implements FrameRendererBackend {
@@ -696,28 +652,6 @@ class FakeNativeBackend extends FakeBackend {
   }
 }
 
-class FakeLegacyBackend implements LegacyOpaqueFrameRendererBackend {
-  public readonly limits = Object.freeze({
-    maxTextureSize: 8_192,
-    maxArrayTextureLayers: 2_048
-  });
-  public readonly uploads: Array<{
-    readonly kind: FrameTextureKind;
-    readonly index: number;
-    readonly pixels: Uint8Array;
-  }> = [];
-
-  public allocate(): void {}
-
-  public upload(kind: FrameTextureKind, index: number, pixels: Uint8Array): void {
-    this.uploads.push({ kind, index, pixels });
-  }
-
-  public draw(): void {}
-
-  public dispose(): void {}
-}
-
 function borrowedFrame(
   value: number,
   options: {
@@ -727,6 +661,8 @@ function borrowedFrame(
     readonly codedHeight?: number;
     readonly displayWidth?: number;
     readonly displayHeight?: number;
+    readonly visibleX?: number;
+    readonly visibleY?: number;
     readonly visibleWidth?: number;
     readonly visibleHeight?: number;
     readonly copyFailure?: Error;
@@ -748,8 +684,8 @@ function borrowedFrame(
     displayWidth: options.displayWidth ?? 4,
     displayHeight: options.displayHeight ?? 12,
     visibleRect: {
-      x: 0,
-      y: 0,
+      x: options.visibleX ?? 0,
+      y: options.visibleY ?? 0,
       width: visibleWidth,
       height: visibleHeight
     } as DOMRectReadOnly,

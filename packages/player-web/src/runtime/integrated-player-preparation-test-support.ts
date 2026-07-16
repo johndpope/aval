@@ -3,7 +3,7 @@ import type {
   MotionGraphSnapshot
 } from "@pixel-point/aval-graph";
 
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import {
   RuntimePlaybackError,
   normalizeRuntimeFailure,
@@ -39,6 +39,7 @@ export type CandidateBehavior =
 
 export interface PreparationHarnessOptions {
   readonly bytes?: Uint8Array;
+  readonly selectedRenditionIndex?: number;
   readonly behaviors?: readonly CandidateBehavior[];
   readonly staticBehavior?: StaticBehavior;
   readonly timers?: IntegratedTimerHost;
@@ -71,9 +72,11 @@ export function createPreparationHarness(
   const failures: Readonly<RuntimeFailure>[] = [];
   const eventSnapshots: IntegratedPlayerSnapshot[] = [];
   const timers = options.timers ?? new ManualTimers();
+  const bytes = options.bytes ?? createIntegratedTestAsset();
   let player: IntegratedPlayer | null = null;
   player = new IntegratedPlayer({
-    bytes: options.bytes ?? createIntegratedOpaqueTestAsset(),
+    bytes,
+    selectedRenditionIndex: options.selectedRenditionIndex ?? 0,
     createFallbackStore: () => fallbackStore,
     candidateFactory: factory,
     eventSink: (event) => {

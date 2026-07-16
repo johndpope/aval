@@ -5,8 +5,8 @@ import { COMPILER_PROJECT_VERSION } from "../../compiler/src/index.js";
 
 describe("1.0 compatibility policy", () => {
   it("keeps package, wire, and project version spaces independent", () => {
-    expect([FORMAT_VERSION_MAJOR, FORMAT_VERSION_MINOR]).toEqual([0, 1]);
-    expect(COMPILER_PROJECT_VERSION).toBe("0.3");
+    expect([FORMAT_VERSION_MAJOR, FORMAT_VERSION_MINOR]).toEqual([1, 0]);
+    expect(COMPILER_PROJECT_VERSION).toBe("1.0");
   });
   it("requires synchronized public ESM packages and exact internal dependencies", () => {
     const manifests = PUBLIC_RELEASE_PACKAGES.map((name) => ({

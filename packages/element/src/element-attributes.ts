@@ -1,6 +1,4 @@
 export const AVAL_ATTRIBUTES = Object.freeze([
-  "src",
-  "integrity",
   "crossorigin",
   "motion",
   "autoplay",
@@ -16,8 +14,6 @@ export type AvalAttribute =
   (typeof AVAL_ATTRIBUTES)[number];
 
 export const AVAL_UPGRADE_PROPERTIES = Object.freeze([
-  "src",
-  "integrity",
   "crossOrigin",
   "motion",
   "autoplay",

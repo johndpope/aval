@@ -7,6 +7,7 @@ import {
   readElementConfiguration,
   type ElementConfigurationRead
 } from "../src/element-configuration.js";
+import { readElementSourceCandidates } from "../src/element-source-candidates.js";
 import {
   ElementDesiredState,
   type ElementDesiredSnapshot
@@ -29,6 +30,7 @@ type TapeOperation =
   | Readonly<{
       type: "configure";
       attributes: Readonly<Record<string, string | null>>;
+      source: Readonly<Record<"src" | "type" | "integrity", string>> | null;
       throwing: readonly string[];
     }>
   | Readonly<{ type: "connected"; value: boolean }>
@@ -140,7 +142,7 @@ function readConfiguration(
   return readElementConfiguration((name) => {
     if (throwing.has(name)) throw new Error(`hostile ${name} getter`);
     return operation.attributes[name] ?? null;
-  });
+  }, readElementSourceCandidates(sourceHost(operation.source)));
 }
 
 function assertConfigurationRead(read: Readonly<ElementConfigurationRead>): void {
@@ -155,6 +157,8 @@ function assertSnapshot(snapshot: Readonly<ElementDesiredSnapshot>): void {
   expect(Object.isFrozen(snapshot.box)).toBe(true);
   if (snapshot.configuration !== null) {
     expect(Object.isFrozen(snapshot.configuration)).toBe(true);
+    expect(Object.isFrozen(snapshot.configuration.sourceCandidates)).toBe(true);
+    expect(snapshot.configuration.sourceCandidates.every(Object.isFrozen)).toBe(true);
   }
   if (snapshot.stateIntent !== null) {
     expect(Object.isFrozen(snapshot.stateIntent)).toBe(true);
@@ -313,8 +317,6 @@ function createTape(seed: number): readonly TapeOperation[] {
 
 function configurationOperation(random: () => number): Extract<TapeOperation, Readonly<{ type: "configure" }>> {
   const attributes = Object.freeze({
-    src: choose(random, ["", "motion.avl", "https://example.invalid/motion.avl"]),
-    integrity: choose(random, ["", `sha256-${"A".repeat(43)}=`, "sha256-invalid"]),
     crossorigin: choose(random, [null, "anonymous", "use-credentials", "include"]),
     motion: choose(random, [null, "auto", "reduce", "full", "fast"]),
     autoplay: choose(random, [null, "visible", "manual", "always"]),
@@ -329,7 +331,38 @@ function configurationOperation(random: () => number): Extract<TapeOperation, Re
   const throwing = random() % 5 === 0
     ? Object.freeze([names[random() % names.length]!])
     : Object.freeze([]);
-  return Object.freeze({ type: "configure", attributes, throwing });
+  const source = random() % 4 === 0
+    ? null
+    : Object.freeze({
+        src: choose(random, ["", "motion.avl", "https://example.invalid/motion.avl"]),
+        type: choose(random, [
+          "",
+          'application/vnd.aval; codecs="avc1.640028"',
+          'application/vnd.aval; codecs="vp09.00.10.08"',
+          'video/mp4; codecs="avc1.640028"'
+        ]),
+        integrity: choose(random, ["", `sha256-${"A".repeat(43)}=`, "sha256-invalid"])
+      });
+  return Object.freeze({ type: "configure", attributes, source, throwing });
+}
+
+function sourceHost(
+  source: Readonly<Record<"src" | "type" | "integrity", string>> | null
+): HTMLElement {
+  const values = source === null
+    ? []
+    : [{
+        nodeType: 1,
+        localName: "source",
+        namespaceURI: "http://www.w3.org/1999/xhtml",
+        getAttribute(name: string) { return source[name as keyof typeof source] ?? null; }
+      } as unknown as Element];
+  return {
+    children: {
+      length: values.length,
+      item(index: number) { return values[index] ?? null; }
+    }
+  } as unknown as HTMLElement;
 }
 
 function randomDimension(random: () => number): number {
