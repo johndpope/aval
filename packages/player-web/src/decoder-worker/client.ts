@@ -6,6 +6,7 @@ import {
   type DecoderWorkerEvent,
   type DecoderWorkerLimits,
   type DecoderWorkerMetrics,
+  type DecoderWorkerProbeConfig,
   type DecoderWorkerRequestOperation,
   type DecoderWorkerSample
 } from "./protocol.js";
@@ -28,6 +29,7 @@ import {
   validateWaitTimeout,
   type DecoderWorkerClientOptions,
   type DecoderWorkerConfigureOptions,
+  type DecoderWorkerProbeOptions,
   type DecoderWorkerWaitOptions,
   type ManagedDecoderWorkerFrame
 } from "./client-support.js";
@@ -39,6 +41,7 @@ export {
   DecoderWorkerWatchdogError,
   type DecoderWorkerClientOptions,
   type DecoderWorkerConfigureOptions,
+  type DecoderWorkerProbeOptions,
   type DecoderWorkerWaitOptions,
   type ManagedDecoderWorkerFrame
 } from "./client-support.js";
@@ -50,6 +53,9 @@ interface PendingRequest {
   readonly resolve: (event: DecoderWorkerEvent) => void;
   readonly reject: (reason: unknown) => void;
   readonly timeout: ReturnType<typeof setTimeout>;
+  readonly signal: AbortSignal | null;
+  readonly abortListener: (() => void) | null;
+  aborted: boolean;
 }
 
 interface FrameWaiter {
@@ -60,6 +66,22 @@ interface FrameWaiter {
   readonly signal: AbortSignal | null;
   readonly abortListener: (() => void) | null;
   timeout: ReturnType<typeof setTimeout> | null;
+}
+
+type DecoderWorkerRequestResponse = Extract<
+  DecoderWorkerEvent,
+  { readonly type: "ack" | "snapshot" | "probe-result" }
+>;
+
+function responseMatchesOperation(
+  event: DecoderWorkerRequestResponse,
+  operation: PendingRequest["operation"]
+): boolean {
+  return (
+    (event.type === "ack" && event.operation === operation) ||
+    (event.type === "snapshot" && operation === "snapshot") ||
+    (event.type === "probe-result" && operation === "probe-config")
+  );
 }
 
 /**
@@ -74,6 +96,10 @@ export class DecoderWorkerClient {
   readonly #disposeTimeoutMs: number;
   readonly #requestTimeoutMs: number;
   readonly #pendingRequests = new Map<number, PendingRequest>();
+  readonly #abandonedRequests = new Map<
+    number,
+    PendingRequest["operation"]
+  >();
   readonly #readyFrames: ManagedDecoderWorkerFrameImpl[] = [];
   readonly #openFrames = new Map<number, ManagedDecoderWorkerFrameImpl>();
   readonly #waiters = new Set<FrameWaiter>();
@@ -137,6 +163,49 @@ export class DecoderWorkerClient {
     return this.#openFrames.size;
   }
 
+  /** Probe an exact config without consuming the worker's configure-once state. */
+  public async probeConfig(
+    config: Readonly<DecoderWorkerProbeConfig>,
+    options: DecoderWorkerProbeOptions = {}
+  ): Promise<boolean> {
+    this.#assertOperational();
+    if (this.#configured) {
+      throw new DecoderWorkerRemoteError(
+        "ALREADY_CONFIGURED",
+        "decoder worker client is already configured",
+        false
+      );
+    }
+    if (
+      options === null ||
+      typeof options !== "object" ||
+      Object.keys(options).some((key) => key !== "signal")
+    ) {
+      throw new TypeError("decoder probe options are invalid");
+    }
+    const signal = options.signal ?? null;
+    if (signal !== null && !(signal instanceof AbortSignal)) {
+      throw new TypeError("decoder probe signal is invalid");
+    }
+    if (signal?.aborted === true) throw abortReason(signal);
+
+    const event = await this.#request(
+      {
+        type: "probe-config",
+        protocolVersion: DECODER_WORKER_PROTOCOL_VERSION,
+        requestId: this.#allocateRequestId(),
+        config
+      },
+      "probe-config",
+      undefined,
+      signal
+    );
+    if (event.type !== "probe-result") {
+      throw this.#unexpectedResponse("probe-config");
+    }
+    return event.supported;
+  }
+
   public async configure(options: DecoderWorkerConfigureOptions): Promise<void> {
     this.#assertOperational();
     if (this.#configured) {
@@ -152,7 +221,7 @@ export class DecoderWorkerClient {
         protocolVersion: DECODER_WORKER_PROTOCOL_VERSION,
         requestId: this.#allocateRequestId(),
         config: options.config,
-        avcProfile: options.avcProfile,
+        videoProfile: options.videoProfile,
         expectedOutput: options.expectedOutput,
         limits: options.limits
       },
@@ -225,7 +294,7 @@ export class DecoderWorkerClient {
     if (generation !== this.#activeGeneration) {
       throw new DecoderWorkerGenerationAbortedError(generation);
     }
-    assertSubmissionCredit(samples.length, limits, metrics);
+    assertSubmissionCredit(samples, limits, metrics);
     const event = await this.#request(
       {
         type: "submit",
@@ -415,12 +484,21 @@ export class DecoderWorkerClient {
   #request(
     command: Exclude<DecoderWorkerCommand, { readonly type: "release-frame" | "dispose" }>,
     operation: PendingRequest["operation"],
-    transfer?: Transferable[]
+    transfer?: Transferable[],
+    signal: AbortSignal | null = null
   ): Promise<DecoderWorkerEvent> {
     this.#assertOperational();
     return new Promise<DecoderWorkerEvent>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        if (!this.#pendingRequests.has(command.requestId)) return;
+        const active = this.#pendingRequests.get(command.requestId);
+        if (active === undefined) return;
+        if (active.aborted) {
+          const abandoned = this.#takePendingRequest(command.requestId);
+          if (abandoned !== undefined) {
+            this.#abandonedRequests.set(command.requestId, abandoned.operation);
+          }
+          return;
+        }
         this.#failTransport(
           new DecoderWorkerWatchdogError(
             `decoder worker did not answer ${operation} request ${String(
@@ -429,12 +507,29 @@ export class DecoderWorkerClient {
           )
         );
       }, this.#requestTimeoutMs);
-      this.#pendingRequests.set(command.requestId, {
+      let pending!: PendingRequest;
+      const abortListener = signal === null
+        ? null
+        : () => {
+            const active = this.#pendingRequests.get(command.requestId);
+            if (active === undefined || active.aborted) return;
+            active.aborted = true;
+            active.reject(abortReason(signal));
+          };
+      pending = {
         operation,
         resolve,
         reject,
-        timeout
-      });
+        timeout,
+        signal,
+        abortListener,
+        aborted: false
+      };
+      this.#pendingRequests.set(command.requestId, pending);
+      if (signal !== null && abortListener !== null) {
+        signal.addEventListener("abort", abortListener, { once: true });
+        if (signal.aborted) abortListener();
+      }
       try {
         this.#port.postMessage(command, transfer);
       } catch (error) {
@@ -491,6 +586,15 @@ export class DecoderWorkerClient {
       return;
     }
 
+    const abandonedOperation = this.#abandonedRequests.get(value.requestId);
+    if (abandonedOperation !== undefined) {
+      this.#abandonedRequests.delete(value.requestId);
+      if (!responseMatchesOperation(value, abandonedOperation)) {
+        this.#failTransport(this.#unexpectedResponse(abandonedOperation));
+      }
+      return;
+    }
+
     const pending = this.#pendingRequests.get(value.requestId);
     if (pending === undefined) {
       this.#failTransport(
@@ -498,15 +602,12 @@ export class DecoderWorkerClient {
       );
       return;
     }
-    const matches =
-      (value.type === "ack" && value.operation === pending.operation) ||
-      (value.type === "snapshot" && pending.operation === "snapshot");
-    if (!matches) {
+    if (!responseMatchesOperation(value, pending.operation)) {
       this.#failTransport(this.#unexpectedResponse(pending.operation));
       return;
     }
     this.#takePendingRequest(value.requestId);
-    pending.resolve(value);
+    if (!pending.aborted) pending.resolve(value);
   }
 
   #receiveFrame(
@@ -545,6 +646,10 @@ export class DecoderWorkerClient {
       event.fatal
     );
     if (event.requestId !== null) {
+      if (this.#abandonedRequests.delete(event.requestId)) {
+        if (event.fatal) this.#failTransport(error);
+        return;
+      }
       const pending = this.#pendingRequests.get(event.requestId);
       if (pending === undefined) {
         this.#failTransport(
@@ -557,7 +662,7 @@ export class DecoderWorkerClient {
         return;
       }
       this.#takePendingRequest(event.requestId);
-      pending.reject(error);
+      if (!pending.aborted) pending.reject(error);
     }
     if (event.fatal) {
       this.#failTransport(error);
@@ -683,9 +788,13 @@ export class DecoderWorkerClient {
   #rejectAllRequests(reason: unknown): void {
     for (const pending of this.#pendingRequests.values()) {
       clearTimeout(pending.timeout);
-      pending.reject(reason);
+      if (pending.signal !== null && pending.abortListener !== null) {
+        pending.signal.removeEventListener("abort", pending.abortListener);
+      }
+      if (!pending.aborted) pending.reject(reason);
     }
     this.#pendingRequests.clear();
+    this.#abandonedRequests.clear();
   }
 
   #failTransport(error: Error): void {
@@ -706,6 +815,9 @@ export class DecoderWorkerClient {
     if (pending === undefined) return undefined;
     this.#pendingRequests.delete(requestId);
     clearTimeout(pending.timeout);
+    if (pending.signal !== null && pending.abortListener !== null) {
+      pending.signal.removeEventListener("abort", pending.abortListener);
+    }
     return pending;
   }
 
@@ -715,6 +827,7 @@ export class DecoderWorkerClient {
     }
     this.#disposed = true;
     this.#disposing = false;
+    this.#abandonedRequests.clear();
     if (this.#disposeTimer !== null) {
       clearTimeout(this.#disposeTimer);
       this.#disposeTimer = null;

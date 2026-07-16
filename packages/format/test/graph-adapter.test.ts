@@ -2,14 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { FormatError } from "../src/errors.js";
 import { adaptManifestToMotionGraph } from "../src/graph-adapter.js";
-import { validateCompiledManifestV01 } from "../src/manifest-schema.js";
-import type { CompiledManifestV01 } from "../src/model.js";
+import { validateCompiledManifest } from "../src/manifest-schema.js";
+import type { CompiledManifest } from "../src/model.js";
 import { validManifest } from "./manifest-fixture.js";
 
 describe("adaptManifestToMotionGraph", () => {
-  it("maps the complete manifest graph to the hand-written M3 golden", () => {
+  it("maps the complete manifest graph to the hand-written canonical golden", () => {
     const graph = adaptManifestToMotionGraph(
-      validateCompiledManifestV01(validManifest())
+      validateCompiledManifest(validManifest())
     );
 
     expect(graph.definition).toEqual({
@@ -125,7 +125,7 @@ describe("adaptManifestToMotionGraph", () => {
   });
 
   it("returns a recursively immutable validated graph detached from the manifest", () => {
-    const manifest = validateCompiledManifestV01(validManifest());
+    const manifest = validateCompiledManifest(validManifest());
     const graph = adaptManifestToMotionGraph(manifest);
 
     expect(graph.definition.states).not.toBe(manifest.states);
@@ -135,10 +135,10 @@ describe("adaptManifestToMotionGraph", () => {
     expect(Object.isFrozen(graph.definition.edges[4]?.transition)).toBe(true);
   });
 
-  it("wraps M3 geometry and ambiguity failures as GRAPH_INVALID", () => {
+  it("wraps graph geometry and ambiguity failures as GRAPH_INVALID", () => {
     const manifest = structuredClone(validManifest()) as any;
     manifest.edges[0].start.maxWaitFrames = 0;
-    const schemaValid = validateCompiledManifestV01(manifest);
+    const schemaValid = validateCompiledManifest(manifest);
 
     expect(() => adaptManifestToMotionGraph(schemaValid)).toThrowError(
       expect.objectContaining({ name: "FormatError", code: "GRAPH_INVALID" })
@@ -149,7 +149,7 @@ describe("adaptManifestToMotionGraph", () => {
     const malformed = {
       ...validManifest(),
       units: []
-    } as unknown as CompiledManifestV01;
+    } as unknown as CompiledManifest;
 
     try {
       adaptManifestToMotionGraph(malformed);

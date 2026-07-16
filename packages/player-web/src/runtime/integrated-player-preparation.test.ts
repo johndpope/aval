@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  createIntegratedOpaqueTestAsset,
-  createReferenceOnlyTestAsset
-} from "./asset-test-fixture.js";
+  createIntegratedTestAsset
+} from "./asset-test-support.js";
 import {
   type RuntimeFailureCode
 } from "./errors.js";
@@ -46,11 +45,10 @@ describe("IntegratedPlayer preparation lifecycle", () => {
     });
   });
 
-  it("falls back to static after the preferred candidate fails", async () => {
+  it("falls back to static after the selected candidate fails", async () => {
     const harness = createHarness({
       behaviors: [
-        { kind: "failure", code: "unsupported-profile" },
-        { kind: "success" }
+        { kind: "failure", code: "unsupported-profile" }
       ]
     });
 
@@ -72,6 +70,17 @@ describe("IntegratedPlayer preparation lifecycle", () => {
       "dispose:opaque-high"
     ]);
     expect(harness.events.some(({ type }) => type === "fallback")).toBe(true);
+  });
+
+  it("activates only the exact rendition selected before construction", async () => {
+    const harness = createHarness({ selectedRenditionIndex: 1 });
+
+    await expect(harness.player.prepare()).resolves.toMatchObject({
+      mode: "animated",
+      report: { selectedRendition: "opaque-low" }
+    });
+    expect(harness.factory.calls).toContain("create:opaque-low");
+    expect(harness.factory.calls).not.toContain("create:opaque-high");
   });
 
   it.each([
@@ -102,25 +111,6 @@ describe("IntegratedPlayer preparation lifecycle", () => {
       expect(harness.events.some(({ type }) => type === "fallback")).toBe(true);
     }
   );
-
-  it("resolves an explicit static result when there is no opaque candidate", async () => {
-    const harness = createHarness({ bytes: createReferenceOnlyTestAsset() });
-    const result = await harness.player.prepare();
-
-    expect(result).toMatchObject({
-      mode: "static",
-      reason: "no-avc-rendition",
-      report: {
-        readiness: "staticReady",
-        selectedRendition: null,
-        candidates: []
-      }
-    });
-    expect(harness.factory.calls).toEqual([]);
-    expect(harness.player.snapshot().readiness).toBe("staticReady");
-    expect(harness.events.filter(({ type }) => type === "fallback"))
-      .toHaveLength(1);
-  });
 
   it("times out to static only after the complete static check is ready", async () => {
     const timers = new ManualTimers();
@@ -462,9 +452,9 @@ describe("IntegratedPlayer preparation lifecycle", () => {
     });
   });
 
-  it("rejects corrupt preferred AVC without inspecting a lower rendition", async () => {
+  it("rejects corrupt preferred H.264 without inspecting a lower rendition", async () => {
     const harness = createHarness({
-      bytes: createIntegratedOpaqueTestAsset({
+      bytes: createIntegratedTestAsset({
         corruptHighIntroDelta: true
       })
     });

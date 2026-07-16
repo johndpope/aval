@@ -2,6 +2,7 @@ import {
   readElementConfiguration,
   type ElementConfigurationRead
 } from "./element-configuration.js";
+import { readElementSourceCandidates } from "./element-source-candidates.js";
 import type {
   ElementOwnershipHandle,
   ElementOwnershipLedger
@@ -80,7 +81,10 @@ export class ElementConfigurationScheduler {
   #publish(): void {
     this.#scheduled = false;
     this.#authority.configurationReady(
-      readElementConfiguration((name) => this.#host.getAttribute(name))
+      readElementConfiguration(
+        (name) => this.#host.getAttribute(name),
+        readElementSourceCandidates(this.#host)
+      )
     );
   }
 }

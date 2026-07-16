@@ -2,20 +2,24 @@ import { describe, expect, it } from "vitest";
 
 import { deriveReadiness } from "../src/compile/readiness-plan.js";
 import { estimateRuntimeLimits } from "../src/compile/resource-estimate.js";
-import { deriveAvcRenditionGeometryFromVisible } from "@pixel-point/aval-format";
+import { deriveVideoRenditionGeometry } from "@pixel-point/aval-format";
 import type {
   NormalizedSourceProject,
-  SourceProjectV01
+  SourceProject
 } from "../src/model.js";
 
 describe("compiled resource and readiness derivation", () => {
   it("includes reversible residency, cuts, decoder ring, real encoded bytes, and canvas", () => {
     const project = {
       canvas: { width: 32, height: 16 },
-      renditions: [
-        { id: "large", width: 32, height: 16 },
-        { id: "small", width: 16, height: 16 }
-      ],
+      encodings: [{
+        codec: "h264",
+        preset: "medium",
+        renditions: [
+          { id: "large", width: 32, height: 16, crf: 20 },
+          { id: "small", width: 16, height: 8, crf: 20 }
+        ]
+      }],
       units: [{
         id: "resident",
         kind: "reversible",
@@ -32,19 +36,21 @@ describe("compiled resource and readiness derivation", () => {
       sample("large", 20),
       sample("small", 40)
     ], [
-      deriveAvcRenditionGeometryFromVisible({
+      deriveVideoRenditionGeometry({
         canvasWidth: 32,
         canvasHeight: 16,
-        profile: "avc-annexb-opaque-v0",
+        layout: "opaque",
         visibleWidth: 32,
-        visibleHeight: 16
+        visibleHeight: 16,
+        storage: { widthAlignment: 2, heightAlignment: 2 }
       }),
-      deriveAvcRenditionGeometryFromVisible({
+      deriveVideoRenditionGeometry({
         canvasWidth: 32,
         canvasHeight: 16,
-        profile: "avc-annexb-opaque-v0",
+        layout: "opaque",
         visibleWidth: 16,
-        visibleHeight: 8
+        visibleHeight: 8,
+        storage: { widthAlignment: 2, heightAlignment: 2 }
       })
     ]);
 
@@ -60,17 +66,22 @@ describe("compiled resource and readiness derivation", () => {
   it("reports rather than rejects a runtime estimate above the old 64 MiB cap", () => {
     const project = {
       canvas: { width: 2_048, height: 2_048 },
-      renditions: [{ id: "large", width: 2_048, height: 2_048 }],
+      encodings: [{
+        codec: "h264",
+        preset: "medium",
+        renditions: [{ id: "large", width: 2_048, height: 2_048, crf: 20 }]
+      }],
       units: [],
       edges: []
     } as unknown as NormalizedSourceProject;
     const limits = estimateRuntimeLimits(project, [], [
-      deriveAvcRenditionGeometryFromVisible({
+      deriveVideoRenditionGeometry({
         canvasWidth: 2_048,
         canvasHeight: 2_048,
-        profile: "avc-annexb-opaque-v0",
+        layout: "opaque",
         visibleWidth: 2_048,
-        visibleHeight: 2_048
+        visibleHeight: 2_048,
+        storage: { widthAlignment: 2, heightAlignment: 2 }
       })
     ]);
     expect(limits.runtimeWorkingSetBytes).toBeGreaterThan(64 * 1024 * 1024);
@@ -94,7 +105,7 @@ describe("compiled resource and readiness derivation", () => {
         },
         { id: "hover-later", from: "hover", to: "later" }
       ]
-    } as unknown as SourceProjectV01;
+    } as unknown as SourceProject;
     expect(deriveReadiness(project)).toEqual({
       policy: "all-routes",
       bootstrapUnits: ["bridge", "hover-body", "idle-body", "intro"],
@@ -107,8 +118,11 @@ function sample(rendition: string, bytes: number) {
   return {
     rendition,
     unit: "unit",
-    frameIndex: 0,
-    key: true,
+    decodeIndex: 0,
+    presentationTimestamp: 0,
+    duration: 1,
+    randomAccess: true,
+    displayedFrameCount: 1,
     bytes: new Uint8Array(bytes)
   };
 }

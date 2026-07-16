@@ -1,0 +1,131 @@
+{
+  "provenanceVersion": "1.0",
+  "fixture": "aval-v1-four-codec-source",
+  "license": {
+    "path": "fixtures/compiler/v1/source/ASSET-LICENSE.md",
+    "bytes": 361,
+    "sha256": "d3b7074097077f1be94ceb8eacaee09b58e850c65bac6d4d72e27b048e1c1f77"
+  },
+  "project": {
+    "path": "fixtures/compiler/v1/source/motion.json",
+    "bytes": 2214,
+    "sha256": "ea216a51b643f66b2ccf676451766a78e8a6f5863641b7d02300026a0fbd4528"
+  },
+  "sourceGenerator": "@pixel-point/aval-compiler init 1.0",
+  "sourceProvenance": {
+    "provenancePath": "fixtures/starter/v1-idle-hover/provenance.json",
+    "provenanceSha256": "89c11d7edbf70f27cc557fdf955f757accedf70d81225ac73fc20d15820303fa"
+  },
+  "frames": [
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0000.png",
+      "bytes": 9345,
+      "sha256": "93996538c08c848eeb9c1e777f769d099297ad76abf61d37e90fff33b2495c23"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0001.png",
+      "bytes": 9345,
+      "sha256": "686880888c85ab5cf4be8731eab2b053819c9d491d1a545278a47c4290fa5e9d"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0002.png",
+      "bytes": 9345,
+      "sha256": "686880888c85ab5cf4be8731eab2b053819c9d491d1a545278a47c4290fa5e9d"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0003.png",
+      "bytes": 9345,
+      "sha256": "686880888c85ab5cf4be8731eab2b053819c9d491d1a545278a47c4290fa5e9d"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0004.png",
+      "bytes": 9345,
+      "sha256": "93996538c08c848eeb9c1e777f769d099297ad76abf61d37e90fff33b2495c23"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0005.png",
+      "bytes": 9345,
+      "sha256": "c147a7ee4f6e23a441755d16dfa91d3c837d0c24f9c830bfcb630e500dd3cbb2"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0006.png",
+      "bytes": 9345,
+      "sha256": "c147a7ee4f6e23a441755d16dfa91d3c837d0c24f9c830bfcb630e500dd3cbb2"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0007.png",
+      "bytes": 9345,
+      "sha256": "c147a7ee4f6e23a441755d16dfa91d3c837d0c24f9c830bfcb630e500dd3cbb2"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0008.png",
+      "bytes": 9345,
+      "sha256": "370f434fff1070afd21866bced98d7a307a81c33148950d0af1db7b59f05e27e"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0009.png",
+      "bytes": 9345,
+      "sha256": "c9a203fd59c37d6adfb68669b4ac7c523e032d9aebf76d6cd3ad1df0bd33002f"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0010.png",
+      "bytes": 9345,
+      "sha256": "885f4b0f3d8967058185e2663af4c0d784e409f6d1797c750a293cb9d4ad7229"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0011.png",
+      "bytes": 9345,
+      "sha256": "4cf190bdd55eb13dba3eafcc12a46113fc78577e3cd902b3f7e08282f78ebcf0"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0012.png",
+      "bytes": 9345,
+      "sha256": "8183e8cd227fb7a47d83ebabea2b2bc03bd8ddd02997e17a48ed2d00502a4897"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0013.png",
+      "bytes": 9345,
+      "sha256": "8c40a64ba68f6fc140249c95cfc3fac30471a52c2580ea7035e737653386d70d"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0014.png",
+      "bytes": 9345,
+      "sha256": "9bfd58fc4375a567dc8b9a5e7b8d29784f0272abc48bb32d262caf0c8c06ce70"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0015.png",
+      "bytes": 9345,
+      "sha256": "121edb99be240ded956a6f8e71efd16c536fdc3176522bac91f84ee8d4d3f063"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0016.png",
+      "bytes": 9345,
+      "sha256": "121edb99be240ded956a6f8e71efd16c536fdc3176522bac91f84ee8d4d3f063"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0017.png",
+      "bytes": 9345,
+      "sha256": "121edb99be240ded956a6f8e71efd16c536fdc3176522bac91f84ee8d4d3f063"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0018.png",
+      "bytes": 9345,
+      "sha256": "9bfd58fc4375a567dc8b9a5e7b8d29784f0272abc48bb32d262caf0c8c06ce70"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0019.png",
+      "bytes": 9345,
+      "sha256": "00c02863f8eef353036ff5d4784da17653ef55b93b64a46bd7e94301cb76a763"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0020.png",
+      "bytes": 9345,
+      "sha256": "00c02863f8eef353036ff5d4784da17653ef55b93b64a46bd7e94301cb76a763"
+    },
+    {
+      "path": "fixtures/compiler/v1/source/frames/frame-0021.png",
+      "bytes": 9345,
+      "sha256": "00c02863f8eef353036ff5d4784da17653ef55b93b64a46bd7e94301cb76a763"
+    }
+  ]
+}

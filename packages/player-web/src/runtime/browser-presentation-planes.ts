@@ -1,4 +1,4 @@
-import type { CanvasV01 } from "@pixel-point/aval-format";
+import type { Canvas } from "@pixel-point/aval-format";
 
 import {
   RendererUnavailableError,
@@ -63,7 +63,7 @@ export type {
 
 export interface BrowserPresentationPlanesOptions {
   readonly animatedCanvas: HTMLCanvasElement;
-  readonly canvas: Readonly<CanvasV01>;
+  readonly canvas: Readonly<Canvas>;
   readonly maxBackingWidth?: number;
   readonly maxBackingHeight?: number;
   readonly maxBackingBytes: number;
@@ -102,7 +102,7 @@ export interface BrowserPresentationPlanesSnapshot {
 /** Browser owner for the single animated presentation canvas. */
 export class BrowserPresentationPlanes implements RuntimeCanvasResourceHost {
   readonly #animatedCanvas: HTMLCanvasElement;
-  readonly #canvas: Readonly<CanvasV01>;
+  readonly #canvas: Readonly<Canvas>;
   readonly #maxBackingWidth: number;
   readonly #maxBackingHeight: number;
   readonly #maxBackingBytes: number;
@@ -164,7 +164,7 @@ export class BrowserPresentationPlanes implements RuntimeCanvasResourceHost {
       throw error;
     }
     // Release the browser's implicit 300x150 stores before computing the first
-    // owned allocation. No M6 backing exists before exact admission succeeds.
+    // owned allocation. No backing exists before exact admission succeeds.
     try {
       captured.animatedCanvas.width = 0;
       captured.animatedCanvas.height = 0;
@@ -228,7 +228,7 @@ export class BrowserPresentationPlanes implements RuntimeCanvasResourceHost {
     );
   }
 
-  /** Factory passed to the neutral browser AVC composition. */
+  /** Factory passed to the neutral browser video composition. */
   public createFrameBackend(
     options?: Readonly<BrowserFrameBackendOptions>
   ): PresentableFrameBackend {

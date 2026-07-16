@@ -3,7 +3,7 @@ import type {
   MotionGraphSnapshot
 } from "@pixel-point/aval-graph";
 
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import {
   RuntimePlaybackError,
   normalizeRuntimeFailure,
@@ -24,6 +24,7 @@ import {
 } from "./integrated-player.js";
 import type { MotionPolicy } from "./motion-policy.js";
 import type { BrowserContextRecoveryEventTarget } from "./browser-context-recovery.js";
+import { selectIntegratedTestVideoRendition } from "./integrated-player-video-test-support.js";
 
 export type CandidateBehavior =
   | { readonly kind: "success"; readonly cleanupFailure?: boolean }
@@ -39,6 +40,7 @@ export type CandidateBehavior =
 
 export interface PreparationHarnessOptions {
   readonly bytes?: Uint8Array;
+  readonly selectedRenditionIndex?: number;
   readonly behaviors?: readonly CandidateBehavior[];
   readonly staticBehavior?: StaticBehavior;
   readonly timers?: IntegratedTimerHost;
@@ -71,9 +73,14 @@ export function createPreparationHarness(
   const failures: Readonly<RuntimeFailure>[] = [];
   const eventSnapshots: IntegratedPlayerSnapshot[] = [];
   const timers = options.timers ?? new ManualTimers();
+  const bytes = options.bytes ?? createIntegratedTestAsset();
   let player: IntegratedPlayer | null = null;
   player = new IntegratedPlayer({
-    bytes: options.bytes ?? createIntegratedOpaqueTestAsset(),
+    bytes,
+    selectedRendition: selectIntegratedTestVideoRendition(
+      bytes,
+      options.selectedRenditionIndex ?? 0
+    ),
     createFallbackStore: () => fallbackStore,
     candidateFactory: factory,
     eventSink: (event) => {

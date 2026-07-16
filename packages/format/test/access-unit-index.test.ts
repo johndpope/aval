@@ -1,84 +1,57 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  encodeAccessUnitIndex,
-  parseAccessUnitIndex
+  encodeEncodedChunkIndex,
+  parseEncodedChunkIndex
 } from "../src/access-unit-index.js";
 import { writeUint32LE, writeUint64LE } from "../src/checked-integer.js";
 import { FormatError } from "../src/errors.js";
-import type {
-  AccessUnitRecord,
-  CompiledManifestV01
-} from "../src/model.js";
+import type { CompiledManifest, EncodedChunkRecord } from "../src/model.js";
 
-const AVC_MANIFEST = {
-  renditions: [{ id: "avc", profile: "avc-annexb-opaque-v0" }],
-  units: [
-    {
-      id: "body",
+const MANIFEST = {
+  renditions: [{ id: "video" }],
+  units: [{
+    id: "body",
+    frameCount: 2,
+    chunks: [{
+      rendition: "video",
+      chunkStart: 0,
+      chunkCount: 2,
       frameCount: 2,
-      samples: [
-        {
-          rendition: "avc",
-          sampleStart: 0,
-          sampleCount: 2,
-          sha256: "0".repeat(64)
-        }
-      ]
-    }
-  ]
-} as unknown as CompiledManifestV01;
+      sha256: "0".repeat(64)
+    }]
+  }]
+} as unknown as CompiledManifest;
 
-const REFERENCE_MANIFEST = {
-  renditions: [{ id: "reference", profile: "reference-rgba-v0" }],
-  units: [
-    {
-      id: "body",
-      frameCount: 2,
-      samples: [
-        {
-          rendition: "reference",
-          sampleStart: 0,
-          sampleCount: 2,
-          sha256: "0".repeat(64)
-        }
-      ]
-    }
-  ]
-} as unknown as CompiledManifestV01;
-
-const RECORDS: readonly AccessUnitRecord[] = Object.freeze([
+const RECORDS: readonly EncodedChunkRecord[] = Object.freeze([
   Object.freeze({
-    payloadOffset: 128,
-    payloadLength: 4,
-    unitIndex: 0,
-    renditionIndex: 0,
-    key: true,
-    frameIndex: 0
+    byteOffset: 128,
+    byteLength: 4,
+    presentationTimestamp: 1,
+    duration: 1,
+    randomAccess: true,
+    displayedFrameCount: 1
   }),
   Object.freeze({
-    payloadOffset: 132,
-    payloadLength: 5,
-    unitIndex: 0,
-    renditionIndex: 0,
-    key: false,
-    frameIndex: 1
+    byteOffset: 132,
+    byteLength: 5,
+    presentationTimestamp: 0,
+    duration: 1,
+    randomAccess: false,
+    displayedFrameCount: 1
   })
 ]);
 
 const GOLDEN_HEX =
-  "41564c49200000000200000000000000" +
-  "8000000000000000040000000000000000000100000000000000000000000000" +
-  "8400000000000000050000000000000000000000010000000000000000000000";
+  "41564c49300000000200000000000000" +
+  "800000000000000004000000010000000100000000000000010000000000000001000000000000000000000000000000" +
+  "840000000000000005000000010000000000000000000000010000000000000000000000000000000000000000000000";
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function expectFormatError(
-  operation: () => unknown,
-  code: FormatError["code"]
-): FormatError {
+function expectFormatError(operation: () => unknown, code: FormatError["code"]): FormatError {
   try {
     operation();
   } catch (error) {
@@ -89,259 +62,163 @@ function expectFormatError(
   throw new Error("expected operation to throw");
 }
 
-describe("version-0.1 access-unit index", () => {
-  it("encodes the exact 16 + 32N canonical bytes", () => {
-    const bytes = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    expect(bytes).toHaveLength(80);
+describe("version-1.0 encoded-chunk index", () => {
+  it("encodes the exact 16 + 48N canonical bytes", () => {
+    const bytes = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    expect(bytes).toHaveLength(112);
     expect(hex(bytes)).toBe(GOLDEN_HEX);
   });
 
-  it("parses detached, recursively frozen numeric records", () => {
-    const bytes = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    const parsed = parseAccessUnitIndex(bytes, AVC_MANIFEST);
+  it("preserves decode order independently from presentation timestamps", () => {
+    const bytes = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    const parsed = parseEncodedChunkIndex(bytes, MANIFEST);
     expect(parsed).toEqual(RECORDS);
+    expect(parsed.map(({ presentationTimestamp }) => presentationTimestamp)).toEqual([1, 0]);
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(parsed.every(Object.isFrozen)).toBe(true);
-
     bytes.fill(0);
     expect(parsed).toEqual(RECORDS);
   });
 
-  it("supports an unaligned view and reads no adjacent bytes", () => {
-    const index = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    const storage = new Uint8Array(index.length + 7).fill(0xa5);
-    const view = storage.subarray(3, 3 + index.length);
-    view.set(index);
-    expect(parseAccessUnitIndex(view, AVC_MANIFEST)).toEqual(RECORDS);
-    expect([...storage.subarray(0, 3)]).toEqual([0xa5, 0xa5, 0xa5]);
-    expect([...storage.subarray(3 + index.length)]).toEqual([
-      0xa5,
-      0xa5,
-      0xa5,
-      0xa5
-    ]);
+  it("supports hidden chunks and multiple chunks per displayed frame timeline", () => {
+    const manifest = {
+      ...MANIFEST,
+      units: [{
+        ...MANIFEST.units[0]!,
+        frameCount: 1,
+        chunks: [{
+          ...MANIFEST.units[0]!.chunks[0]!,
+          chunkCount: 2,
+          frameCount: 1
+        }]
+      }]
+    } as CompiledManifest;
+    const records = [
+      { ...RECORDS[0]!, duration: 0, displayedFrameCount: 0 },
+      { ...RECORDS[1]!, presentationTimestamp: 0 }
+    ];
+    expect(parseEncodedChunkIndex(
+      encodeEncodedChunkIndex(records, manifest),
+      manifest
+    )).toEqual(records);
   });
 
-  it("rejects every truncation and any trailing byte before record allocation", () => {
-    const bytes = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
+  it("rejects every truncation and any trailing byte", () => {
+    const bytes = encodeEncodedChunkIndex(RECORDS, MANIFEST);
     for (let length = 0; length < bytes.length; length += 1) {
       expectFormatError(
-        () => parseAccessUnitIndex(bytes.subarray(0, length), AVC_MANIFEST),
+        () => parseEncodedChunkIndex(bytes.subarray(0, length), MANIFEST),
         "INDEX_INVALID"
       );
     }
     const trailing = new Uint8Array(bytes.length + 1);
     trailing.set(bytes);
-    expectFormatError(
-      () => parseAccessUnitIndex(trailing, AVC_MANIFEST),
-      "INDEX_INVALID"
-    );
+    expectFormatError(() => parseEncodedChunkIndex(trailing, MANIFEST), "INDEX_INVALID");
   });
 
-  it("rejects magic, record-size, header-reserved, and record-reserved mutations", () => {
-    const offsets = [0, 4, 6, 12, 16 + 24];
-    for (const offset of offsets) {
-      const bytes = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
+  it("rejects magic, size, reserved bytes, and unknown flag bits", () => {
+    for (const offset of [0, 4, 6, 12, 16 + 36, 16 + 40]) {
+      const bytes = encodeEncodedChunkIndex(RECORDS, MANIFEST);
       bytes[offset] = (bytes[offset] ?? 0) ^ 1;
-      expectFormatError(
-        () => parseAccessUnitIndex(bytes, AVC_MANIFEST),
-        "INDEX_INVALID"
-      );
+      expectFormatError(() => parseEncodedChunkIndex(bytes, MANIFEST), "INDEX_INVALID");
     }
+    const flag = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    flag[16 + 32] = 2;
+    expectFormatError(() => parseEncodedChunkIndex(flag, MANIFEST), "INDEX_INVALID");
   });
 
-  it("rejects unknown flag bits and non-key unit entry frames", () => {
-    const unknownFlag = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    unknownFlag[16 + 18] = 2;
-    expectFormatError(
-      () => parseAccessUnitIndex(unknownFlag, AVC_MANIFEST),
-      "INDEX_INVALID"
-    );
+  it("requires independent random-access unit entry and exact displayed coverage", () => {
+    const entry = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    writeUint32LE(entry, 16 + 32, 0);
+    expectFormatError(() => parseEncodedChunkIndex(entry, MANIFEST), "INDEX_INVALID");
 
-    const nonKeyEntry = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    nonKeyEntry[16 + 18] = 0;
-    expectFormatError(
-      () => parseAccessUnitIndex(nonKeyEntry, AVC_MANIFEST),
-      "INDEX_INVALID"
-    );
+    const coverage = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    writeUint32LE(coverage, 16 + 12, 0);
+    expectFormatError(() => parseEncodedChunkIndex(coverage, MANIFEST), "INDEX_INVALID");
+
+    const duration = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    writeUint64LE(duration, 16 + 24, 0);
+    expectFormatError(() => parseEncodedChunkIndex(duration, MANIFEST), "INDEX_INVALID");
   });
 
-  it("requires every reference-rgba-v0 record to be key", () => {
-    expectFormatError(
-      () => encodeAccessUnitIndex(RECORDS, REFERENCE_MANIFEST),
-      "INDEX_INVALID"
-    );
-    const allKey = RECORDS.map((record) => ({ ...record, key: true }));
-    expect(parseAccessUnitIndex(
-      encodeAccessUnitIndex(allKey, REFERENCE_MANIFEST),
-      REFERENCE_MANIFEST
-    )).toEqual(allKey);
-  });
-
-  it("rejects zero and lower-budget sample lengths without a product ceiling", () => {
-    const zero = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
+  it("rejects zero/over-budget byte lengths and unsafe timestamps", () => {
+    const zero = encodeEncodedChunkIndex(RECORDS, MANIFEST);
     writeUint32LE(zero, 16 + 8, 0);
-    expectFormatError(() => parseAccessUnitIndex(zero, AVC_MANIFEST), "INDEX_INVALID");
+    expectFormatError(() => parseEncodedChunkIndex(zero, MANIFEST), "INDEX_INVALID");
 
-    const formerlyOversized = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    writeUint32LE(formerlyOversized, 16 + 8, 2 * 1024 * 1024 + 1);
-    expect(parseAccessUnitIndex(formerlyOversized, AVC_MANIFEST)[0]?.payloadLength)
-      .toBe(2 * 1024 * 1024 + 1);
-
-    const lowered = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
     expectFormatError(
-      () =>
-        parseAccessUnitIndex(lowered, AVC_MANIFEST, {
-          budgets: { maxSampleBytes: 4 }
-        }),
-      "BUDGET_EXCEEDED"
-    );
-  });
-
-  it("rejects unsafe and caller-over-budget payload offsets", () => {
-    const unsafe = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    writeUint64LE(unsafe, 16, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
-    expectFormatError(
-      () => parseAccessUnitIndex(unsafe, AVC_MANIFEST),
-      "INTEGER_UNSAFE"
-    );
-
-    const overFormerBudget = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    writeUint64LE(overFormerBudget, 16, 32 * 1024 * 1024 + 1);
-    expect(parseAccessUnitIndex(overFormerBudget, AVC_MANIFEST)[0]?.payloadOffset)
-      .toBe(32 * 1024 * 1024 + 1);
-    expectFormatError(
-      () => parseAccessUnitIndex(overFormerBudget, AVC_MANIFEST, {
-        budgets: { maxFileBytes: 32 * 1024 * 1024 }
+      () => parseEncodedChunkIndex(encodeEncodedChunkIndex(RECORDS, MANIFEST), MANIFEST, {
+        budgets: { maxChunkBytes: 4 }
       }),
       "BUDGET_EXCEEDED"
     );
+
+    const unsafe = encodeEncodedChunkIndex(RECORDS, MANIFEST);
+    writeUint64LE(unsafe, 16 + 16, BigInt(Number.MAX_SAFE_INTEGER) + 1n);
+    expectFormatError(() => parseEncodedChunkIndex(unsafe, MANIFEST), "INTEGER_UNSAFE");
   });
 
-  it("cross-checks record count, canonical order, frame coverage, and manifest spans", () => {
-    const wrongCount = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST).subarray(0, 48);
-    writeUint32LE(wrongCount, 8, 1);
-    expectFormatError(
-      () => parseAccessUnitIndex(wrongCount, AVC_MANIFEST),
-      "INDEX_INVALID"
-    );
-
-    const wrongFrame = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    writeUint32LE(wrongFrame, 16 + 20, 1);
-    expectFormatError(
-      () => parseAccessUnitIndex(wrongFrame, AVC_MANIFEST),
-      "INDEX_INVALID"
-    );
-
-    const wrongUnit = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
-    writeUint32LE(wrongUnit, 16 + 12, 1);
-    expectFormatError(
-      () => parseAccessUnitIndex(wrongUnit, AVC_MANIFEST),
-      "INDEX_INVALID"
-    );
-
+  it("cross-checks the canonical manifest chunk spans", () => {
     const wrongSpan = {
-      ...AVC_MANIFEST,
-      units: [
-        {
-          ...AVC_MANIFEST.units[0]!,
-          samples: [
-            { ...AVC_MANIFEST.units[0]!.samples[0]!, sampleStart: 1 }
-          ]
-        }
-      ]
-    } as CompiledManifestV01;
+      ...MANIFEST,
+      units: [{
+        ...MANIFEST.units[0]!,
+        chunks: [{ ...MANIFEST.units[0]!.chunks[0]!, chunkStart: 1 }]
+      }]
+    } as CompiledManifest;
     expectFormatError(
-      () =>
-        parseAccessUnitIndex(
-          encodeAccessUnitIndex(RECORDS, AVC_MANIFEST),
-          wrongSpan
-        ),
+      () => parseEncodedChunkIndex(encodeEncodedChunkIndex(RECORDS, MANIFEST), wrongSpan),
       "INDEX_INVALID"
     );
   });
 
-  it("allows later AVC samples to carry or omit the structural key bit", () => {
-    const allKey = RECORDS.map((record) => ({ ...record, key: true }));
-    expect(parseAccessUnitIndex(
-      encodeAccessUnitIndex(allKey, AVC_MANIFEST),
-      AVC_MANIFEST
-    )).toEqual(allKey);
-  });
-
-  it("round-trips an index above the former 4 MiB scale", () => {
-    const recordCount = 131_073;
+  it("round-trips an index above the former scale", () => {
+    const recordCount = 100_000;
     const manifest = {
-      renditions: [{ id: "avc", profile: "avc-annexb-opaque-v0" }],
+      renditions: [{ id: "video" }],
       units: [{
         id: "body",
         frameCount: recordCount,
-        samples: [{
-          rendition: "avc",
-          sampleStart: 0,
-          sampleCount: recordCount,
+        chunks: [{
+          rendition: "video",
+          chunkStart: 0,
+          chunkCount: recordCount,
+          frameCount: recordCount,
           sha256: "0".repeat(64)
         }]
       }]
-    } as unknown as CompiledManifestV01;
-    const records = Array.from({ length: recordCount }, (_, frameIndex) => ({
-      payloadOffset: 8_000_000 + frameIndex,
-      payloadLength: 1,
-      unitIndex: 0,
-      renditionIndex: 0,
-      key: frameIndex === 0,
-      frameIndex
+    } as unknown as CompiledManifest;
+    const records = Array.from({ length: recordCount }, (_, index) => ({
+      byteOffset: 8_000_000 + index,
+      byteLength: 1,
+      presentationTimestamp: index,
+      duration: 1,
+      randomAccess: index === 0,
+      displayedFrameCount: 1
     }));
-
-    const bytes = encodeAccessUnitIndex(records, manifest);
-    const parsed = parseAccessUnitIndex(bytes, manifest);
-
+    const bytes = encodeEncodedChunkIndex(records, manifest);
+    const parsed = parseEncodedChunkIndex(bytes, manifest);
     expect(bytes.byteLength).toBeGreaterThan(4 * 1024 * 1024);
     expect(parsed).toHaveLength(recordCount);
-    expect(parsed.at(-1)?.frameIndex).toBe(recordCount - 1);
+    expect(parsed.at(-1)?.presentationTimestamp).toBe(recordCount - 1);
   }, 20_000);
 
-  it("honors record/index budgets before allocating record results", () => {
-    const bytes = encodeAccessUnitIndex(RECORDS, AVC_MANIFEST);
+  it("honors record/index budgets and wraps hostile inputs", () => {
+    const bytes = encodeEncodedChunkIndex(RECORDS, MANIFEST);
     expectFormatError(
-      () =>
-        parseAccessUnitIndex(bytes, AVC_MANIFEST, {
-          budgets: { maxSampleRecords: 1 }
-        }),
+      () => parseEncodedChunkIndex(bytes, MANIFEST, { budgets: { maxChunkRecords: 1 } }),
       "BUDGET_EXCEEDED"
     );
     expectFormatError(
-      () =>
-        parseAccessUnitIndex(bytes, AVC_MANIFEST, {
-          budgets: { maxIndexBytes: 79 }
-        }),
+      () => parseEncodedChunkIndex(bytes, MANIFEST, { budgets: { maxIndexBytes: 111 } }),
       "BUDGET_EXCEEDED"
     );
-  });
-
-  it("never leaks built-in exceptions for hostile runtime inputs", () => {
     expectFormatError(
-      () =>
-        parseAccessUnitIndex(
-          null as unknown as Uint8Array,
-          AVC_MANIFEST
-        ),
+      () => parseEncodedChunkIndex(null as unknown as Uint8Array, MANIFEST),
       "INDEX_INVALID"
     );
     expectFormatError(
-      () =>
-        encodeAccessUnitIndex(
-          null as unknown as readonly AccessUnitRecord[],
-          AVC_MANIFEST
-        ),
-      "INDEX_INVALID"
-    );
-    expectFormatError(
-      () =>
-        encodeAccessUnitIndex(
-          [null as unknown as AccessUnitRecord, RECORDS[1]!],
-          AVC_MANIFEST
-        ),
+      () => encodeEncodedChunkIndex(null as unknown as readonly EncodedChunkRecord[], MANIFEST),
       "INDEX_INVALID"
     );
   });

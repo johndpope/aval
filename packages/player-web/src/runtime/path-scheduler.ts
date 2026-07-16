@@ -403,13 +403,14 @@ export class PathScheduler {
         samples: this.#samples,
         output: this.#output,
         build: this.#requireBuild(),
-        buildFrame: (state) => buildNextPathFrame(state, {
+        buildFrame: (state, continueCodecGroup) => buildNextPathFrame(state, {
           sourceState: this.#cursorLedger.sourceState,
           sourceBody: this.#cursorLedger.sourceBody,
           route: this.#routeOwner.current,
           residentTarget: this.#residentTarget,
+          continueCodecGroup,
           canSubmitSource: (cursor) =>
-            this.#sourceWithinUnresolvedHorizon(cursor)
+            continueCodecGroup || this.#sourceWithinUnresolvedHorizon(cursor)
         }),
         commitBuild: (state) => {
           this.#build = state;

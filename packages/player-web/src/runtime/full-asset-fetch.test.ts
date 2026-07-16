@@ -11,7 +11,7 @@ import {
   type RuntimeFetchInit,
   type RuntimeFetchResponseView
 } from "./asset-fetch-contracts.js";
-import { createOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createRuntimeTestAsset } from "./asset-test-support.js";
 import type {
   BoundedBodyByteLease,
   BoundedBodyByteResourceHost,
@@ -27,7 +27,7 @@ import {
 
 describe("bounded complete-asset fetch", () => {
   it("sends one deliberate range-free GET and transfers validated ownership", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const resources = new CountingResources();
     const reader = scriptedReader(asset);
     const fetcher = scriptedFetch([
@@ -74,7 +74,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("rejects 206 for a deliberate full request and retires its body", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const reader = scriptedReader(asset);
     const resources = new CountingResources();
 
@@ -96,7 +96,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("enforces final URL and pinned strong ETag before reading replacement bytes", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const pinned = parseStrongEntityTag('"range-v1"')!;
     for (const responseOptions of [
       { url: "https://other.example.test/motion.avl", etag: '"range-v1"' },
@@ -126,7 +126,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("rejects a truncated decoded full body after bounded collection", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     for (const body of [
       asset.subarray(0, asset.byteLength - 1)
     ] as const) {
@@ -152,7 +152,7 @@ describe("bounded complete-asset fetch", () => {
   ] as const)(
     "validates one browser-decoded complete body independently of encoded metadata %#",
     async ({ contentEncoding, contentLength }) => {
-      const asset = createOpaqueTestAsset();
+      const asset = createRuntimeTestAsset();
       const resources = new CountingResources();
       const result = await fetchFullAsset({
         request: request(),
@@ -175,7 +175,7 @@ describe("bounded complete-asset fetch", () => {
   );
 
   it("cancels and releases a decoded encoded response that exceeds the file cap", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const reader = scriptedReader(asset);
     const resources = new CountingResources();
 
@@ -198,7 +198,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("gates every format access behind successful external integrity", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const digest = deferred<ArrayBuffer>();
     const validate = vi.fn((bytes: Uint8Array) =>
       validateCompleteAsset({ bytes })
@@ -228,7 +228,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("times out a late external digest without validation or promotion", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const digest = deferred<ArrayBuffer>();
     const validate = vi.fn((bytes: Uint8Array) =>
       validateCompleteAsset({ bytes })
@@ -269,7 +269,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("checks the same deadline again before whole-file promotion", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const timers = new ManualTimerHost();
     const resources = new CountingResources();
     const operation = fetchFullAsset({
@@ -299,7 +299,7 @@ describe("bounded complete-asset fetch", () => {
   });
 
   it("reports external mismatch without parser access or retained quarantine", async () => {
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const validate = vi.fn((bytes: Uint8Array) =>
       validateCompleteAsset({ bytes })
     );
@@ -342,7 +342,7 @@ describe("bounded complete-asset fetch", () => {
       message: "animation asset loading failed"
     });
 
-    const asset = createOpaqueTestAsset();
+    const asset = createRuntimeTestAsset();
     const resources = new CountingResources();
     await expect(fetchFullAsset({
       request: request(),
@@ -370,7 +370,7 @@ describe("bounded complete-asset fetch", () => {
   it("retires a response body that resolves after its Fetch watchdog", async () => {
     const pending = deferred<RuntimeFetchResponseView>();
     const timers = new ManualTimerHost();
-    const reader = scriptedReader(createOpaqueTestAsset());
+    const reader = scriptedReader(createRuntimeTestAsset());
     const operation = fetchFullAsset({
       request: request(),
       fetcher: scriptedFetch([pending.promise]),
@@ -384,7 +384,7 @@ describe("bounded complete-asset fetch", () => {
     timers.fire(2_000);
     await expect(operation).rejects.toMatchObject({ code: "watchdog-timeout" });
 
-    pending.resolve(response(200, createOpaqueTestAsset().byteLength, reader));
+    pending.resolve(response(200, createRuntimeTestAsset().byteLength, reader));
     await flushMicrotasks();
     expect(reader.readCount).toBe(0);
     expect(reader.cancelCount).toBe(1);

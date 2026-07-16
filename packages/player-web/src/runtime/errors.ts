@@ -46,6 +46,7 @@ export interface RuntimeFailureContext {
   readonly height?: number;
   readonly generation?: number;
   readonly ordinal?: number;
+  readonly decodeIndex?: number;
   readonly localFrame?: number;
   readonly rank?: number;
   readonly requestOrdinal?: number;
@@ -70,7 +71,7 @@ const DEFAULT_FAILURE_MESSAGES: Readonly<Record<RuntimeFailureCode, string>> =
     "range-response-invalid": "animation range response is invalid",
     "entity-changed": "animation asset entity changed during loading",
     "integrity-mismatch": "animation asset integrity did not match",
-    "unsupported-profile": "AVC animation profile is unsupported",
+    "unsupported-profile": "animation codec configuration is unsupported",
     "resource-rejection": "animation resource budget was rejected",
     "readiness-failure": "animation readiness failed",
     "worker-decode-failure": "animation decoder worker failed",
@@ -195,6 +196,7 @@ function normalizeContext(
       height?: number;
       generation?: number;
       ordinal?: number;
+      decodeIndex?: number;
       localFrame?: number;
       rank?: number;
       requestOrdinal?: number;
@@ -224,6 +226,7 @@ function normalizeContext(
     copyInteger(context, normalized, "height");
     copyInteger(context, normalized, "generation");
     copyInteger(context, normalized, "ordinal");
+    copyInteger(context, normalized, "decodeIndex");
     copyInteger(context, normalized, "localFrame");
     copyInteger(context, normalized, "rank");
     copyInteger(context, normalized, "requestOrdinal");
@@ -258,6 +261,7 @@ type IntegerContextKey =
   | "height"
   | "generation"
   | "ordinal"
+  | "decodeIndex"
   | "localFrame"
   | "rank"
   | "requestOrdinal"

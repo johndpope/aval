@@ -1,4 +1,4 @@
-import type { BindingSourceV01 } from "@pixel-point/aval-player-web";
+import type { BindingSource } from "@pixel-point/aval-player-web";
 
 import { AutomaticInputs } from "./automatic-inputs.js";
 import { BindingRouter } from "./binding-router.js";
@@ -19,7 +19,7 @@ export type ElementAutomationSignal =
 
 export interface ElementAutomationAuthority {
   automationSignal(signal: ElementAutomationSignal): void;
-  automaticInput(source: BindingSourceV01): void;
+  automaticInput(source: BindingSource): void;
   send(event: string): boolean;
 }
 

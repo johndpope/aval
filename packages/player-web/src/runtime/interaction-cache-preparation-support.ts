@@ -1,10 +1,10 @@
 import {
   DECODER_WORKER_HARD_LIMITS,
   type DecoderWorkerLimits,
-  type DecoderWorkerMetrics,
-  type DecoderWorkerSample
+  type DecoderWorkerMetrics
 } from "../decoder-worker/protocol.js";
 import type { ManagedDecoderWorkerFrame } from "../decoder-worker/client.js";
+import type { WorkerSampleOutput } from "./worker-samples.js";
 
 interface PreparationWorkerState {
   readonly activeGeneration: number | null;
@@ -24,7 +24,7 @@ export class InteractionCachePreparationTimeoutError extends Error {
 
 export function validateManagedOutput(
   frame: ManagedDecoderWorkerFrame,
-  sample: Readonly<DecoderWorkerSample>,
+  sample: Readonly<WorkerSampleOutput>,
   maximumDecodedBytes: number
 ): void {
   if (
@@ -66,15 +66,16 @@ export function validateMetrics(
   }
   if (
     metrics.resetCalls !== 0 ||
-    metrics.flushCalls !== 0 ||
-    metrics.boundaryFlushCalls !== 0
+    !Number.isSafeInteger(metrics.flushCalls) ||
+    metrics.flushCalls < 0 ||
+    metrics.boundaryFlushCalls !== metrics.flushCalls
   ) {
-    throw new RangeError("worker preparation must not reset or flush");
+    throw new RangeError("worker preparation flush accounting is invalid");
   }
   if (
     metrics.pendingSamples > limits.maxPendingSamples ||
     checkedSum(
-      [metrics.pendingSamples, metrics.submittedFrames, metrics.leasedFrames],
+      [metrics.submittedFrames, metrics.leasedFrames],
       "worker outstanding preparation frames"
     ) > limits.maxOutstandingFrames ||
     metrics.leasedDecodedBytes > limits.maxDecodedBytes

@@ -1,6 +1,6 @@
 import {
   normalizeRuntimeFailure,
-  type BrowserAvcCandidateComposition,
+  type BrowserVideoCandidateComposition,
   type BrowserPresentationPlanes,
   type IntegratedPlayer,
   type MotionPolicy,
@@ -33,7 +33,7 @@ export class BrowserRuntimePlayerOwner implements BrowserRuntimePlayer {
   readonly #participant: ReturnType<PlayerWebPageRuntime["createParticipant"]>;
   readonly #session: RuntimeAssetSession;
   readonly #planes: BrowserPresentationPlanes;
-  readonly #composition: Readonly<BrowserAvcCandidateComposition>;
+  readonly #composition: Readonly<BrowserVideoCandidateComposition>;
   readonly #player: IntegratedPlayer;
   readonly #releaseOwnedPlayer: () => void;
   readonly #fallbackStore: StateFallbackStore;
@@ -61,7 +61,7 @@ export class BrowserRuntimePlayerOwner implements BrowserRuntimePlayer {
     participant: ReturnType<PlayerWebPageRuntime["createParticipant"]>;
     session: RuntimeAssetSession;
     planes: BrowserPresentationPlanes;
-    composition: Readonly<BrowserAvcCandidateComposition>;
+    composition: Readonly<BrowserVideoCandidateComposition>;
     player: IntegratedPlayer;
     metadata: Readonly<BrowserRuntimeMetadata>;
     releaseOwnedPlayer: () => void;
@@ -143,9 +143,12 @@ export class BrowserRuntimePlayerOwner implements BrowserRuntimePlayer {
       visibility: this.#player.visibilitySnapshot(),
       presentation: this.#planes.snapshot(),
       selectedRendition: player.selectedRendition,
-      selectedProfile: this.metadata.renditions.find(
+      selectedCodec: this.metadata.renditions.find(
         ({ id }) => id === player.selectedRendition
-      )?.profile ?? null,
+      )?.codec ?? null,
+      selectedBitDepth: this.metadata.renditions.find(
+        ({ id }) => id === player.selectedRendition
+      )?.bitDepth ?? null,
       transportMode: session.mode,
       declaredFileBytes: session.declaredFileBytes,
       metadataBytes: session.metadataBytes,

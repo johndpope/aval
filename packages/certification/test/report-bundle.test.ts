@@ -344,8 +344,10 @@ function throughputLedger(repetition: number): unknown {
     candidateManifestDigest: "a".repeat(64),
     fixtureDigest: "b".repeat(64),
     selectedRendition: {
-      id: "alpha.1x", profile: "avc-annexb-packed-alpha-v0", codec: "avc1.42E020",
-      codedWidth: 64, codedHeight: 32, frameRateNumerator: 30, frameRateDenominator: 1
+      id: "alpha.1x", codecFamily: "av1", codec: "av01.0.00M.10.0.110.01.01.01.0", bitDepth: 10,
+      codedWidth: 64, codedHeight: 72,
+      alphaLayout: { type: "stacked", colorRect: [0, 0, 64, 32], alphaRect: [0, 40, 64, 32] },
+      frameRateNumerator: 30, frameRateDenominator: 1
     },
     outputs: Array.from({ length: count }, (_, outputOrdinal) => ({
       outputOrdinal,

@@ -257,6 +257,45 @@ describe("player resource host adapters", () => {
     manager.dispose();
   });
 
+  it("keeps an independently admitted canvas resize outside the frozen candidate plan", async () => {
+    const manager = new PageResourceManager();
+    const decoders = new PageDecoderLeases(manager);
+    const account = new PlayerResourceAccount(manager);
+    const canvas = createPlayerCanvasBackingResourceHost(account);
+    const base = [
+      account.reserve("asset-metadata", 5),
+      account.reserve("verified-unit", 11)
+    ];
+    const initialCanvas = await canvas.beginTransition({
+      animatedAllocationBytes: 8
+    });
+    initialCanvas.commit();
+    const allocation = allocationSnapshot({
+      ownedAssetBytes: 16,
+      totalBytes: 51
+    });
+    const plan = await createPlayerCandidateResourceAuthority(
+      account,
+      decoders
+    ).reservePlan(allocation);
+
+    const resizedCanvas = await canvas.beginTransition({
+      animatedAllocationBytes: 12
+    });
+    resizedCanvas.commit();
+
+    expect(() => plan.assertAllocation(allocation)).not.toThrow();
+    expect(account.snapshot().participant?.logicalBytes).toBe(55);
+
+    plan.release();
+    canvas.release();
+    for (const lease of base) lease.release();
+    expect(manager.snapshot().physicalBytes).toBe(0);
+    account.dispose();
+    decoders.dispose();
+    manager.dispose();
+  });
+
   it("rolls earlier categories back when a later reservation exceeds policy", () => {
     const manager = new PageResourceManager({
       maximumDecoderLeases: 2,

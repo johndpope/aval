@@ -1,11 +1,9 @@
-import { describe, expect, it } from "vitest";
 import type { GraphPresentation } from "@pixel-point/aval-graph";
-
-// @ts-expect-error Vite exposes the checked-in binary as a data URL in tests.
-import packedFixtureDataUrl from "../../../../fixtures/conformance/m7/reference-packed.avl?url&inline";
+import { describe, expect, it } from "vitest";
 
 import type { RuntimeAssetCatalog } from "./asset-catalog.js";
-import type { AvcCandidateResourceAuthority } from "./avc-candidate-factory-model.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
+import type { VideoCandidateResourceAuthority } from "./video-candidate-model.js";
 import {
   IntegratedPlayer,
   type IntegratedCandidateAttempt,
@@ -16,6 +14,7 @@ import {
   type IntegratedFallbackStore
 } from "./integrated-player.js";
 import { ManualTimers } from "./integrated-player-preparation-test-support.js";
+import { selectIntegratedTestVideoRendition } from "./integrated-player-video-test-support.js";
 import type { RuntimeDecoderLease, RuntimeDecoderTicket } from "./model.js";
 import { PageDecoderLeases } from "./page-decoder-leases.js";
 import { PageResourceManager } from "./page-resource-manager.js";
@@ -35,7 +34,7 @@ import type {
   RuntimeCanvasResourcePlan
 } from "./canvas-resource-plan.js";
 
-const PACKED_FIXTURE = decodeFixture(packedFixtureDataUrl);
+const VIDEO_FIXTURE = createIntegratedTestAsset();
 
 describe("IntegratedPlayer page participant composition", () => {
   it.each([
@@ -138,9 +137,8 @@ describe("IntegratedPlayer page participant composition", () => {
   it("settles a third player decoder-queued and rebuilds exactly once on grant", async () => {
     const page = await createThreePlayerPage();
     try {
-      await expect(page.players[0]!.prepare()).resolves.toMatchObject({
-        mode: "animated"
-      });
+      const firstResult = await page.players[0]!.prepare();
+      expect(firstResult.mode, JSON.stringify(firstResult)).toBe("animated");
       await expect(page.players[1]!.prepare()).resolves.toMatchObject({
         mode: "animated"
       });
@@ -231,7 +229,7 @@ describe("IntegratedPlayer page participant composition", () => {
     const account = new PlayerResourceAccount(manager);
     const resources = createPlayerWebRuntimeResources(account, decoders);
     const session = await openRuntimeAssetBytes(
-      PACKED_FIXTURE,
+      VIDEO_FIXTURE,
       { resources: resources.assetSession }
     );
     const snapshot = session.snapshot();
@@ -265,6 +263,7 @@ describe("IntegratedPlayer page participant composition", () => {
     const player = new IntegratedPlayer({
       assetSession: session,
       assetSessionOwnership: "external",
+      selectedRendition: selectIntegratedTestVideoRendition(session.catalog),
       participantBinding: resources.participant,
       createFallbackStore: () => store,
       candidateFactory: factory,
@@ -312,7 +311,7 @@ async function createThreePlayerPage(): Promise<ThreePlayerPage> {
     createPlayerWebRuntimeResources(account, decoders)
   );
   const sessions = await Promise.all(resources.map((resource) =>
-    openRuntimeAssetBytes(PACKED_FIXTURE, {
+    openRuntimeAssetBytes(VIDEO_FIXTURE, {
       resources: resource.assetSession
     })
   ));
@@ -322,6 +321,7 @@ async function createThreePlayerPage(): Promise<ThreePlayerPage> {
   const players = sessions.map((session, index) => new IntegratedPlayer({
     assetSession: session,
     assetSessionOwnership: "player",
+    selectedRendition: selectIntegratedTestVideoRendition(session.catalog),
     participantBinding: resources[index]!.participant,
     createFallbackStore: (catalog) => new VerifiedCatalogStaticStore(catalog),
     candidateFactory: factories[index]!,
@@ -386,9 +386,9 @@ class LeaseCandidateFactory implements IntegratedCandidateFactory {
   public liveAttempts = 0;
   public maximumLiveAttempts = 0;
   public readonly resourceHost?: RuntimeCanvasResourceHost;
-  readonly #authority: Readonly<AvcCandidateResourceAuthority>;
+  readonly #authority: Readonly<VideoCandidateResourceAuthority>;
   public constructor(
-    authority: Readonly<AvcCandidateResourceAuthority>,
+    authority: Readonly<VideoCandidateResourceAuthority>,
     resourceHost?: RuntimeCanvasResourceHost
   ) {
     this.#authority = authority;
@@ -410,11 +410,12 @@ class LeaseCandidateFactory implements IntegratedCandidateFactory {
       playback: PLAYBACK,
       prepare: async ({ signal }) => {
         throwIfAborted(signal);
-        ticket = this.#authority.requestDecoder();
+        const requestedTicket = this.#authority.requestDecoder();
+        ticket = requestedTicket;
         try {
-          lease = await ticket.wait();
+          lease = await requestedTicket.wait();
         } catch (error) {
-          ticket.cancel();
+          requestedTicket.cancel();
           throw error;
         }
         throwIfAborted(signal);
@@ -468,10 +469,4 @@ function throwIfAborted(signal: AbortSignal): void {
   throw signal.reason instanceof DOMException
     ? signal.reason
     : new DOMException("participant test operation aborted", "AbortError");
-}
-
-function decodeFixture(dataUrl: string): Uint8Array {
-  const encoded = dataUrl.slice(dataUrl.indexOf(",") + 1);
-  const binary = atob(encoded);
-  return Uint8Array.from(binary, (character) => character.charCodeAt(0));
 }

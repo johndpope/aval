@@ -7,7 +7,7 @@ import {
 import {
   passingEvidence,
   readinessFixture
-} from "./readiness-test-fixture.js";
+} from "./readiness-test-support.js";
 
 describe("pure all-routes readiness evaluator", () => {
   it("enumerates every edge and every valid source-body frame", () => {

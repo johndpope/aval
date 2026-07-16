@@ -1,4 +1,4 @@
-import type { UnitV01 } from "@pixel-point/aval-format";
+import type { Unit } from "@pixel-point/aval-format";
 
 import type { RuntimeCatalogIdIndex } from "./asset-catalog.js";
 import type { InteractionCachePlan } from "./interaction-cache-plan.js";
@@ -9,7 +9,7 @@ import {
 } from "./interaction-cache-preparation-support.js";
 
 export interface InteractionCachePreparationUnitCatalog {
-  readonly units: Pick<RuntimeCatalogIdIndex<UnitV01>, "require">;
+  readonly units: Pick<RuntimeCatalogIdIndex<Unit>, "require">;
 }
 
 export interface UnitPreparation {
@@ -167,13 +167,14 @@ export function validateBatch(
   if (
     batch.generation !== generation ||
     !Array.isArray(batch.samples) ||
-    batch.samples.length !== draft.length
+    !Array.isArray(batch.outputs) ||
+    batch.outputs.length !== draft.length
   ) {
     throw new RangeError("worker sample batch did not match cache preparation");
   }
   for (let index = 0; index < draft.length; index += 1) {
     const requested = draft[index];
-    const sample = batch.samples[index];
+    const sample = batch.outputs[index];
     if (
       requested === undefined ||
       sample === undefined ||

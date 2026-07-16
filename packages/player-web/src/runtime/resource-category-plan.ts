@@ -10,7 +10,7 @@ export type RuntimeResourceAllocationField = Exclude<
   "totalBytes"
 >;
 
-/** Sole mapping from frozen M6 peak terms into M7's closed byte categories. */
+/** Sole mapping from the resource peak into the runtime byte categories. */
 export const RUNTIME_RESOURCE_FIELD_CATEGORIES = Object.freeze({
   ownedAssetBytes: "asset-full",
   maximumEncodedWindowBytes: "worker-transfer",

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CompilerError } from "../src/diagnostics.js";
-import type { SourceProjectV01 } from "../src/model.js";
+import type { SourceProject } from "../src/model.js";
 import { preflightSourceGraph } from "../src/source-graph-preflight.js";
 
 describe("source graph preflight", () => {
@@ -28,10 +28,10 @@ describe("source graph preflight", () => {
   });
 });
 
-function project(): SourceProjectV01 {
+function project(): SourceProject {
   return {
-    projectVersion: "0.1",
-    profile: "avc-annexb-opaque-v0",
+    projectVersion: "1.0",
+    alpha: "opaque",
     canvas: {
       width: 32,
       height: 32,
@@ -50,11 +50,10 @@ function project(): SourceProjectV01 {
       firstNumber: 0,
       frameCount: 6
     }],
-    renditions: [{
-      id: "opaque",
-      codedWidth: 32,
-      codedHeight: 32,
-      bitrate: { average: 300_000, peak: 600_000 }
+    encodings: [{
+      codec: "h264",
+      preset: "medium",
+      renditions: [{ id: "opaque", width: 32, height: 32, crf: 20 }]
     }],
     units: [
       {

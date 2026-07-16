@@ -1,9 +1,9 @@
 import type {
-  BindingSourceV01,
-  BindingV01
+  BindingSource,
+  Binding
 } from "@pixel-point/aval-player-web";
 
-const BINDING_SOURCES: ReadonlySet<BindingSourceV01> = new Set([
+const BINDING_SOURCES: ReadonlySet<BindingSource> = new Set([
   "activate",
   "engagement.off",
   "engagement.on",
@@ -17,8 +17,8 @@ const BINDING_SOURCES: ReadonlySet<BindingSourceV01> = new Set([
 
 export class BindingRouter {
   readonly #send: (event: string) => boolean;
-  #bindings: ReadonlyMap<BindingSourceV01, string> = new Map();
-  #snapshot: readonly Readonly<BindingV01>[] = Object.freeze([]);
+  #bindings: ReadonlyMap<BindingSource, string> = new Map();
+  #snapshot: readonly Readonly<Binding>[] = Object.freeze([]);
   #enabled = true;
 
   public constructor(send: (event: string) => boolean) {
@@ -26,10 +26,10 @@ export class BindingRouter {
     this.#send = send;
   }
 
-  public install(bindings: readonly Readonly<BindingV01>[]): void {
+  public install(bindings: readonly Readonly<Binding>[]): void {
     if (!Array.isArray(bindings)) throw new TypeError("bindings must be an array");
-    const map = new Map<BindingSourceV01, string>();
-    const snapshot: Readonly<BindingV01>[] = [];
+    const map = new Map<BindingSource, string>();
+    const snapshot: Readonly<Binding>[] = [];
     for (const binding of bindings) {
       if (
         binding === null ||
@@ -53,13 +53,13 @@ export class BindingRouter {
     this.#enabled = enabled;
   }
 
-  public route(source: BindingSourceV01): boolean {
+  public route(source: BindingSource): boolean {
     if (!this.#enabled) return false;
     const event = this.#bindings.get(source);
     return event === undefined ? false : this.#send(event);
   }
 
-  public snapshot(): readonly Readonly<BindingV01>[] {
+  public snapshot(): readonly Readonly<Binding>[] {
     return this.#snapshot;
   }
 }

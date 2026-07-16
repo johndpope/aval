@@ -1,4 +1,4 @@
-import type { CompiledManifestV01, EdgeV01 } from "@pixel-point/aval-format";
+import type { CompiledManifest, Edge } from "@pixel-point/aval-format";
 import type {
   GraphEdgeDefinition,
   ValidatedMotionGraph
@@ -37,7 +37,7 @@ export function targetProbeFramesForMetrics(
 }
 
 export function verifyWarmup(
-  manifest: Readonly<CompiledManifestV01>,
+  manifest: Readonly<CompiledManifest>,
   metrics: Readonly<ReadinessMetricsReport>,
   collector: ReadinessFailureCollector
 ): void {
@@ -53,7 +53,7 @@ export function verifyWarmup(
 }
 
 export function verifyLoops(
-  manifest: Readonly<CompiledManifestV01>,
+  manifest: Readonly<CompiledManifest>,
   evidence: ReadonlyMap<string, Readonly<LoopReadinessEvidence>>,
   ringCapacity: number,
   collector: ReadinessFailureCollector
@@ -88,7 +88,7 @@ export function verifyLoops(
 }
 
 export function verifyGraphCorrespondence(
-  manifest: Readonly<CompiledManifestV01>,
+  manifest: Readonly<CompiledManifest>,
   graph: Readonly<ValidatedMotionGraph>,
   graphEdges: ReadonlyMap<string, Readonly<GraphEdgeDefinition>>,
   collector: ReadinessFailureCollector
@@ -215,7 +215,7 @@ export function verifyRoutePhases(
 }
 
 export function verifyCut(
-  edge: Readonly<EdgeV01>,
+  edge: Readonly<Edge>,
   cut: Readonly<CutReadinessEvidence> | undefined,
   collector: ReadinessFailureCollector
 ): void {

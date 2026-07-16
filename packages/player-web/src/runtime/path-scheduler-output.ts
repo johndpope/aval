@@ -1,6 +1,6 @@
 import type { ManagedDecoderWorkerFrame } from "../decoder-worker/client.js";
 import type { GraphBodyDefinition } from "@pixel-point/aval-graph";
-import type { DecoderWorkerSample } from "../decoder-worker/protocol.js";
+import type { WorkerSampleOutput } from "./worker-samples.js";
 import type {
   RuntimeMediaCursor,
   RuntimeMediaPresentation
@@ -18,7 +18,7 @@ import type { SourceBodyCursor } from "./submission-horizon.js";
 
 export interface PathSchedulerExpectedOutput {
   readonly plan: Readonly<PathFramePlan>;
-  readonly sample: Readonly<DecoderWorkerSample>;
+  readonly sample: Readonly<WorkerSampleOutput>;
   readonly expected: Readonly<PresentationRingExpectedFrame> | null;
 }
 
@@ -140,7 +140,7 @@ export class PathSchedulerOutput {
 
   public schedule(
     plans: readonly Readonly<PathFramePlan>[],
-    samples: readonly Readonly<DecoderWorkerSample>[]
+    samples: readonly Readonly<WorkerSampleOutput>[]
   ): readonly Readonly<PathSchedulerExpectedOutput>[] {
     if (plans.length !== samples.length || plans.length < 1) {
       throw new RangeError("scheduled path output relation is invalid");
@@ -274,6 +274,14 @@ export class PathSchedulerOutput {
     let decodedSource: Readonly<SourceBodyCursor> | null = null;
     let decodedTarget: Readonly<SourceBodyCursor> | null = null;
     while (true) {
+      const next = this.#expected[0];
+      if (
+        next !== undefined &&
+        !next.plan.discard &&
+        this.ringSize >= this.#ringCapacity
+      ) {
+        break;
+      }
       const frame = this.#worker.takeFrame();
       if (frame === undefined) break;
       if (frame.generation !== this.#generation) {
@@ -400,7 +408,7 @@ export class PathSchedulerOutput {
 
 function validateManagedOutput(
   frame: ManagedDecoderWorkerFrame,
-  sample: Readonly<DecoderWorkerSample>
+  sample: Readonly<WorkerSampleOutput>
 ): void {
   if (
     frame.ordinal !== sample.ordinal ||

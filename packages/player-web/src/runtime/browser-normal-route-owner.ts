@@ -7,9 +7,9 @@ import {
 import type { BrowserFrameMedia } from "./browser-playback-types.js";
 
 import type {
-  AvcCandidateActivationInput,
-  AvcCandidateReadinessSessionInput
-} from "./avc-candidate-factory.js";
+  VideoCandidateActivationInput,
+  VideoCandidateReadinessSessionInput
+} from "./video-candidate-factory.js";
 import {
   type PathScheduler,
   type PathSchedulerSnapshot
@@ -25,11 +25,15 @@ import {
 import {
   integratedActivationPresentationOrdinal
 } from "./integrated-player-support.js";
+import type {
+  WorkerSampleGroupRequirement,
+  WorkerSampleOutput
+} from "./worker-samples.js";
 
 /** Owns the sole streaming scheduler and all normal/intro media preparation. */
 export class BrowserNormalRouteOwner {
-  readonly #candidate: Readonly<AvcCandidateReadinessSessionInput>;
-  readonly #activation: Readonly<AvcCandidateActivationInput>;
+  readonly #candidate: Readonly<VideoCandidateReadinessSessionInput>;
+  readonly #activation: Readonly<VideoCandidateActivationInput>;
   #scheduler: PathScheduler;
   #lastSnapshot: Readonly<PathSchedulerSnapshot>;
   #prefix: BrowserInitialPrefix | null = null;
@@ -37,8 +41,8 @@ export class BrowserNormalRouteOwner {
   #disposed = false;
 
   public constructor(options: {
-    readonly candidate: Readonly<AvcCandidateReadinessSessionInput>;
-    readonly activation: Readonly<AvcCandidateActivationInput>;
+    readonly candidate: Readonly<VideoCandidateReadinessSessionInput>;
+    readonly activation: Readonly<VideoCandidateActivationInput>;
   }) {
     this.#candidate = options.candidate;
     this.#activation = options.activation;
@@ -180,7 +184,7 @@ export class BrowserNormalRouteOwner {
       return prefix.prepare(expected.frameIndex, activationOrdinal, signal);
     }
     if (expected.kind !== "body") {
-      throw new Error("AVC activation requires intro or body frame zero");
+      throw new Error("video activation requires intro or body frame zero");
     }
     await this.#startBody(expected.state, activationOrdinal);
     return this.#takeAndUpload(false, signal);
@@ -420,21 +424,33 @@ export class BrowserNormalRouteOwner {
 }
 
 class BrowserInitialPrefix {
-  readonly #candidate: Readonly<AvcCandidateReadinessSessionInput>;
+  readonly #candidate: Readonly<VideoCandidateReadinessSessionInput>;
   readonly #state: string;
   readonly #unit: string;
+  readonly #unitFrameCount: number;
   readonly #generation: number;
   #slot = 0;
+  #nextRequestedFrame = 0;
+  #nextSubmissionFrame = 0;
+  readonly #expected: Readonly<WorkerSampleOutput>[] = [];
   #disposed = false;
 
   public constructor(options: {
-    readonly candidate: Readonly<AvcCandidateReadinessSessionInput>;
+    readonly candidate: Readonly<VideoCandidateReadinessSessionInput>;
     readonly state: string;
     readonly unit: string;
   }) {
     this.#candidate = options.candidate;
     this.#state = options.state;
     this.#unit = options.unit;
+    const initialUnit = requireBrowserState(
+      options.candidate,
+      options.state
+    ).initialUnit;
+    if (initialUnit === undefined || initialUnit.unitId !== options.unit) {
+      throw new Error("initial prefix unit disagrees with the graph state");
+    }
+    this.#unitFrameCount = initialUnit.frameCount;
     this.#generation = options.candidate.timeline.activateNextGeneration();
   }
 
@@ -444,35 +460,132 @@ class BrowserInitialPrefix {
     signal: AbortSignal
   ): Promise<Readonly<BrowserNormalReady>> {
     if (this.#disposed) throw new Error("initial prefix is disposed");
+    if (frameIndex !== this.#nextRequestedFrame) {
+      throw new Error("initial prefix presentation order diverged");
+    }
     if (this.#candidate.worker.activeGeneration !== this.#generation) {
       await this.#candidate.worker.activateGeneration(this.#generation);
     }
-    const metrics = await this.#candidate.worker.snapshotMetrics();
-    const batch = this.#candidate.samples.createBatch({
-      frames: [{ unitId: this.#unit, unitFrame: frameIndex }],
-      pendingSamples: metrics.pendingSamples,
-      outstandingFrames: metrics.submittedFrames + metrics.leasedFrames
-    });
-    try {
-      await this.#candidate.worker.submit(this.#generation, batch.samples);
-    } finally {
-      batch.release?.();
+    for (;;) {
+      const frame = this.#candidate.worker.takeFrame();
+      if (frame !== undefined) {
+        const output = this.#expected.shift();
+        if (output === undefined) {
+          frame.close();
+          throw new Error("initial prefix produced an unexpected frame");
+        }
+        try {
+          assertBrowserFrame(frame, output, this.#generation);
+        } catch (error) {
+          frame.close();
+          throw error;
+        }
+        if (output.unitFrame !== frameIndex) {
+          frame.close();
+          throw new Error("initial prefix presentation order diverged");
+        }
+        const handle = await this.#candidate.renderer.uploadStreaming(
+          this.#slot,
+          this.#generation,
+          frame
+        );
+        if (handle === null) {
+          throw new Error("initial prefix upload became stale");
+        }
+        this.#slot = (this.#slot + 1) % FRAME_STREAMING_SLOT_COUNT;
+        this.#nextRequestedFrame += 1;
+        return this.#ready(frameIndex, ordinal, output, handle);
+      }
+      if (this.#candidate.worker.queuedFrames > 0) {
+        throw new Error("initial prefix frame queue is inconsistent");
+      }
+
+      const metrics = await this.#candidate.worker.snapshotMetrics();
+      const requirement = this.#nextRequirement();
+      const outstanding = checkedInitialOutstanding(
+        metrics.submittedFrames,
+        metrics.leasedFrames
+      );
+      if (
+        requirement !== null &&
+        initialRequirementFits(
+          requirement,
+          metrics.pendingSamples,
+          outstanding,
+          this.#candidate.limits
+        )
+      ) {
+        const batch = this.#candidate.samples.createBatch({
+          frames: Array.from(
+            { length: requirement.frameCount },
+            (_, index) => ({
+              unitId: this.#unit,
+              unitFrame: requirement.firstUnitFrame + index
+            })
+          ),
+          pendingSamples: metrics.pendingSamples,
+          outstandingFrames: outstanding
+        });
+        try {
+          await this.#candidate.worker.submit(this.#generation, batch.samples);
+        } finally {
+          batch.release?.();
+        }
+        this.#expected.push(...batch.outputs);
+        this.#nextSubmissionFrame += requirement.frameCount;
+        continue;
+      }
+
+      if (this.#expected.length === 0) {
+        throw new Error("initial prefix cannot make bounded decode progress");
+      }
+      const queuedBefore = this.#candidate.worker.queuedFrames;
+      await this.#candidate.worker.waitForFrames(1, {
+        signal,
+        timeoutMs: BROWSER_RUNTIME_MEDIA_TIMEOUT_MS
+      });
+      if (
+        this.#candidate.worker.queuedFrames <= queuedBefore &&
+        this.#candidate.worker.queuedFrames === 0
+      ) {
+        throw new Error("initial prefix frame wait resolved without output");
+      }
     }
-    await this.#candidate.worker.waitForFrames(1, {
-      signal,
-      timeoutMs: BROWSER_RUNTIME_MEDIA_TIMEOUT_MS
+  }
+
+  #nextRequirement(): Readonly<WorkerSampleGroupRequirement> | null {
+    if (this.#nextSubmissionFrame >= this.#unitFrameCount) return null;
+    const requirement = this.#candidate.samples.nextGroupRequirement({
+      unitId: this.#unit,
+      unitFrame: this.#nextSubmissionFrame
     });
-    const frame = this.#candidate.worker.takeFrame();
-    if (frame === undefined) throw new Error("initial prefix frame is missing");
-    const sample = batch.samples[0]!;
-    assertBrowserFrame(frame, sample, this.#generation);
-    const handle = await this.#candidate.renderer.uploadStreaming(
-      this.#slot,
-      this.#generation,
-      frame
-    );
-    this.#slot = (this.#slot + 1) % 3;
-    if (handle === null) throw new Error("initial prefix upload became stale");
+    if (
+      requirement.unitId !== this.#unit ||
+      requirement.firstUnitFrame !== this.#nextSubmissionFrame ||
+      !Number.isSafeInteger(requirement.frameCount) ||
+      requirement.frameCount < 1 ||
+      !Number.isSafeInteger(requirement.chunkCount) ||
+      requirement.chunkCount < 1 ||
+      requirement.frameCount >
+        this.#unitFrameCount - this.#nextSubmissionFrame ||
+      requirement.frameCount > this.#candidate.limits.maxOutstandingFrames ||
+      requirement.chunkCount > this.#candidate.limits.maxPendingSamples
+    ) {
+      throw new RangeError("initial codec group exceeds configured limits");
+    }
+    return requirement;
+  }
+
+  #ready(
+    frameIndex: number,
+    ordinal: bigint,
+    sample: Readonly<{
+      readonly ordinal: number;
+      readonly unitInstance: number;
+      readonly timestamp: number;
+    }>,
+    handle: StreamingFrameHandle
+  ): Readonly<BrowserNormalReady> {
     return Object.freeze({
       media: Object.freeze({
         kind: "frame",
@@ -503,5 +616,37 @@ class BrowserInitialPrefix {
 
   public dispose(): void {
     this.#disposed = true;
+    this.#expected.length = 0;
   }
+}
+
+function checkedInitialOutstanding(
+  submittedFrames: number,
+  leasedFrames: number
+): number {
+  if (
+    !Number.isSafeInteger(submittedFrames) ||
+    submittedFrames < 0 ||
+    !Number.isSafeInteger(leasedFrames) ||
+    leasedFrames < 0 ||
+    submittedFrames > Number.MAX_SAFE_INTEGER - leasedFrames
+  ) {
+    throw new RangeError("initial prefix outstanding frames are invalid");
+  }
+  return submittedFrames + leasedFrames;
+}
+
+function initialRequirementFits(
+  requirement: Readonly<WorkerSampleGroupRequirement>,
+  pendingSamples: number,
+  outstandingFrames: number,
+  limits: Readonly<VideoCandidateReadinessSessionInput["limits"]>
+): boolean {
+  if (!Number.isSafeInteger(pendingSamples) || pendingSamples < 0) {
+    throw new RangeError("initial prefix pending samples are invalid");
+  }
+  return pendingSamples <= limits.maxPendingSamples &&
+    requirement.chunkCount <= limits.maxPendingSamples - pendingSamples &&
+    outstandingFrames <= limits.maxOutstandingFrames &&
+    requirement.frameCount <= limits.maxOutstandingFrames - outstandingFrames;
 }

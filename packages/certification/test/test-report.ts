@@ -87,7 +87,7 @@ export function validRuntimeReport(): RuntimeCertificationReport {
         webCodecs: true,
         webgl2: true,
         maxTextureSize: 16384,
-        codec: "avc1.42E01E"
+        codec: "avc1.64000A"
       }
     },
     scenarios,

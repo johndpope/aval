@@ -266,6 +266,7 @@ class FakeOwnedFrame {
       unitId: identity.unitId,
       unitInstance: identity.unitInstance,
       unitFrame: identity.unitFrame,
+      decodeIndex: identity.unitFrame,
       timestamp: identity.timestamp,
       duration: identity.duration,
       decodedBytes: 128,

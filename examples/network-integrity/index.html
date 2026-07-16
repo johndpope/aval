@@ -2,7 +2,11 @@
 <html lang="en">
   <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>AVAL integrity</title></head>
   <body>
-    <aval-player id="motion" src="https://assets.example.test/status.012345.avl" integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" crossorigin="anonymous" width="160" height="160">
+    <aval-player id="motion" crossorigin="anonymous" width="160" height="160">
+      <source src="https://assets.example.test/status/av1.avl" type='application/vnd.aval; codecs="av01.0.00M.10.0.110.01.01.01.0"' integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=">
+      <source src="https://assets.example.test/status/vp9.avl" type='application/vnd.aval; codecs="vp09.00.10.08.01.01.01.01.00"' integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=">
+      <source src="https://assets.example.test/status/h265.avl" type='application/vnd.aval; codecs="hvc1.1.6.L93.B0"' integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=">
+      <source src="https://assets.example.test/status/h264.avl" type='application/vnd.aval; codecs="avc1.640028"' integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=">
       <img slot="fallback" src="/status-fallback.png" alt="Current status">
     </aval-player>
     <output id="status">Preparing static fallback…</output>

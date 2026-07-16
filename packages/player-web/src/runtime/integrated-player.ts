@@ -42,6 +42,7 @@ import { RequestPromises } from "./request-promises.js";
 import { admitIntegratedPlayerAssetSource } from "./integrated-player-resource-admission.js";
 import type { RuntimeCanvasResourceLease } from "./canvas-resource-plan.js";
 import { IntegratedContentTicker } from "./integrated-content-ticker.js";
+import { assertSelectedVideoRenditionCatalogIdentity } from "./video-rendition-inspection.js";
 export * from "./integrated-player-contracts.js";
 export type { RuntimeVisibilitySnapshot, RuntimeVisibilityState } from "./model.js";
 /**
@@ -93,6 +94,7 @@ export class IntegratedPlayer {
     // ownership so a hostile or time-varying getter cannot strand them.
     const createFallbackStore = options.createFallbackStore;
     const candidateFactory = options.candidateFactory;
+    const selectedRendition = options.selectedRendition;
     const candidateAvailability = candidateFactory.availability;
     const contextTarget = candidateFactory.contextTarget;
     const availability = Object.freeze({
@@ -128,6 +130,10 @@ export class IntegratedPlayer {
     let contextCandidate: IntegratedPlayerContextBinding | null = null;
     let participantCandidate: IntegratedPlayerParticipantController | null = null;
     try {
+      assertSelectedVideoRenditionCatalogIdentity(
+        this.#catalog,
+        selectedRendition
+      );
       this.#installResult = this.#graph.install(this.#catalog.graph);
       this.#effects = new EffectHost({
         requestPromises: this.#requests,
@@ -217,6 +223,7 @@ export class IntegratedPlayer {
         graph: this.#graph,
         staticPreparation: this.#staticPreparation,
         candidateFactory,
+        selectedRendition,
         availability,
         hostMaxRuntimeBytes,
         residency: this.#assetBinding,

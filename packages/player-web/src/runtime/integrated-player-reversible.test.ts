@@ -10,7 +10,7 @@ import {
   ReversiblePresentationInvariantError,
   type ReversiblePresentationRenderer
 } from "./reversible-presentation.js";
-import { readinessFixture } from "./readiness-test-fixture.js";
+import { readinessFixture } from "./readiness-test-support.js";
 
 describe("resident reversible presentation", () => {
   it("draws the M3 graph's adjacent inverse and selects its source recovery", () => {

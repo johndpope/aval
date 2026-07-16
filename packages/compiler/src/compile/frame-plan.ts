@@ -1,5 +1,5 @@
 import { CompilerError } from "../diagnostics.js";
-import type { MediaProbe, RationalV01 } from "../model.js";
+import type { MediaProbe, Rational } from "../model.js";
 
 export interface PlannedUnitRange {
   readonly id: "intro.default" | "body.default";
@@ -10,7 +10,7 @@ export interface PlannedUnitRange {
 }
 
 export interface DirectFramePlan {
-  readonly frameRate: RationalV01;
+  readonly frameRate: Rational;
   readonly units: readonly PlannedUnitRange[];
   readonly unusedTrailingFrames: number;
   readonly warnings: readonly string[];
@@ -19,7 +19,7 @@ export interface DirectFramePlan {
 export function buildDirectFramePlan(
   probe: MediaProbe,
   loop: readonly [number, number],
-  requestedFps?: RationalV01,
+  requestedFps?: Rational,
   normalizeVfr = false
 ): Readonly<DirectFramePlan> {
   const [startFrame, endFrame] = loop;
@@ -93,7 +93,7 @@ export function buildDirectFramePlan(
   });
 }
 
-function validateFrameRate(value: RationalV01): RationalV01 {
+function validateFrameRate(value: Rational): Rational {
   if (
     !Number.isSafeInteger(value.numerator) ||
     !Number.isSafeInteger(value.denominator) ||
@@ -118,7 +118,7 @@ function validateFrameRate(value: RationalV01): RationalV01 {
   return value;
 }
 
-function sameRational(left: RationalV01, right: RationalV01): boolean {
+function sameRational(left: Rational, right: Rational): boolean {
   return BigInt(left.numerator) * BigInt(right.denominator) ===
     BigInt(right.numerator) * BigInt(left.denominator);
 }

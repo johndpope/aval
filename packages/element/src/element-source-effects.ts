@@ -34,7 +34,7 @@ export async function applyElementSourceEffect(input: Readonly<{
   const document = input.host.ownerDocument;
   const window = document.defaultView;
   const create = snapshot.connected && !snapshot.terminal &&
-    configuration !== null && configuration.src !== "" &&
+    configuration !== null && configuration.sourceCandidates.length > 0 &&
     input.layers.stylesSupported && window !== null;
   if (snapshot.sourceToken === state.appliedToken && state.appliedCreate === create) {
     await state.operation;
@@ -62,7 +62,8 @@ export async function applyElementSourceEffect(input: Readonly<{
     state.operation = input.controller.retire();
     await state.operation;
     try { input.layers.showBestFallback(); } catch { /* terminal layer */ }
-    unsupported = snapshot.connected && configuration?.src !== "" &&
+    unsupported = snapshot.connected &&
+      (configuration?.sourceCandidates.length ?? 0) > 0 &&
       !input.layers.stylesSupported;
   }
   if (input.desired.snapshot().sourceToken === snapshot.sourceToken) {

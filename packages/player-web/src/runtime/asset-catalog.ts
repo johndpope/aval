@@ -3,35 +3,28 @@ import {
   FORMAT_DEFAULT_BUDGETS,
   FormatError,
   validateCompleteAsset,
-  type AvcConstrainedBaselineProfile,
-  type AvcRenditionInspection,
   type ByteRange,
-  type CompiledManifestV01,
-  type EdgeV01,
+  type CompiledManifest,
+  type Edge,
   type ParsedFrontIndex,
-  type RenditionV01,
-  type StateV01,
+  type ProductionRendition,
+  type State,
   type ValidatedAssetLayout,
-  type UnitV01
+  type Unit
 } from "@pixel-point/aval-format";
 
 import {
   buildCatalogMaps,
   checkedCatalogRangeEnd,
+  createCatalogChunkIndex,
   createCatalogIdIndex,
   createCatalogPortIndex,
-  createCatalogRecordIndex,
   runtimeUnitBlobKey,
   type CatalogMaps,
   type RuntimeCatalogIdIndex,
   type RuntimeCatalogPortIndex,
-  type RuntimeCatalogRecordIndex
+  type RuntimeCatalogChunkIndex
 } from "./asset-catalog-index.js";
-import {
-  inspectBorrowedAvcRendition,
-  RUNTIME_CATALOG_AVC_INSPECTION,
-  type BorrowedAvcRenditionPlan
-} from "./borrowed-avc-inspection.js";
 import {
   RuntimePlaybackError,
   normalizeRuntimeFailure,
@@ -50,11 +43,11 @@ import {
 } from "./verified-blob-store.js";
 
 export type {
-  RuntimeCatalogAccessUnit,
+  RuntimeCatalogChunk,
   RuntimeCatalogIdIndex,
   RuntimeCatalogPortEntry,
   RuntimeCatalogPortIndex,
-  RuntimeCatalogRecordIndex
+  RuntimeCatalogChunkIndex
 } from "./asset-catalog-index.js";
 export { runtimeUnitBlobKey } from "./asset-catalog-index.js";
 
@@ -79,9 +72,6 @@ interface CatalogPayloadAuthority {
     relativeOffset: number,
     byteLength: number
   ): Uint8Array<ArrayBuffer>;
-  inspectAvcRendition(
-    plan: Readonly<BorrowedAvcRenditionPlan>
-  ): Readonly<AvcRenditionInspection>;
   snapshot(): Readonly<CatalogPayloadSnapshot>;
   dispose(): void;
 }
@@ -109,12 +99,12 @@ interface CatalogInstallation {
  * and downstream copy method.
  */
 export class RuntimeAssetCatalog {
-  public readonly renditions: RuntimeCatalogIdIndex<RenditionV01>;
-  public readonly units: RuntimeCatalogIdIndex<UnitV01>;
-  public readonly states: RuntimeCatalogIdIndex<StateV01>;
-  public readonly edges: RuntimeCatalogIdIndex<EdgeV01>;
+  public readonly renditions: RuntimeCatalogIdIndex<ProductionRendition>;
+  public readonly units: RuntimeCatalogIdIndex<Unit>;
+  public readonly states: RuntimeCatalogIdIndex<State>;
+  public readonly edges: RuntimeCatalogIdIndex<Edge>;
   public readonly ports: RuntimeCatalogPortIndex;
-  public readonly records: RuntimeCatalogRecordIndex;
+  public readonly chunks: RuntimeCatalogChunkIndex;
   readonly #declaredFileLength: number;
   #mode: RuntimeTransportMode;
   readonly #metadataBytes: number;
@@ -166,7 +156,7 @@ export class RuntimeAssetCatalog {
       (edge) => ({ edge })
     );
     this.ports = createCatalogPortIndex(() => this.#requireMaps().ports);
-    this.records = createCatalogRecordIndex(() => this.#requireMaps().records);
+    this.chunks = createCatalogChunkIndex(() => this.#requireMaps().chunks);
   }
 
   public get disposed(): boolean {
@@ -208,7 +198,7 @@ export class RuntimeAssetCatalog {
     return this.#layout;
   }
 
-  public get manifest(): Readonly<CompiledManifestV01> {
+  public get manifest(): Readonly<CompiledManifest> {
     return this.#requireFrontIndex().manifest;
   }
 
@@ -216,27 +206,19 @@ export class RuntimeAssetCatalog {
     return this.#requireFrontIndex().graph;
   }
 
-  /** @internal Byte-free synchronous inspection over private payload backing. */
-  public [RUNTIME_CATALOG_AVC_INSPECTION](
-    rendition: string,
-    profile: Readonly<AvcConstrainedBaselineProfile>
-  ): Readonly<AvcRenditionInspection> {
-    return this.#inspectAvcRendition(rendition, profile);
-  }
-
   /** A fresh exact-length ArrayBuffer that the caller charges and transfers. */
-  public copySample(
+  public copyChunk(
     rendition: string,
     unit: string,
-    localFrame: number
+    decodeIndex: number
   ): ArrayBuffer {
-    const entry = this.records.require(rendition, unit, localFrame);
+    const entry = this.chunks.require(rendition, unit, decodeIndex);
     const blobKey = requireCatalogBlobKey(entry.blobKey);
     const relativeRange = requireCatalogRelativeRange(entry.relativeRange);
     this.#requireVerifiedBlob(blobKey, {
       rendition,
       unit,
-      localFrame
+      decodeIndex
     });
     return this.#payloads.copyRange(
       blobKey,
@@ -271,41 +253,8 @@ export class RuntimeAssetCatalog {
       maps.states.clear();
       maps.edges.clear();
       maps.ports.clear();
-      maps.records.clear();
+      maps.chunks.clear();
     }
-  }
-
-  #inspectAvcRendition(
-    rendition: string,
-    profile: Readonly<AvcConstrainedBaselineProfile>
-  ): Readonly<AvcRenditionInspection> {
-    this.#throwIfDisposed();
-    const units = this.manifest.units.map((unit) => Object.freeze({
-      id: unit.id,
-      accessUnits: Object.freeze(Array.from(
-        { length: unit.frameCount },
-        (_, localFrame) => {
-          const entry = this.records.require(rendition, unit.id, localFrame);
-          const blobKey = requireCatalogBlobKey(entry.blobKey);
-          const relativeRange = requireCatalogRelativeRange(entry.relativeRange);
-          this.#requireVerifiedBlob(blobKey, {
-            rendition,
-            unit: unit.id,
-            localFrame
-          });
-          return Object.freeze({
-            blobKey,
-            relativeOffset: relativeRange.offset,
-            byteLength: relativeRange.length,
-            key: entry.record.key
-          });
-        }
-      ))
-    }));
-    return this.#payloads.inspectAvcRendition(Object.freeze({
-      profile,
-      units: Object.freeze(units)
-    }));
   }
 
   #requireVerifiedBlob(
@@ -499,7 +448,6 @@ function createVerifiedPayloadAuthority(
 ): CatalogPayloadAuthority {
   const state = store.state;
   const copyRange = store.copyRange;
-  const inspectAvcRendition = store.inspectAvcRendition;
   const snapshot = store.snapshot;
   const dispose = store.dispose;
   return Object.freeze({
@@ -508,9 +456,6 @@ function createVerifiedPayloadAuthority(
     copyRange: (key: string, offset: number, length: number) =>
       Reflect.apply(copyRange, store, [key, offset, length]) as
         Uint8Array<ArrayBuffer>,
-    inspectAvcRendition: (plan: Readonly<BorrowedAvcRenditionPlan>) =>
-      Reflect.apply(inspectAvcRendition, store, [plan]) as
-        Readonly<AvcRenditionInspection>,
     snapshot: (): Readonly<CatalogPayloadSnapshot> => {
       const value = Reflect.apply(snapshot, store, []) as
         Readonly<VerifiedBlobStoreSnapshot>;
@@ -563,44 +508,11 @@ function createOwnedPayloadAuthority(
       const range = requireOwnedRange(ranges, key);
       return copyOwnedBytes(bytes, range, relativeOffset, byteLength);
     },
-    inspectAvcRendition(
-      plan: Readonly<BorrowedAvcRenditionPlan>
-    ): Readonly<AvcRenditionInspection> {
-      return inspectBorrowedOwnedAvcRendition(plan, ranges, bytes);
-    },
     snapshot: () => snapshot(bytes === null),
     dispose(): void {
       bytes = null;
       ranges.clear();
     }
-  });
-}
-
-function inspectBorrowedOwnedAvcRendition(
-  plan: Readonly<BorrowedAvcRenditionPlan>,
-  ranges: ReadonlyMap<string, Readonly<ByteRange>>,
-  bytes: Uint8Array<ArrayBuffer> | null
-): Readonly<AvcRenditionInspection> {
-  if (bytes === null) throw disposedCatalogError();
-  return inspectBorrowedAvcRendition(plan, (key, relativeOffset, byteLength) => {
-    const range = requireOwnedRange(ranges, key);
-    if (
-      !Number.isSafeInteger(relativeOffset) ||
-      !Number.isSafeInteger(byteLength) ||
-      relativeOffset < 0 ||
-      byteLength < 1 ||
-      relativeOffset > range.length ||
-      byteLength > range.length - relativeOffset
-    ) {
-      throw catalogError("invalid-asset", "owned blob borrow range is invalid");
-    }
-    const absoluteOffset = range.offset + relativeOffset;
-    const end = checkedCatalogRangeEnd(
-      absoluteOffset,
-      byteLength,
-      bytes.byteLength
-    );
-    return bytes.subarray(absoluteOffset, end);
   });
 }
 
@@ -683,7 +595,7 @@ function requireCatalogRelativeRange(
   value: Readonly<ByteRange> | undefined
 ): Readonly<ByteRange> {
   if (value === undefined) {
-    throw catalogError("invalid-asset", "asset catalog sample range is missing");
+    throw catalogError("invalid-asset", "asset catalog chunk range is missing");
   }
   return value;
 }

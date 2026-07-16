@@ -37,7 +37,13 @@ function snapshot(sourceToken: number): Readonly<ElementDesiredSnapshot> {
     revision: sourceToken,
     sourceToken,
     configuration: Object.freeze({
-      src: "asset.avl", integrity: "", crossOrigin: "anonymous" as const,
+      sourceCandidates: Object.freeze([Object.freeze({
+        src: "asset.avl",
+        type: 'application/vnd.aval; codecs="avc1.640028"' as const,
+        codec: "avc1.640028",
+        integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+      })]),
+      crossOrigin: "anonymous" as const,
       motion: "auto" as const, autoplay: "visible" as const, fit: null,
       bindings: "auto" as const, state: null, interactionFor: "",
       width: null, height: null

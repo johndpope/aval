@@ -1,7 +1,7 @@
 import type { MotionGraphResult } from "@pixel-point/aval-graph";
 import { describe, expect, it } from "vitest";
 
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import type { RuntimeFailure } from "./errors.js";
 import {
   IntegratedPlayer,
@@ -10,6 +10,7 @@ import {
   type IntegratedPlaybackSession,
   type IntegratedFallbackStore
 } from "./integrated-player.js";
+import { createIntegratedTestVideoSource } from "./integrated-player-video-test-support.js";
 
 describe("IntegratedPlayer terminal disposal", () => {
   it("releases every owner despite trace, candidate, static, and diagnostic throws", async () => {
@@ -17,7 +18,7 @@ describe("IntegratedPlayer terminal disposal", () => {
     const factory = new ThrowingCandidateFactory();
     let diagnostics = 0;
     const player = new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => store,
       candidateFactory: factory,
       diagnosticsSink: (_failure: Readonly<RuntimeFailure>) => {
@@ -67,7 +68,7 @@ describe("IntegratedPlayer terminal disposal", () => {
     const store = new GatedRecoveryStore();
     const factory = new ThrowingCandidateFactory();
     const player = new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => store,
       candidateFactory: factory,
       timers: new IdleTimers()
@@ -94,7 +95,7 @@ describe("IntegratedPlayer terminal disposal", () => {
   it("does not resolve disposal before static decoder callbacks retire", async () => {
     const store = new GatedSettlementStore();
     const player = new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => store,
       candidateFactory: new ThrowingCandidateFactory(),
       timers: new IdleTimers()
@@ -126,7 +127,7 @@ describe("IntegratedPlayer terminal disposal", () => {
         ? new ReentrantCandidateFactory(mode)
         : new ThrowingCandidateFactory();
       const player = new IntegratedPlayer({
-        bytes: createIntegratedOpaqueTestAsset(),
+        ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
         createFallbackStore: () => store,
         candidateFactory: factory,
         timers: new IdleTimers()
@@ -158,7 +159,7 @@ describe("IntegratedPlayer terminal disposal", () => {
     const store = new OrderedStaticStore(order);
     const factory = new GatedReentryCandidateFactory(order);
     const player = new IntegratedPlayer({
-      bytes: createIntegratedOpaqueTestAsset(),
+      ...createIntegratedTestVideoSource(createIntegratedTestAsset()),
       createFallbackStore: () => store,
       candidateFactory: factory,
       motionPolicy: "reduce",

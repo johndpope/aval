@@ -110,8 +110,12 @@ function configuration(
   override: Partial<ElementConfiguration> = {}
 ): Readonly<ElementConfiguration> {
   return Object.freeze({
-    src: "asset.avl",
-    integrity: "",
+    sourceCandidates: Object.freeze([Object.freeze({
+      src: "asset.avl",
+      type: 'application/vnd.aval; codecs="avc1.640028"' as const,
+      codec: "avc1.640028",
+      integrity: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    })]),
     crossOrigin: "anonymous",
     motion: "auto",
     autoplay: "visible",

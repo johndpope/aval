@@ -9,9 +9,9 @@ import {
 
 import { CompilerError } from "./diagnostics.js";
 import type {
-  SourceProjectV01,
-  SourceStateV01,
-  SourceUnitV01
+  SourceProject,
+  SourceState,
+  SourceUnit
 } from "./model.js";
 
 /**
@@ -20,7 +20,7 @@ import type {
  * early pass keeps invalid routes from doing expensive or observable work.
  */
 export function preflightSourceGraph(project: Pick<
-  SourceProjectV01,
+  SourceProject,
   "initialState" | "states" | "edges" | "units"
 >): void {
   const units = new Map(project.units.map((unit) => [unit.id, unit]));
@@ -61,8 +61,8 @@ export function preflightSourceGraph(project: Pick<
 }
 
 function lowerState(
-  state: SourceStateV01,
-  units: ReadonlyMap<string, SourceUnitV01>
+  state: SourceState,
+  units: ReadonlyMap<string, SourceUnit>
 ): GraphStateDefinition {
   const body = requireUnit(units, state.bodyUnit, "body");
   const base = {
@@ -86,8 +86,8 @@ function lowerState(
 }
 
 function lowerTransition(
-  transition: SourceProjectV01["edges"][number]["transition"] & {},
-  units: ReadonlyMap<string, SourceUnitV01>
+  transition: SourceProject["edges"][number]["transition"] & {},
+  units: ReadonlyMap<string, SourceUnit>
 ): GraphTransitionDefinition {
   if (transition.kind === "locked") {
     const unit = requireUnit(units, transition.unit, "bridge");
@@ -109,11 +109,11 @@ function lowerTransition(
     : Object.freeze({ ...base, reverseOf: transition.reverseOf });
 }
 
-function requireUnit<K extends SourceUnitV01["kind"]>(
-  units: ReadonlyMap<string, SourceUnitV01>,
+function requireUnit<K extends SourceUnit["kind"]>(
+  units: ReadonlyMap<string, SourceUnit>,
   id: string,
   kind: K
-): Extract<SourceUnitV01, { readonly kind: K }> {
+): Extract<SourceUnit, { readonly kind: K }> {
   const unit = units.get(id);
   if (unit?.kind !== kind) {
     throw new CompilerError(
@@ -121,9 +121,9 @@ function requireUnit<K extends SourceUnitV01["kind"]>(
       `Unit ${JSON.stringify(id)} must be a ${kind} unit`
     );
   }
-  return unit as Extract<SourceUnitV01, { readonly kind: K }>;
+  return unit as Extract<SourceUnit, { readonly kind: K }>;
 }
 
-function frameCount(unit: SourceUnitV01): number {
+function frameCount(unit: SourceUnit): number {
   return unit.range[1] - unit.range[0];
 }

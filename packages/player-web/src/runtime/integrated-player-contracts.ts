@@ -17,10 +17,8 @@ import type {
   RuntimeTraceRecord,
   RuntimeVisibilityState
 } from "./model.js";
-import type {
-  RuntimeAvcRenditionCandidate,
-  RuntimeAvcRenditionInspection
-} from "./avc-rendition-selection.js";
+import type { VideoCodecAdapterInspection } from "./video-codec-adapters.js";
+import type { VideoRenditionCandidate } from "./video-rendition-selection.js";
 import type { RealtimeUnderflowEvent } from "./realtime-driver.js";
 import type { MotionPolicy } from "./motion-policy.js";
 import type { RuntimeCanvasResourceHost } from "./canvas-resource-plan.js";
@@ -29,11 +27,6 @@ import type { RuntimeAssetSession } from "./runtime-asset-session.js";
 import type {
   IntegratedPlayerParticipantBinding
 } from "./integrated-player-participant.js";
-
-type SuccessfulRenditionInspection = Extract<
-  RuntimeAvcRenditionInspection,
-  { readonly ok: true }
->;
 
 export interface IntegratedFallbackStore {
   installInitial(options: {
@@ -60,8 +53,10 @@ export interface IntegratedFallbackStore {
 
 export interface IntegratedCandidateAttemptContext {
   readonly catalog: RuntimeAssetCatalog;
-  readonly candidate: Readonly<RuntimeAvcRenditionCandidate>;
-  readonly inspection: SuccessfulRenditionInspection["inspection"];
+  /** Exact authored rung selected before candidate construction. */
+  readonly candidate: Readonly<VideoRenditionCandidate>;
+  /** Byte-free inspection for that exact catalog/rendition pair. */
+  readonly inspection: Readonly<VideoCodecAdapterInspection>;
   readonly graphSnapshot: Readonly<MotionGraphSnapshot>;
   readonly hostMaxRuntimeBytes: number | null;
 }
@@ -77,7 +72,7 @@ export interface IntegratedCandidateActivationOptions
   readonly expectedPresentation: Readonly<GraphPresentation>;
 }
 
-/** Opaque-by-identity token backed by candidate-owned prepared draw state. */
+/** Identity token backed by candidate-owned prepared draw state. */
 export interface IntegratedPreparedActivation {
   readonly expectedPresentation: Readonly<GraphPresentation>;
 }
@@ -180,6 +175,8 @@ interface IntegratedPlayerCommonOptions {
     catalog: RuntimeAssetCatalog
   ) => IntegratedFallbackStore;
   readonly candidateFactory: IntegratedCandidateFactory;
+  /** Selection authority; IntegratedPlayer never re-ranks or reselects it. */
+  readonly selectedRendition: Readonly<VideoRenditionCandidate>;
   readonly eventSink?: (event: Readonly<EffectHostEvent>) => void;
   readonly diagnosticsSink?: (failure: Readonly<RuntimeFailure>) => void;
   readonly hostMaxRuntimeBytes?: number;

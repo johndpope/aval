@@ -5,7 +5,6 @@ const browserBaseUrl = `http://127.0.0.1:${browserPort}`;
 
 export default defineConfig({
   testDir: "./tests/browser",
-  testIgnore: ["**/m9-*.spec.ts"],
   fullyParallel: false,
   // Browser suites include cadence and decoder/GPU resource assertions.
   // Cross-file workers would benchmark unrelated proofs against each other

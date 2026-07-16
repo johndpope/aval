@@ -1,16 +1,13 @@
 # AVAL
 
-AVAL is a web-only format and runtime for short prerendered animation
-with continuous partial loops, user-defined states, authored triggers, bounded
-transitions, packed transparency, and host-owned fallback markup.
+AVAL is a web format and runtime for short prerendered motion with continuous
+loops, named application states, authored triggers, bounded transitions,
+reversals, and packed transparency.
 
-The central idea is simple: encode independently decodable motion units and a
-small deterministic state graph in one `.avl` asset. The browser keeps a
-decoder timeline moving forward across a loop instead of seeking a video file
-at every seam. Hover, focus, application state, reversals, portals, finite
-bodies, and held states are graph routes rather than hand-timed media seeks.
-
-It's an early **technical preview**, so things will be changing fast and will get into a more stable shape within the next couple of weeks.
+One logical animation is published as a codec bundle. Each codec gets its own
+AVAL 1.0 file—AV1, VP9, H.265/HEVC, or H.264—and the browser selects the first
+ordered `<source>` with a supported rendition. The state graph and authored
+timing are identical in every file.
 
 ## Five-minute start
 
@@ -24,65 +21,105 @@ npm run dev
 ```
 
 Here `npx avl` resolves the `avl` executable from the compiler package
-installed on the preceding line.
+installed on the preceding line. The generated starter contains its RGBA
+frames, project 1.0 file, four ordered encoding policies, fallback markup, and
+watch workflow.
 
-Open the printed loopback URL. That generated starter includes its frames,
-project, fallback markup, exact package dependencies, and watch workflow. The
-following is illustrative integration markup for a package-aware web build
-after you publish or copy a compiled asset into your application:
+For a normal build, the compiler publishes a directory rather than a single
+output file:
+
+```sh
+npx avl compile motion.json --out dist/motion
+```
+
+```text
+dist/motion/
+  av1.avl
+  vp9.avl
+  h265.avl
+  h264.avl
+  build.json
+```
+
+## Browser integration
+
+Use literal direct-child sources in preference order. The exact codec strings
+and SHA-256 SRI values come from `build.json`; the values below are
+illustrative.
 
 ```html
-<script type="module" src="/motion.js"></script>
-
-<aval-player src="/my-motion.avl" width="320" height="320">
-  <img slot="fallback" src="/my-motion.png" alt="">
+<aval-player width="320" height="320">
+  <source
+    src="/motion/av1.avl"
+    type='application/vnd.aval; codecs="av01.0.00M.10.0.110.01.01.01.0"'
+    integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  >
+  <source
+    src="/motion/vp9.avl"
+    type='application/vnd.aval; codecs="vp09.00.10.08.01.01.01.01.00"'
+    integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  >
+  <source
+    src="/motion/h265.avl"
+    type='application/vnd.aval; codecs="hvc1.1.6.L93.B0"'
+    integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  >
+  <source
+    src="/motion/h264.avl"
+    type='application/vnd.aval; codecs="avc1.640028"'
+    integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  >
+  <img slot="fallback" src="/motion.png" alt="">
 </aval-player>
+
+<script type="module" src="/motion.js"></script>
 ```
 
 ```js
-// motion.js, resolved by your package-aware web build
+// motion.js, resolved by a package-aware web build
 import { defineAvalElement } from "@pixel-point/aval-element";
 defineAvalElement();
 ```
 
-A one-state asset loops with no seeking code. Multi-state assets keep their
-own names and triggers; applications can set any authored state:
+The `<aval-player>` host does not carry `src` or `integrity`; those belong to
+each codec candidate. If no candidate is supported, the author-owned fallback
+remains visible. Applications can select any authored state without media
+seeking code:
 
-```ts
+```js
 const motion = document.querySelector("aval-player");
 await motion?.setState("success");
 ```
 
-## Local end-user playground
+## Codec and compression model
 
-To check the consumer experience from this repository with a real interactive
-asset, run:
+A project has an ordered, codec-major `encodings` array. Each codec owns its
+rendition ladder and constant-quality CRF settings. H.264 and H.265 expose
+compression presets; VP9 exposes `deadline` and `cpuUsed`; AV1 exposes
+`bitDepth`, `cpuUsed`, `tiles`, `rowMt`, and `threads`. Slower modes such as
+`veryslow`, VP9 `best`, and AV1 `cpuUsed: 0` are supported.
 
-```sh
-npm install
-npm run playground
-```
+Encoding has no default wall-clock media timeout. Builds that need a deadline
+can opt in with `--media-timeout-ms`. The compiler records sanitized tool
+invocations, exact MIME codec strings, per-file hashes, and copyable source
+markup in `build.json`.
 
-Open the printed loopback URL. The permanent example uses workspace packages,
-includes its compiled asset and fallback image, and does not require FFmpeg at
-runtime. Hover, focus, or use the toggle to move between its authored states.
+The compiler uses caller-installed FFmpeg and FFprobe with the requested
+`libx264`, `libx265`, `libvpx-vp9`, and `libaom-av1` encoders. It bundles and
+downloads no native codec tool. Codec, patent, source-media, and distribution
+obligations remain the publisher's responsibility.
 
-The element package is SSR-safe. Its root exports an explicit definition
-helper; the opt-in `@pixel-point/aval-element/auto` entry is the only automatic
-registration side effect.
+## Packages
 
-## What is included
-
-- `@pixel-point/aval-graph`: deterministic latest-wins state and route engine;
-- `@pixel-point/aval-format`: strict wire `0.1` parser, validator, and writer;
-- `@pixel-point/aval-compiler`: project `0.3` authoring and CLI;
-- `@pixel-point/aval-player-web`: bounded web loader, decoder scheduler,
-  renderer, fallback-state signaling, and page resource manager; and
+- `@pixel-point/aval-graph`: deterministic state and route engine.
+- `@pixel-point/aval-format`: strict AVAL wire 1.0 parser, validator, and writer.
+- `@pixel-point/aval-compiler`: project 1.0 authoring API and bundle compiler.
+- `@pixel-point/aval-player-web`: bounded loader, codec probing, decoder
+  scheduling, renderer, and page resource management.
 - `@pixel-point/aval-element`: markup-first public browser component.
 
-The compiler uses caller-installed FFmpeg/FFprobe and libx264; it never bundles
-or downloads native codec tools. Codec, patent, source-media, and distribution
-obligations remain the publisher's responsibility.
+The element package is SSR-safe. Its root exports explicit registration;
+`@pixel-point/aval-element/auto` is the opt-in automatic-registration entry.
 
 ## Develop and verify
 
@@ -96,6 +133,7 @@ npm run build
 npm run test:browser:reference
 ```
 
+<<<<<<< HEAD
 Browser animation is capability-probed. Unsupported WebCodecs/WebGL/AVC
 configurations leave the element's optional host-owned fallback slot visible.
 
@@ -108,23 +146,20 @@ configurations leave the element's optional host-owned fallback slot visible.
 - Render some cool stuff in 3D for the demo instead of that AI-generated loop that I was not able to make look the way I wanted to actually showcase the uninterruptible animation.
 - Runtime bundle size optimization
 
+=======
+>>>>>>> fa8dda2 (feat: support of h265, av1, vp9 codex inside avl container)
 ## Documentation
 
 - [Quick start](docs/quick-start.md)
 - [States and triggers](docs/states-and-triggers.md)
 - [Element API](docs/element-api.md)
 - [Compiler](docs/compiler.md)
+- [Project schema 1.0](docs/project/1.0.md)
+- [Wire format 1.0](docs/format/1.0.md)
 - [Preparing video and authoring states](docs/compiler/authoring-video-and-states.md)
 - [Network and integrity](docs/network-and-integrity.md)
 - [Accessibility and reduced motion](docs/accessibility-and-motion.md)
 - [Performance and budgets](docs/performance-and-budgets.md)
 - [Browser support](docs/browser-support.md)
 - [Versioning](docs/versioning.md)
-- [Certification method](docs/certification/method.md)
 - [Security policy](SECURITY.md)
-
-Functional Playwright evidence is not a branded-browser or physical-display
-certificate. Runtime scheduling certification applies only to exact published
-named profiles. Physical display continuity requires a separate qualifying
-observed-display report; browser callback, decoder, GPU-fence, screenshot, and
-canvas-readback timestamps are insufficient by themselves.

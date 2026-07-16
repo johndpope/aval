@@ -27,9 +27,16 @@ import {
   resolveRealPathWithinRoot,
   startDevServer
 } from "../src/commands/dev-server.js";
+import type {
+  DevServerAsset,
+  DevServerBuild
+} from "../src/commands/dev-server.js";
 
 const roots: string[] = [];
 const TEST_SESSION_TOKEN = "a".repeat(43);
+const BUILD_REPORT_BYTES = new TextEncoder().encode(
+  '{"assets":[],"reportVersion":"1.0"}'
+);
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) =>
@@ -43,7 +50,7 @@ describe("loopback dev server", () => {
     roots.push(root);
     let physical: ReturnType<typeof createServer> | null = null;
     const server = await startDevServer({
-      assetPath: join(root, "motion.avl"),
+      bundlePath: join(root, "motion"),
       port: 0,
       createHttpServer: ((handler: Parameters<typeof createServer>[0]) => {
         physical = createServer(handler);
@@ -52,50 +59,26 @@ describe("loopback dev server", () => {
     });
     physical!.emit("error", new Error("injected post-bind failure"));
     await expect(server.closed).rejects.toMatchObject({ code: "IO_FAILED" });
-    expect(() => server.publish({
-      generation: 1,
-      bytes: 1,
-      sha256: "0".repeat(64),
-      warnings: []
-    })).toThrow("closed");
+    expect(() => server.publish(devBuild(1))).toThrow("closed");
     await server.close();
   });
 
-  it("serves the latest valid asset with exact range/entity headers", async () => {
+  it("serves every published bundle file with exact range/entity headers", async () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-"));
     roots.push(root);
-    const path = join(root, "motion.avl");
+    const bundlePath = join(root, "motion");
+    const path = join(bundlePath, "h264.avl");
     const bytes = Uint8Array.from({ length: 64 }, (_, index) => index);
     const digest = createHash("sha256").update(bytes).digest("hex");
-    await writeFile(path, bytes);
-    const server = await startDevServer({ assetPath: path, port: 0 });
+    await mkdir(bundlePath);
+    await Promise.all([
+      writeFile(path, bytes),
+      writeFile(join(bundlePath, "build.json"), BUILD_REPORT_BYTES)
+    ]);
+    const server = await startDevServer({ bundlePath, port: 0 });
     try {
-      server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: digest,
-        warnings: [],
-        report: {
-          frameRate: "30/1 fps",
-          units: [{
-            id: "idle.body",
-            kind: "body",
-            frameRange: [8, 16],
-            timeRange: ["0.266667s", "0.533333s"]
-          }],
-          geometry: {
-            visibleWidth: 64,
-            visibleHeight: 64,
-            codedWidth: 64,
-            codedHeight: 128
-          },
-          alpha: "packed",
-          continuityPassed: 4,
-          continuityCuts: 0,
-          alphaAuditedFrames: 16
-        }
-      });
-      const response = await fetch(new URL("asset.avl#v=1", server.url), {
+      server.publish(devBuild(1, [devAsset("h264", bytes)]));
+      const response = await fetch(new URL("h264.avl#v=1", server.url), {
         headers: { Range: "bytes=8-15" }
       });
       expect(response.status).toBe(206);
@@ -103,7 +86,7 @@ describe("loopback dev server", () => {
       expect(response.headers.get("content-encoding")).toBe("identity");
       expect(response.headers.get("etag")).toBe(`"aval-${digest}"`);
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes.subarray(8, 16));
-      const full = await fetch(new URL("asset.avl", server.url), {
+      const full = await fetch(new URL("h264.avl", server.url), {
         headers: {
           Range: "bytes=8-15",
           "If-Range": '"different-entity"'
@@ -111,19 +94,14 @@ describe("loopback dev server", () => {
       });
       expect(full.status).toBe(200);
       expect(new Uint8Array(await full.arrayBuffer())).toEqual(bytes);
-      const head = await fetch(new URL("asset.avl", server.url), { method: "HEAD" });
+      const head = await fetch(new URL("h264.avl", server.url), { method: "HEAD" });
       expect(head.headers.get("content-length")).toBe("64");
       expect(await head.text()).toBe("");
-      const report = await (await fetch(new URL("report.json", server.url))).json() as {
-        report?: unknown;
-      };
-      expect(report.report).toMatchObject({
-        frameRate: "30/1 fps",
-        alpha: "packed",
-        continuityPassed: 4
-      });
-      expect((await fetch(new URL("asset.avl", server.url), { method: "POST" })).status).toBe(405);
-      const invalidRange = await fetch(new URL("asset.avl", server.url), {
+      const report = await fetch(new URL("build.json", server.url));
+      expect(report.headers.get("content-type")).toContain("application/json");
+      expect(new Uint8Array(await report.arrayBuffer())).toEqual(BUILD_REPORT_BYTES);
+      expect((await fetch(new URL("h264.avl", server.url), { method: "POST" })).status).toBe(405);
+      const invalidRange = await fetch(new URL("h264.avl", server.url), {
         headers: { Range: "bytes=100-200" }
       });
       expect(invalidRange.status).toBe(416);
@@ -131,7 +109,7 @@ describe("loopback dev server", () => {
       expect(invalidRange.headers.get("content-range")).toBe("bytes */64");
       expect(invalidRange.headers.get("etag")).toBe(`"aval-${digest}"`);
       expect(await invalidRange.json()).toEqual({ error: "invalid-range" });
-      const invalidRangeHead = await fetch(new URL("asset.avl", server.url), {
+      const invalidRangeHead = await fetch(new URL("h264.avl", server.url), {
         method: "HEAD",
         headers: { Range: "bytes=0-" }
       });
@@ -142,7 +120,7 @@ describe("loopback dev server", () => {
       ));
       expect(await invalidRangeHead.text()).toBe("");
       await writeFile(path, Uint8Array.from({ length: 64 }, () => 255));
-      expect((await fetch(new URL("asset.avl", server.url))).status).toBe(503);
+      expect((await fetch(new URL("h264.avl", server.url))).status).toBe(503);
     } finally {
       await server.close();
     }
@@ -152,12 +130,12 @@ describe("loopback dev server", () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-port-"));
     roots.push(root);
     const first = await startDevServer({
-      assetPath: join(root, "first.avl"),
+      bundlePath: join(root, "first"),
       port: 0
     });
     const port = Number(new URL(first.url).port);
     await expect(startDevServer({
-      assetPath: join(root, "second.avl"),
+      bundlePath: join(root, "second"),
       port
     })).rejects.toMatchObject({ code: "IO_FAILED" });
     const stream = await fetch(new URL("events", first.url));
@@ -168,15 +146,16 @@ describe("loopback dev server", () => {
     await expect(reader.read()).resolves.toMatchObject({ done: true });
   });
 
-  it("reports no asset before the first successful publication", async () => {
+  it("reports no bundle files before the first successful publication", async () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-empty-"));
     roots.push(root);
     const server = await startDevServer({
-      assetPath: join(root, "missing.avl"),
+      bundlePath: join(root, "missing"),
       port: 0
     });
     try {
-      expect((await fetch(new URL("asset.avl", server.url))).status).toBe(404);
+      expect((await fetch(new URL("h264.avl", server.url))).status).toBe(404);
+      expect((await fetch(new URL("build.json", server.url))).status).toBe(404);
       const page = await fetch(server.url);
       expect(page.status).toBe(200);
       const csp = page.headers.get("content-security-policy") ?? "";
@@ -193,6 +172,8 @@ describe("loopback dev server", () => {
       const client = await (await fetch(new URL("client.js", server.url))).text();
       expect(client).toContain("getDiagnostics({trace:false})");
       expect(client).toContain("getDiagnostics({trace:true})");
+      expect(client).toContain('document.createElement("source")');
+      expect(client).not.toContain("motion.src=");
       expect(client).not.toContain("const render=()=>{const diagnostics=motion.getDiagnostics({trace:true})");
     } finally {
       await server.close();
@@ -202,7 +183,7 @@ describe("loopback dev server", () => {
   it("serves compiler-context package modules only below the opaque session URL", async () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-modules-"));
     roots.push(root);
-    const server = await startDevServer({ assetPath: join(root, "motion.avl"), port: 0 });
+    const server = await startDevServer({ bundlePath: join(root, "motion"), port: 0 });
     try {
       const module = await fetch(new URL("modules/element/index.js", server.url));
       expect(module.status).toBe(200);
@@ -228,7 +209,7 @@ describe("loopback dev server", () => {
   it("requires the exact dynamic Host, opaque session path, Origin, and Fetch Metadata", async () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-authority-"));
     roots.push(root);
-    const server = await startDevServer({ assetPath: join(root, "motion.avl"), port: 0 });
+    const server = await startDevServer({ bundlePath: join(root, "motion"), port: 0 });
     try {
       const url = new URL(server.url);
       expect(url.pathname).toMatch(/^\/[A-Za-z0-9_-]{43}\/$/u);
@@ -305,80 +286,55 @@ describe("loopback dev server", () => {
   it("bounds publication metadata and detects a changed asset before serving", async () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-bounds-"));
     roots.push(root);
-    const path = join(root, "motion.avl");
+    const bundlePath = join(root, "motion");
+    const path = join(bundlePath, "h264.avl");
     const bytes = Uint8Array.from([1, 2, 3, 4]);
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    await writeFile(path, bytes);
-    const server = await startDevServer({ assetPath: path, port: 0 });
+    await mkdir(bundlePath);
+    await Promise.all([
+      writeFile(path, bytes),
+      writeFile(join(bundlePath, "build.json"), BUILD_REPORT_BYTES)
+    ]);
+    const valid = devBuild(1, [devAsset("h264", bytes)]);
+    const server = await startDevServer({ bundlePath, port: 0 });
     try {
       expect(() => server.publish({
-        generation: 1,
-        bytes: FORMAT_DEFAULT_BUDGETS.maxFileBytes + 1,
-        sha256: digest,
-        warnings: []
+        ...valid,
+        assets: [{
+          ...valid.assets[0]!,
+          bytes: FORMAT_DEFAULT_BUDGETS.maxFileBytes + 1
+        }]
       })).toThrow(TypeError);
       expect(() => server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: `${digest}0`,
-        warnings: []
+        ...valid,
+        assets: [{ ...valid.assets[0]!, sha256: `${valid.assets[0]!.sha256}0` }]
       })).toThrow(TypeError);
       expect(() => server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: digest,
+        ...valid,
         warnings: Array.from({ length: 65 }, () => "warning")
       })).toThrow(TypeError);
       expect(() => server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: digest,
+        ...valid,
         warnings: ["w".repeat(513)]
       })).toThrow(TypeError);
-      server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: digest,
-        warnings: []
-      });
-      expect(() => server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: digest,
-        warnings: []
-      })).toThrow(TypeError);
-      expect(() => server.publish({
-        generation: 0,
-        bytes: bytes.byteLength,
-        sha256: digest,
-        warnings: []
-      })).toThrow(TypeError);
-      server.publish({
-        generation: 2,
-        bytes: bytes.byteLength,
-        sha256: digest,
-        warnings: ["bounded warning"]
-      });
+      server.publish(valid);
+      expect(() => server.publish(valid)).toThrow(TypeError);
+      expect(() => server.publish({ ...valid, generation: 0 })).toThrow(TypeError);
+      server.publish({ ...devBuild(2, [devAsset("h264", bytes)]), warnings: ["bounded warning"] });
       await truncate(path, bytes.byteLength + 1);
-      expect((await fetch(new URL("asset.avl", server.url))).status).toBe(503);
+      expect((await fetch(new URL("h264.avl", server.url))).status).toBe(503);
     } finally {
       await server.close();
     }
-    expect(() => server.publish({
-      generation: 3,
-      bytes: bytes.byteLength,
-      sha256: digest,
-      warnings: []
-    })).toThrow(TypeError);
+    expect(() => server.publish(devBuild(3, [devAsset("h264", bytes)]))).toThrow(TypeError);
   });
 
-  it("rejects non-loopback runtime hosts and malformed asset paths", async () => {
+  it("rejects non-loopback runtime hosts and malformed bundle paths", async () => {
     await expect(startDevServer({
-      assetPath: "motion.avl",
+      bundlePath: "motion",
       port: 0,
       host: "0.0.0.0" as "127.0.0.1"
     })).rejects.toMatchObject({ code: "CLI_USAGE" });
-    await expect(startDevServer({ assetPath: " ", port: 0 })).rejects.toMatchObject({
+    await expect(startDevServer({ bundlePath: " ", port: 0 })).rejects.toMatchObject({
       code: "CLI_USAGE"
     });
   });
@@ -386,25 +342,24 @@ describe("loopback dev server", () => {
   it("publishes one bounded SSE build event and ends it on close", async () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-events-"));
     roots.push(root);
-    const path = join(root, "motion.avl");
-    const bytes = Uint8Array.from([1, 2, 3, 4]);
-    const digest = createHash("sha256").update(bytes).digest("hex");
-    await writeFile(path, bytes);
-    const server = await startDevServer({ assetPath: path, port: 0 });
+    const bundlePath = join(root, "motion");
+    const h264 = Uint8Array.from([1, 2, 3, 4]);
+    const vp9 = Uint8Array.from([5, 6, 7]);
+    const server = await startDevServer({ bundlePath, port: 0 });
     const stream = await fetch(new URL("events", server.url));
     const reader = stream.body!.getReader();
     try {
       server.publish({
-        generation: 1,
-        bytes: bytes.byteLength,
-        sha256: digest,
+        ...devBuild(1, [devAsset("vp9", vp9), devAsset("h264", h264)]),
         warnings: ["ready"]
       });
       const first = await reader.read();
       expect(first.done).toBe(false);
-      expect(new TextDecoder().decode(first.value)).toContain(
-        `event: build\ndata: {"generation":1,"src":"asset.avl#v=1"`
-      );
+      const event = new TextDecoder().decode(first.value);
+      expect(event).toContain(`event: build\ndata: {"generation":1,"sources":[`);
+      expect(event.indexOf('"codec":"vp9"')).toBeLessThan(event.indexOf('"codec":"h264"'));
+      expect(event).toContain('"src":"vp9.avl#v=1"');
+      expect(event).toContain('"buildReport":{"src":"build.json#v=1"');
     } finally {
       await server.close();
     }
@@ -415,7 +370,7 @@ describe("loopback dev server", () => {
     const root = await mkdtemp(join(tmpdir(), "aval-dev-server-client-cap-"));
     roots.push(root);
     const server = await startDevServer({
-      assetPath: join(root, "motion.avl"),
+      bundlePath: join(root, "motion"),
       port: 0
     });
     const streams: Response[] = [];
@@ -640,4 +595,43 @@ function statusOf(response: string): number {
   const match = /^HTTP\/1\.1 ([0-9]{3})/u.exec(response);
   if (match === null) throw new Error(`raw response lacks an HTTP status: ${response.slice(0, 80)}`);
   return Number(match[1]);
+}
+
+function devAsset(
+  codec: DevServerAsset["codec"],
+  bytes: Uint8Array
+): Readonly<DevServerAsset> {
+  const codecString = {
+    h264: "avc1.42C01E",
+    h265: "hvc1.1.6.L93.90",
+    vp9: "vp09.00.10.08",
+    av1: "av01.0.04M.08"
+  }[codec];
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  return Object.freeze({
+    codec,
+    path: `${codec}.avl`,
+    bytes: bytes.byteLength,
+    sha256,
+    type: `application/vnd.aval; codecs="${codecString}"`,
+    integrity: `sha256-${Buffer.from(sha256, "hex").toString("base64")}`
+  });
+}
+
+function devBuild(
+  generation: number,
+  assets: readonly Readonly<DevServerAsset>[] = [
+    devAsset("h264", Uint8Array.of(1))
+  ]
+): Readonly<DevServerBuild> {
+  return Object.freeze({
+    generation,
+    assets: Object.freeze([...assets]),
+    buildReport: Object.freeze({
+      path: "build.json",
+      bytes: BUILD_REPORT_BYTES.byteLength,
+      sha256: createHash("sha256").update(BUILD_REPORT_BYTES).digest("hex")
+    }),
+    warnings: Object.freeze([])
+  });
 }

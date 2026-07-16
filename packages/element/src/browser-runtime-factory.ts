@@ -3,9 +3,11 @@ import {
   IntegratedPlayer,
   PlayerWebPageRuntime,
   StateFallbackStore,
-  createBrowserAvcCandidateComposition,
-  type BindingV01,
-  type BrowserAvcCandidateComposition,
+  createBrowserVideoCandidateComposition,
+  createSourceSupportProbe,
+  selectVideoSource,
+  type Binding,
+  type BrowserVideoCandidateComposition,
   type EffectHostEvent,
   type MotionPolicy,
   type PresentationFit,
@@ -25,7 +27,10 @@ import {
   captureCleanupReceipt,
   settleCleanupOperation
 } from "./cleanup-receipt.js";
-import type { AvalCleanupReceipt } from "./public-types.js";
+import type {
+  AvalCleanupReceipt,
+  AvalSourceCandidate
+} from "./public-types.js";
 import { RuntimeAcquisitionCleanupError } from "./runtime-acquisition-error.js";
 
 export type {
@@ -40,8 +45,7 @@ export interface BrowserRuntimeFactoryInput {
   readonly layers: ShadowLayerOwner;
   readonly generation: number;
   readonly elementGeneration: number;
-  readonly source: string;
-  readonly integrity: string;
+  readonly sourceCandidates: readonly Readonly<AvalSourceCandidate>[];
   readonly credentials: "same-origin" | "include";
   readonly motionPolicy: MotionPolicy;
   readonly hostReducedMotion: boolean;
@@ -73,7 +77,7 @@ export async function createBrowserRuntimePlayer(
   const participantId = participant.snapshot().account.participantId;
   let session: RuntimeAssetSession | null = null;
   let planes: BrowserPresentationPlanes | null = null;
-  let composition: Readonly<BrowserAvcCandidateComposition> | null = null;
+  let composition: Readonly<BrowserVideoCandidateComposition> | null = null;
   let player: IntegratedPlayer | null = null;
   let releaseOwnedPlayer: (() => void) | null = null;
   let fallbackStore: StateFallbackStore | null = null;
@@ -112,13 +116,37 @@ export async function createBrowserRuntimePlayer(
     }
   };
   try {
-    const url = new URL(input.source, input.document.baseURI);
-    session = await participant.openAsset({
-      url,
-      credentials: input.credentials,
+    if (input.sourceCandidates.length === 0) {
+      throw new TypeError("AVAL runtime requires at least one source candidate");
+    }
+    const sourceSelection = await selectVideoSource({
+      candidates: Object.freeze(input.sourceCandidates.map((candidate, authoredIndex) =>
+        Object.freeze({
+          ...candidate,
+          authoredIndex,
+          url: new URL(candidate.src, input.document.baseURI)
+        })
+      )),
       signal: input.signal,
-      ...(input.integrity === "" ? {} : { integrity: input.integrity })
+      open: (candidate, signal) => participant.openAsset({
+        url: candidate.url,
+        credentials: input.credentials,
+        signal,
+        ...(candidate.integrity === ""
+          ? {}
+          : { integrity: candidate.integrity })
+      }),
+      createProbe: () => createSourceSupportProbe(),
+      isResourceEligible: (rendition, _candidate, openedSession) =>
+        rendition.decodedStorage.rgbaBytes <=
+          openedSession.catalog.manifest.limits.maxRuntimeBytes,
+      async accept({ rendition }) {
+        // Preserve the selector-owned immutable rung itself. Passing only its
+        // ID would allow the downstream player to accidentally re-rank.
+        return rendition;
+      }
     });
+    session = sourceSelection.session;
     const catalog = session.catalog;
     const manifest = catalog.manifest;
     const metadata = captureMetadata(manifest);
@@ -134,7 +162,7 @@ export async function createBrowserRuntimePlayer(
       }),
       backingResources: participant.resources.canvasBacking
     });
-    composition = createBrowserAvcCandidateComposition({
+    composition = createBrowserVideoCandidateComposition({
       canvas: input.layers.animatedCanvas,
       presentationPlanes: planes,
       resourceAuthority: participant.resources.candidate,
@@ -145,6 +173,7 @@ export async function createBrowserRuntimePlayer(
     player = new IntegratedPlayer({
       assetSession: session,
       assetSessionOwnership: "external",
+      selectedRendition: sourceSelection.value,
       candidateFactory: composition.factory,
       participantBinding: participant.resources.participant,
       createFallbackStore(runtimeCatalog) {
@@ -217,8 +246,12 @@ function captureMetadata(manifest: Readonly<{
   edges: readonly Readonly<{
     trigger?: Readonly<{ type: string; name?: string }>;
   }>[];
-  bindings: readonly Readonly<BindingV01>[];
-  renditions: readonly Readonly<{ id: string; profile: string }>[];
+  bindings: readonly Readonly<Binding>[];
+  renditions: readonly Readonly<{
+    id: string;
+    codec: string;
+    bitDepth: 8 | 10;
+  }>[];
   canvas: Readonly<{
     width: number;
     height: number;
@@ -246,7 +279,11 @@ function captureMetadata(manifest: Readonly<{
       Object.freeze({ source: binding.source, event: binding.event })
     )),
     renditions: Object.freeze(manifest.renditions.map((rendition) =>
-      Object.freeze({ id: rendition.id, profile: rendition.profile })
+      Object.freeze({
+        id: rendition.id,
+        codec: rendition.codec,
+        bitDepth: rendition.bitDepth
+      })
     )),
     canvas: Object.freeze({
       width: manifest.canvas.width,

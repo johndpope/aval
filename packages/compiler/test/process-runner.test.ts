@@ -59,6 +59,22 @@ describe("bounded process runner", () => {
     expect(result.exitCode).toBe(0);
   });
 
+  it("runs without a deadline when timeoutMs is omitted", async () => {
+    const result = await runBoundedProcess({
+      executable: execPath,
+      arguments: [
+        "-e",
+        "setTimeout(() => process.stdout.write('done'), 30)"
+      ],
+      cwd: cwd(),
+      limits: {
+        maxStdoutBytes: 1_024,
+        maxStderrBytes: 1_024
+      }
+    });
+    expect(new TextDecoder().decode(result.stdout)).toBe("done");
+  });
+
   it("kills output overflow before retaining excess bytes", async () => {
     await expect(runBoundedProcess({
       executable: execPath,

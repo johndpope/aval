@@ -1,4 +1,8 @@
-import type { RenditionV01, UnitV01 } from "@pixel-point/aval-format";
+import {
+  deriveVideoRenditionGeometry,
+  type ProductionRendition,
+  type Unit
+} from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -10,7 +14,7 @@ import type {
   DecoderWorkerWaitOptions,
   ManagedDecoderWorkerFrame
 } from "../decoder-worker/client.js";
-import type { RuntimeCatalogAccessUnit } from "./asset-catalog.js";
+import type { RuntimeCatalogChunk } from "./asset-catalog.js";
 import { DecodeTimeline } from "./decode-timeline.js";
 import {
   InteractionCachePreparationTimeoutError,
@@ -23,12 +27,13 @@ import {
   type InteractionCachePlan
 } from "./interaction-cache-plan.js";
 import {
-  OpaqueFrameRenderer,
+  FrameRenderer,
   type CopyableVideoFrame,
-  type OpaqueFrameRendererBackend,
-  type OpaqueFrameTextureLayout,
-  type OpaqueTextureKind
-} from "./opaque-frame-renderer.js";
+  type FrameRendererBackend,
+  type FrameTextureKind,
+  type FrameTextureLayout
+} from "./frame-renderer.js";
+import type { VideoCodecAdapterInspection } from "./video-codec-adapters.js";
 import {
   WorkerSampleFactory,
   type WorkerSampleCatalog
@@ -282,13 +287,20 @@ function createFixture(options: FixtureOptions = {}) {
     catalog,
     timeline,
     rendition: "opaque",
+    inspection: inspectionFor(units),
     limits
   });
   const worker = new FakeWorker(generation, plan.bytesPerFrame, options);
   const backend = new FakeBackend();
-  const renderer = new OpaqueFrameRenderer(backend, {
-    codedWidth: plan.width,
-    codedHeight: plan.height,
+  const renderer = new FrameRenderer(backend, {
+    geometry: deriveVideoRenditionGeometry({
+      canvasWidth: plan.width,
+      canvasHeight: plan.height,
+      layout: "opaque",
+      visibleWidth: plan.width,
+      visibleHeight: plan.height,
+      storage: { widthAlignment: 2, heightAlignment: 2 }
+    }),
     logicalWidth: plan.width,
     logicalHeight: plan.height,
     residentLayerCount: plan.layerCount
@@ -348,62 +360,61 @@ function cut(edge: string, unit: string, frames: readonly number[]) {
 
 class FakeCatalog
 implements WorkerSampleCatalog, InteractionCachePreparationUnitCatalog {
-  readonly #units: ReadonlyMap<string, Readonly<UnitV01>>;
+  readonly #units: ReadonlyMap<string, Readonly<Unit>>;
   readonly #unitOrdinals: ReadonlyMap<string, number>;
 
   public readonly renditions = {
-    require: (id: string): Readonly<RenditionV01> => {
+    require: (id: string): Readonly<ProductionRendition> => {
       if (id !== "opaque") throw new RangeError("unknown rendition");
       return {
         id,
-        profile: "avc-annexb-opaque-v0",
-        codec: "avc1.42E020",
+        codec: "avc1.640020",
+        bitDepth: 8,
         codedWidth: 2,
         codedHeight: 2,
-        alphaLayout: { type: "opaque-v0", colorRect: [0, 0, 2, 2] },
-        bitrate: { average: 1, peak: 1 },
-        capabilities: ["webcodecs", "webgl2"]
+        alphaLayout: { type: "opaque", colorRect: [0, 0, 2, 2] },
+        bitrate: { average: 1, peak: 1 }
       };
     }
   };
 
   public readonly units = {
-    require: (id: string): Readonly<UnitV01> => {
+    require: (id: string): Readonly<Unit> => {
       const unit = this.#units.get(id);
       if (unit === undefined) throw new RangeError(`unknown unit ${id}`);
       return unit;
     }
   };
 
-  public readonly records = {
+  public readonly chunks = {
     require: (
       rendition: string,
       unit: string,
-      localFrame: number
-    ): Readonly<RuntimeCatalogAccessUnit> => {
+      decodeIndex: number
+    ): Readonly<RuntimeCatalogChunk> => {
       const descriptor = this.units.require(unit);
       const unitIndex = this.#unitOrdinals.get(unit);
       if (
         rendition !== "opaque" ||
         unitIndex === undefined ||
-        localFrame < 0 ||
-        localFrame >= descriptor.frameCount
+        decodeIndex < 0 ||
+        decodeIndex >= descriptor.frameCount
       ) {
-        throw new RangeError("unknown access unit");
+        throw new RangeError("unknown encoded chunk");
       }
       return {
         rendition,
         unit,
-        localFrame,
-        ordinal: localFrame,
+        decodeIndex,
+        ordinal: decodeIndex,
         range: { offset: 0, length: 1 },
         record: {
-          payloadOffset: 0,
-          payloadLength: 1,
-          unitIndex,
-          renditionIndex: 0,
-          key: localFrame === 0,
-          frameIndex: localFrame
+          byteOffset: 0,
+          byteLength: 1,
+          presentationTimestamp: decodeIndex * 33_333,
+          duration: 33_333,
+          randomAccess: decodeIndex === 0,
+          displayedFrameCount: 1
         }
       };
     }
@@ -414,28 +425,66 @@ implements WorkerSampleCatalog, InteractionCachePreparationUnitCatalog {
       left < right ? -1 : left > right ? 1 : 0
     );
     this.#unitOrdinals = new Map(entries.map(([id], index) => [id, index]));
-    this.#units = new Map(entries.map(([id, frameCount]) => [id, {
-      id,
-      kind: "one-shot" as const,
-      frameCount,
-      samples: [{
-        rendition: "opaque",
-        sampleStart: 0,
-        sampleCount: frameCount,
-        sha256: "0".repeat(64)
-      }]
-    }]));
+    let chunkStart = 0;
+    this.#units = new Map(entries.map(([id, frameCount]) => {
+      const unit: Readonly<Unit> = {
+        id,
+        kind: "one-shot" as const,
+        frameCount,
+        chunks: [{
+          rendition: "opaque",
+          chunkStart,
+          chunkCount: frameCount,
+          frameCount,
+          sha256: "0".repeat(64)
+        }]
+      };
+      chunkStart += frameCount;
+      return [id, unit] as const;
+    }));
   }
 
-  public copySample(
+  public copyChunk(
     _rendition: string,
     unit: string,
-    localFrame: number
+    decodeIndex: number
   ): ArrayBuffer {
     const unitIndex = this.#unitOrdinals.get(unit);
     if (unitIndex === undefined) throw new RangeError("unknown unit");
-    return Uint8Array.of(unitIndex * 16 + localFrame).buffer;
+    return Uint8Array.of(unitIndex * 16 + decodeIndex).buffer;
   }
+}
+
+function inspectionFor(
+  units: Readonly<Record<string, number>>
+): Readonly<VideoCodecAdapterInspection> {
+  return Object.freeze({
+    family: "h264",
+    bitstream: "annex-b",
+    bitDepth: 8,
+    decoderConfig: Object.freeze({
+      codec: "avc1.640020",
+      codedWidth: 2,
+      codedHeight: 2
+    }),
+    units: Object.freeze(Object.entries(units)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([id, frameCount]) => Object.freeze({
+        id,
+        displayedFrameCount: frameCount,
+        submissions: Object.freeze(Array.from(
+          { length: frameCount },
+          (_, decodeIndex) => Object.freeze({
+            decodeIndex,
+            chunkType: decodeIndex === 0 ? "key" as const : "delta" as const,
+            presentationTimestamp: decodeIndex * 33_333,
+            duration: 33_333,
+            displayedFrameCount: 1,
+            presentationIndices: Object.freeze([decodeIndex])
+          })
+        ))
+      })))
+  });
 }
 
 interface PendingSample {
@@ -491,7 +540,7 @@ class FakeWorker implements InteractionCachePreparationWorker {
     return this.#submitted.map(({ sample }) => [
       sample.unitId,
       sample.unitInstance,
-      sample.unitFrame
+      sample.presentationIndices[0] ?? -1
     ]);
   }
 
@@ -599,15 +648,27 @@ class FakeWorker implements InteractionCachePreparationWorker {
   }
 
   #enqueueFrame(pending: PendingSample): void {
-    const metadata = this.#options.corruptFirstOutput === true && !this.#corrupted
-      ? { ...pending.sample, unitFrame: pending.sample.unitFrame + 1 }
-      : pending.sample;
+    const unitFrame = pending.sample.presentationIndices[0];
+    if (unitFrame === undefined) {
+      throw new Error("fake worker cannot emit a hidden chunk");
+    }
+    const output = {
+      ordinal: pending.sample.presentationOrdinalBase + unitFrame,
+      unitId: pending.sample.unitId,
+      unitInstance: pending.sample.unitInstance,
+      unitFrame: this.#options.corruptFirstOutput === true && !this.#corrupted
+        ? unitFrame + 1
+        : unitFrame,
+      decodeIndex: pending.sample.decodeIndex,
+      timestamp: pending.sample.presentationTimestamp,
+      duration: pending.sample.duration
+    };
     this.#corrupted = true;
     let frame: FakeManagedFrame;
     frame = new FakeManagedFrame({
       frameId: this.#nextFrameId,
       generation: pending.generation,
-      sample: metadata,
+      output,
       decodedBytes: this.#decodedBytes,
       tag: pending.tag,
       uploadGate: this.#options.gateStage === "upload"
@@ -651,6 +712,7 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   public readonly unitId: string;
   public readonly unitInstance: number;
   public readonly unitFrame: number;
+  public readonly decodeIndex: number;
   public readonly timestamp: number;
   public readonly duration: number;
   public readonly decodedBytes: number;
@@ -660,7 +722,15 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   public constructor(input: {
     readonly frameId: number;
     readonly generation: number;
-    readonly sample: Omit<DecoderWorkerSample, "data">;
+    readonly output: Readonly<{
+      ordinal: number;
+      unitId: string;
+      unitInstance: number;
+      unitFrame: number;
+      decodeIndex: number;
+      timestamp: number;
+      duration: number;
+    }>;
     readonly decodedBytes: number;
     readonly tag: number;
     readonly uploadGate: Gate | undefined;
@@ -668,12 +738,13 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   }) {
     this.frameId = input.frameId;
     this.generation = input.generation;
-    this.ordinal = input.sample.ordinal;
-    this.unitId = input.sample.unitId;
-    this.unitInstance = input.sample.unitInstance;
-    this.unitFrame = input.sample.unitFrame;
-    this.timestamp = input.sample.timestamp;
-    this.duration = input.sample.duration;
+    this.ordinal = input.output.ordinal;
+    this.unitId = input.output.unitId;
+    this.unitInstance = input.output.unitInstance;
+    this.unitFrame = input.output.unitFrame;
+    this.decodeIndex = input.output.decodeIndex;
+    this.timestamp = input.output.timestamp;
+    this.duration = input.output.duration;
     this.decodedBytes = input.decodedBytes;
     this.frame = new FakeVideoFrame(
       input.tag,
@@ -738,7 +809,7 @@ class FakeVideoFrame implements CopyableVideoFrame {
   }
 }
 
-class FakeBackend implements OpaqueFrameRendererBackend {
+class FakeBackend implements FrameRendererBackend {
   public readonly limits = Object.freeze({
     maxTextureSize: 4_096,
     maxArrayTextureLayers: 128
@@ -747,12 +818,12 @@ class FakeBackend implements OpaqueFrameRendererBackend {
   public failUpload = false;
 
   public allocate(
-    _layout: OpaqueFrameTextureLayout,
+    _layout: FrameTextureLayout,
     _streamingSlots: number
   ): void {}
 
   public upload(
-    kind: OpaqueTextureKind,
+    kind: FrameTextureKind,
     layer: number,
     pixels: Uint8Array
   ): void {

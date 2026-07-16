@@ -1,169 +1,129 @@
-import { encodeReferenceFrame } from "../src/reference-frame.js";
 import type {
-  CanonicalAssetInputV01,
-  CompiledManifestInputV01,
-  CompiledManifestV01,
+  CanonicalAssetInput,
+  CompiledManifest,
+  CompiledManifestInput,
   ParsedFrontIndex
 } from "../src/model.js";
 import { validManifest } from "./manifest-fixture.js";
 
-function manifestInputFromCompiled(
-  manifest: CompiledManifestV01
-): CompiledManifestInputV01 {
+function manifestInputFromCompiled(manifest: CompiledManifest): CompiledManifestInput {
   const { units, ...rest } = manifest;
   return {
     ...rest,
     units: units.map((unit) => {
-      const { samples, ...fields } = unit;
+      const { chunks, ...fields } = unit;
       return {
         ...fields,
-        samples: samples.map(({ rendition, sha256 }) => ({ rendition, sha256 }))
+        chunks: chunks.map(({ rendition, sha256 }) => ({ rendition, sha256 }))
       };
     })
-  } as CompiledManifestInputV01;
+  } as CompiledManifestInput;
 }
 
 export interface WriterFixtureOptions {
   readonly generatorSuffix?: string;
 }
 
-/** A fresh valid writer input with real AVRF samples. */
+/** A fresh valid writer input with one encoded chunk per displayed frame. */
 export function validWriterInput(
   options: WriterFixtureOptions = {}
-): CanonicalAssetInputV01 {
+): CanonicalAssetInput {
   const compiled = validManifest();
   const baseManifest = manifestInputFromCompiled(compiled);
-  const manifest: CompiledManifestInputV01 = {
+  const manifest: CompiledManifestInput = {
     ...baseManifest,
     generator: baseManifest.generator + (options.generatorSuffix ?? "")
   };
-
   let ordinal = 0;
-  const accessUnits = compiled.renditions.flatMap((rendition) =>
+  const chunks = compiled.renditions.flatMap((rendition) =>
     compiled.units.flatMap((unit) =>
-      Array.from({ length: unit.frameCount }, (_, frameIndex) => {
-        const bytes = encodeReferenceFrame({
-          width: rendition.codedWidth,
-          height: rendition.codedHeight,
-          frameIndex,
-          rgba: new Uint8Array(
-            rendition.codedWidth * rendition.codedHeight * 4
-          ).fill(ordinal++ & 0xff)
-        });
-        return {
-          rendition: rendition.id,
-          unit: unit.id,
-          frameIndex,
-          key: true,
-          bytes
-        };
-      })
+      Array.from({ length: unit.frameCount }, (_, decodeIndex) => ({
+        rendition: rendition.id,
+        unit: unit.id,
+        decodeIndex,
+        presentationTimestamp: decodeIndex,
+        duration: 1,
+        randomAccess: decodeIndex === 0,
+        displayedFrameCount: 1,
+        bytes: new Uint8Array([0, 0, 1, ordinal++ & 0xff])
+      }))
     )
   );
-  return { manifest, accessUnits };
+  return { manifest, chunks };
 }
 
-/** Extend the compact fixture to exercise rendition-major canonicalization. */
-export function twoRenditionWriterInput(): CanonicalAssetInputV01 {
+/** Extend the compact fixture to exercise authored rendition order. */
+export function twoRenditionWriterInput(): CanonicalAssetInput {
   const input = validWriterInput();
   const original = input.manifest.renditions[0]!;
-  if (original.profile !== "reference-rgba-v0") {
-    throw new Error("writer fixture expects its reference rendition first");
-  }
-  const alternate = { ...original, id: "alternate" };
+  const alternate = { ...original, id: "alternate", bitrate: { average: 500, peak: 1_000 } };
   const units = input.manifest.units.map((unit) => ({
     ...unit,
-    samples: [
-      { rendition: alternate.id, sha256: unit.samples[0]!.sha256 },
-      ...unit.samples
+    chunks: [
+      { rendition: alternate.id, sha256: unit.chunks[0]!.sha256 },
+      ...unit.chunks
     ]
-  })) as CompiledManifestInputV01["units"];
+  })) as CompiledManifestInput["units"];
   return {
-    ...input,
     manifest: {
       ...input.manifest,
       renditions: [alternate, original],
       units
     },
-    accessUnits: [
-      ...input.accessUnits.map((sample) => ({
-        ...sample,
+    chunks: [
+      ...input.chunks.map((chunk) => ({
+        ...chunk,
         rendition: alternate.id,
-        bytes: sample.bytes.slice()
+        bytes: chunk.bytes.slice()
       })),
-      ...input.accessUnits
+      ...input.chunks
     ]
   };
 }
 
-/** Build unchecked AVC payload lengths for large fixed-point offset boundaries. */
-export function avcWriterInput(extraPayloadBytes: number): CanonicalAssetInputV01 {
+/** Add bytes to the first chunk for large-offset boundary tests. */
+export function largeChunkWriterInput(extraPayloadBytes: number): CanonicalAssetInput {
   if (!Number.isSafeInteger(extraPayloadBytes) || extraPayloadBytes < 0) {
     throw new Error("extra payload bytes must be a nonnegative safe integer");
   }
   const input = validWriterInput();
-  let remaining = extraPayloadBytes;
-  const accessUnits = input.accessUnits.map((sample, ordinal) => {
-    const extra = remaining;
-    remaining -= extra;
-    return {
-      ...sample,
-      bytes: new Uint8Array(1 + extra).fill(ordinal & 0xff)
-    };
-  });
-  if (remaining !== 0) throw new Error("test payload capacity was exceeded");
   return {
     ...input,
     manifest: {
       ...input.manifest,
-      renditions: [{
-        id: "reference",
-        profile: "avc-annexb-opaque-v0",
-        codec: "avc1.42E020",
-        codedWidth: 16,
-        codedHeight: 16,
-        alphaLayout: { type: "opaque-v0", colorRect: [0, 0, 2, 2] },
-        bitrate: { average: 1_000, peak: 2_000 },
-        capabilities: ["webcodecs", "webgl2"]
-      }],
       limits: {
         ...input.manifest.limits,
-        maxCompiledBytes: Math.max(
-          32 * 1024 * 1024,
-          extraPayloadBytes + 1024 * 1024
-        ),
-        decodedPixelBytes: 1_024,
-        runtimeWorkingSetBytes: 1_024
+        maxCompiledBytes: Math.max(32 * 1024 * 1024, extraPayloadBytes + 1024 * 1024)
       }
     },
-    accessUnits
+    chunks: input.chunks.map((chunk, ordinal) =>
+      ordinal === 0
+        ? { ...chunk, bytes: new Uint8Array(1 + extraPayloadBytes).fill(ordinal & 0xff) }
+        : chunk
+    )
   };
 }
 
-/** Rebuild writer metadata from parsed values while reusing caller payloads. */
 export function writerInputFromParsed(
   front: ParsedFrontIndex,
-  payloads: Pick<CanonicalAssetInputV01, "accessUnits">
-): CanonicalAssetInputV01 {
+  payloads: Pick<CanonicalAssetInput, "chunks">
+): CanonicalAssetInput {
   return {
     manifest: manifestInputFromCompiled(front.manifest),
-    accessUnits: payloads.accessUnits
+    chunks: payloads.chunks
   };
 }
 
-/** Reverse all semantically unordered input arrays without changing meaning. */
-export function shuffledWriterInput(
-  input: CanonicalAssetInputV01
-): CanonicalAssetInputV01 {
+/** Reverse semantically unordered input collections without changing meaning. */
+export function shuffledWriterInput(input: CanonicalAssetInput): CanonicalAssetInput {
   return {
     manifest: {
       ...input.manifest,
-      renditions: [...input.manifest.renditions].reverse(),
       units: [...input.manifest.units].reverse().map((unit) => {
         if (unit.kind === "body") {
           return {
             ...unit,
-            samples: [...unit.samples].reverse(),
+            chunks: [...unit.chunks].reverse(),
             ports: [...unit.ports].reverse().map((port) => ({
               ...port,
               portalFrames: [...port.portalFrames].reverse()
@@ -173,7 +133,7 @@ export function shuffledWriterInput(
         if (unit.kind === "reversible") {
           return {
             ...unit,
-            samples: [...unit.samples].reverse(),
+            chunks: [...unit.chunks].reverse(),
             residency: {
               endpoints: [...unit.residency.endpoints].reverse() as [
                 typeof unit.residency.endpoints[0],
@@ -182,7 +142,7 @@ export function shuffledWriterInput(
             }
           };
         }
-        return { ...unit, samples: [...unit.samples].reverse() };
+        return { ...unit, chunks: [...unit.chunks].reverse() };
       }),
       states: [...input.manifest.states].reverse(),
       edges: [...input.manifest.edges].reverse(),
@@ -193,7 +153,7 @@ export function shuffledWriterInput(
         immediateEdges: [...input.manifest.readiness.immediateEdges].reverse()
       }
     },
-    accessUnits: [...input.accessUnits].reverse()
+    chunks: [...input.chunks].reverse()
   };
 }
 

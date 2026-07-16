@@ -1,12 +1,12 @@
 import {
-  maximumAvcDecodedRgbaBytes,
-  type CompiledManifestV01,
-  type RenditionV01
+  maximumH264DecodedRgbaBytes,
+  type CompiledManifest,
+  type ProductionRendition
 } from "@pixel-point/aval-format";
 
 import type {
   RuntimeAssetCatalog,
-  RuntimeCatalogAccessUnit
+  RuntimeCatalogChunk
 } from "./asset-catalog.js";
 import {
   STREAMING_TEXTURE_LAYER_COUNT,
@@ -43,7 +43,7 @@ export const MAX_RESOURCE_RING_CAPACITY = 12;
 
 export interface RuntimeResourceCatalogView
 extends RuntimeCanvasResourceCatalogView {
-  readonly records: Pick<RuntimeAssetCatalog["records"], "require">;
+  readonly chunks: Pick<RuntimeAssetCatalog["chunks"], "require">;
 }
 
 export interface RuntimeResourcePlanInput {
@@ -111,7 +111,7 @@ export function createRuntimeResourcePlan(
   }
 
   const manifest = input.catalog.manifest;
-  const rendition = requireProductionAvcRendition(manifest, input.rendition);
+  const rendition = requireProductionVideoRendition(manifest, input.rendition);
   if (
     input.interactionCache.rendition !== rendition.id ||
     input.interactionCache.width !== rendition.codedWidth ||
@@ -146,9 +146,9 @@ export function createRuntimeResourcePlan(
     rendition.id,
     RESOURCE_DECODE_SURFACE_COUNT
   ));
-  const decodedPerSurface = BigInt(maximumAvcDecodedRgbaBytes(
-    rendition.codedWidth,
-    rendition.codedHeight
+  const decodedPerSurface = BigInt(maximumDecodedRgbaBytes(
+    manifest,
+    rendition
   ));
   const decodedSurfaces = decodedPerSurface *
     BigInt(RESOURCE_DECODE_SURFACE_COUNT);
@@ -249,11 +249,10 @@ export function withRuntimeResourceRingCapacity(
 }
 
 /**
- * Find the greatest exact encoded-byte sum accepted by the sequential worker.
- * A window may begin at any frame. Inside an occurrence it must advance in
- * local-frame order; only a complete unit boundary may start a new independently
- * decodable unit occurrence. This excludes impossible jumps between large
- * mid-unit samples while covering every legal M5 worker occurrence sequence.
+ * Find the greatest encoded-byte sum accepted by the sequential worker.
+ * Chunks advance in decode order. Their displayed-frame counts consume output
+ * credit, while hidden chunks still consume encoded bytes. A unit boundary may
+ * continue at the first chunk of any independently decodable unit.
  */
 export function maximumActualEncodedWindowBytes(
   catalog: RuntimeResourceCatalogView,
@@ -262,82 +261,121 @@ export function maximumActualEncodedWindowBytes(
 ): number {
   validatePositiveSafeInteger(frameLimit, "encoded window frame limit");
   const manifest = catalog.manifest;
-  requireProductionAvcRendition(manifest, rendition);
+  requireProductionVideoRendition(manifest, rendition);
   const nodes: {
-    readonly record: Readonly<RuntimeCatalogAccessUnit>;
-    readonly next: number | null;
+    readonly record: Readonly<RuntimeCatalogChunk>;
+    readonly next: readonly number[];
   }[] = [];
   const firstNodes: number[] = [];
 
   for (const unit of manifest.units) {
+    const span = unit.chunks.find((candidate) => candidate.rendition === rendition);
+    if (span === undefined) {
+      throw new RangeError(`selected rendition is missing unit ${unit.id}`);
+    }
     const firstNode = nodes.length;
     firstNodes.push(firstNode);
-    for (let localFrame = 0; localFrame < unit.frameCount; localFrame += 1) {
-      const record = catalog.records.require(rendition, unit.id, localFrame);
+    for (let decodeIndex = 0; decodeIndex < span.chunkCount; decodeIndex += 1) {
+      const record = catalog.chunks.require(rendition, unit.id, decodeIndex);
       validatePositiveSafeInteger(
         record.range.length,
-        `encoded sample ${unit.id}/${String(localFrame)} bytes`
+        `encoded chunk ${unit.id}/${String(decodeIndex)} bytes`
+      );
+      validateNonNegativeSafeInteger(
+        record.record.displayedFrameCount,
+        `encoded chunk ${unit.id}/${String(decodeIndex)} displayed frames`
       );
       nodes.push({
         record,
-        next: localFrame + 1 < unit.frameCount ? nodes.length + 1 : null
+        next: decodeIndex + 1 < span.chunkCount
+          ? Object.freeze([nodes.length + 1])
+          : Object.freeze([])
       });
     }
   }
   if (nodes.length < 1) {
-    throw new RangeError("selected rendition has no encoded samples");
+    throw new RangeError("selected rendition has no encoded chunks");
   }
 
-  let previous = nodes.map(({ record }) => BigInt(record.range.length));
-  let maximum = previous.reduce(
-    (largest, value) => value > largest ? value : largest,
-    0n
-  );
-  for (let frames = 2; frames <= frameLimit; frames += 1) {
-    let greatestOccurrenceStart = 0n;
-    for (const first of firstNodes) {
-      const value = previous[first];
-      if (value !== undefined && value > greatestOccurrenceStart) {
-        greatestOccurrenceStart = value;
-      }
+  for (let index = 0; index < nodes.length; index += 1) {
+    if (nodes[index]!.next.length === 0) {
+      nodes[index] = { ...nodes[index]!, next: Object.freeze(firstNodes) };
     }
-    const current = nodes.map((node) => {
-      const continuation = node.next === null
-        ? greatestOccurrenceStart
-        : previous[node.next]!;
-      return BigInt(node.record.range.length) + continuation;
-    });
-    for (const value of current) if (value > maximum) maximum = value;
-    previous = current;
+  }
+
+  const best = Array.from(
+    { length: frameLimit + 1 },
+    () => new Array<bigint | null>(nodes.length).fill(null)
+  );
+  const queue: Array<readonly [frames: number, node: number]> = [];
+  let maximum = 0n;
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index]!;
+    const frames = node.record.record.displayedFrameCount;
+    if (frames > frameLimit) continue;
+    const bytes = BigInt(node.record.range.length);
+    best[frames]![index] = bytes;
+    queue.push(Object.freeze([frames, index]));
+    if (bytes > maximum) maximum = bytes;
+  }
+
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const [frames, index] = queue[cursor]!;
+    const current = best[frames]?.[index];
+    if (current === null || current === undefined) continue;
+    for (const nextIndex of nodes[index]!.next) {
+      const next = nodes[nextIndex]!;
+      const nextFrames = frames + next.record.record.displayedFrameCount;
+      if (nextFrames > frameLimit) continue;
+      const candidate = current + BigInt(next.record.range.length);
+      const previous = best[nextFrames]?.[nextIndex];
+      if (previous !== null && previous !== undefined && previous >= candidate) {
+        continue;
+      }
+      best[nextFrames]![nextIndex] = candidate;
+      queue.push(Object.freeze([nextFrames, nextIndex]));
+      if (candidate > maximum) maximum = candidate;
+    }
   }
   return checkedByteNumber(maximum, "maximum encoded window bytes");
 }
 
-type ProductionAvcRendition = Extract<
-  RenditionV01,
-  {
-    readonly profile:
-      | "avc-annexb-opaque-v0"
-      | "avc-annexb-packed-alpha-v0"
-      | "avc-annexb-opaque-v1"
-      | "avc-annexb-packed-alpha-v1";
-  }
->;
-
-function requireProductionAvcRendition(
-  manifest: Readonly<CompiledManifestV01>,
+function requireProductionVideoRendition(
+  manifest: Readonly<CompiledManifest>,
   rendition: string
-): Readonly<ProductionAvcRendition> {
+): Readonly<ProductionRendition> {
   const selected = manifest.renditions.find(({ id }) => id === rendition);
-  if (
-    selected?.profile !== "avc-annexb-opaque-v0" &&
-    selected?.profile !== "avc-annexb-packed-alpha-v0" &&
-    selected?.profile !== "avc-annexb-opaque-v1" &&
-    selected?.profile !== "avc-annexb-packed-alpha-v1"
-  ) {
-    throw new RangeError("selected resource rendition must be production AVC");
+  if (selected === undefined) {
+    throw new RangeError("selected resource rendition is unavailable");
   }
   return selected;
+}
+
+function maximumDecodedRgbaBytes(
+  manifest: Readonly<CompiledManifest>,
+  rendition: Readonly<ProductionRendition>
+): number {
+  if (manifest.codec === "h264") {
+    return maximumH264DecodedRgbaBytes(
+      rendition.codedWidth,
+      rendition.codedHeight
+    );
+  }
+  return checkedByteNumber(
+    checkedRgbaBytes(
+      rendition.codedWidth,
+      rendition.codedHeight,
+      1,
+      "decoded surface bytes"
+    ),
+    "decoded surface bytes"
+  );
+}
+
+function validateNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError(`${label} must be a nonnegative safe integer`);
+  }
 }
 
 interface BigIntAllocationSnapshotTerms {

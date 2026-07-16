@@ -40,6 +40,7 @@ import type {
   ResidentFrameHandle
 } from "./frame-renderer.js";
 import type { WorkerSampleFactory } from "./worker-samples.js";
+import type { WorkerSampleOutput } from "./worker-samples.js";
 
 export {
   InteractionCachePreparationTimeoutError
@@ -79,7 +80,10 @@ export interface InteractionCachePreparationRenderer {
 export interface InteractionCachePreparationInput {
   readonly plan: Readonly<InteractionCachePlan>;
   readonly catalog: InteractionCachePreparationUnitCatalog;
-  readonly samples: Pick<WorkerSampleFactory, "createBatch">;
+  readonly samples: Pick<
+    WorkerSampleFactory,
+    "createBatch" | "nextGroupRequirement"
+  >;
   readonly worker: InteractionCachePreparationWorker;
   readonly renderer: InteractionCachePreparationRenderer;
   readonly limits: Readonly<DecoderWorkerLimits>;
@@ -104,7 +108,7 @@ export interface InteractionCachePreparationReport {
 }
 
 interface ExpectedOutput {
-  readonly sample: Readonly<DecoderWorkerSample>;
+  readonly sample: Readonly<WorkerSampleOutput>;
   readonly layer: number | null;
 }
 
@@ -315,7 +319,7 @@ export async function prepareInteractionCache(
       assertActiveGeneration(input.worker, generation);
       validateMetrics(metrics, input.limits, generation);
       const trackedOutputs = checkedSum(
-        [metrics.pendingSamples, metrics.submittedFrames, metrics.leasedFrames],
+        [metrics.submittedFrames, metrics.leasedFrames],
         "tracked worker preparation outputs"
       );
       if (trackedOutputs !== expected.length) {
@@ -324,17 +328,35 @@ export async function prepareInteractionCache(
         );
       }
       const outstanding = checkedSum(
-        [metrics.pendingSamples, metrics.submittedFrames, metrics.leasedFrames],
+        [metrics.submittedFrames, metrics.leasedFrames],
         "worker outstanding preparation frames"
       );
-      const batchLimit = Math.min(
-        maxBatchSamples,
-        input.limits.maxPendingSamples - metrics.pendingSamples,
-        input.limits.maxOutstandingFrames - outstanding
-      );
-
-      if (cursor.unitIndex < preparations.length && batchLimit > 0) {
-        const draft = draftFrames(preparations, cursor, batchLimit);
+      if (cursor.unitIndex < preparations.length) {
+        const current = preparations[cursor.unitIndex];
+        if (current === undefined) {
+          throw new RangeError("interaction cache preparation cursor is sparse");
+        }
+        const requirement = input.samples.nextGroupRequirement({
+          unitId: current.unitId,
+          unitFrame: cursor.unitFrame
+        });
+        if (
+          requirement.frameCount > maxBatchSamples ||
+          requirement.chunkCount > maxBatchSamples ||
+          requirement.frameCount > input.limits.maxOutstandingFrames ||
+          requirement.chunkCount > input.limits.maxPendingSamples
+        ) {
+          throw new RangeError(
+            "codec presentation group exceeds cache preparation limits"
+          );
+        }
+        const hasCredit =
+          requirement.chunkCount <=
+            input.limits.maxPendingSamples - metrics.pendingSamples &&
+          requirement.frameCount <=
+            input.limits.maxOutstandingFrames - outstanding;
+        if (hasCredit) {
+        const draft = draftFrames(preparations, cursor, requirement.frameCount);
         const batch = input.samples.createBatch({
           frames: draft.frames.map(({ unitId, unitFrame }) => ({
             unitId,
@@ -350,7 +372,7 @@ export async function prepareInteractionCache(
           generationTouched = true;
           validateBatch(batch, draft.frames, generation);
           cursor = draft.next;
-          expected.push(...batch.samples.map((sample, index) => Object.freeze({
+          expected.push(...batch.outputs.map((sample, index) => Object.freeze({
             sample,
             layer: draft.frames[index]?.layer ?? null
           })));
@@ -364,10 +386,11 @@ export async function prepareInteractionCache(
         assertActiveGeneration(input.worker, generation);
         counters.submittedFrames = checkedAdd(
           counters.submittedFrames,
-          batch.samples.length,
+          batch.outputs.length,
           "submitted preparation frames"
         );
         continue;
+        }
       }
 
       if (expected.length === 0) {

@@ -14,10 +14,6 @@ import {
   type RuntimeCompleteSourceRange
 } from "./runtime-complete-source.js";
 import {
-  inspectBorrowedAvcRendition,
-  type BorrowedAvcRenditionPlan
-} from "./borrowed-avc-inspection.js";
-import {
   Sha256IntegrityMismatchError,
   consumeVerifiedSha256Input,
   type ConsumedVerifiedSha256Input,
@@ -305,20 +301,6 @@ export class VerifiedBlobStore {
       ));
     }
     return copyExactRange(storage.bytes, relativeOffset, byteLength);
-  }
-
-  /** @internal Synchronous, byte-free inspection over verified backing. */
-  public inspectAvcRendition(
-    plan: Readonly<BorrowedAvcRenditionPlan>
-  ): ReturnType<typeof inspectBorrowedAvcRendition> {
-    return inspectBorrowedAvcRendition(
-      plan,
-      (key, relativeOffset, byteLength) => this.#borrowRange(
-        key,
-        relativeOffset,
-        byteLength
-      )
-    );
   }
 
   /** Eviction is legal only after the caller has retired external sample use. */

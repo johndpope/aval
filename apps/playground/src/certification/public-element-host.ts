@@ -16,6 +16,9 @@ export const PUBLIC_EVENT_NAMES = Object.freeze([
   "error"
 ] as const);
 
+const DEFAULT_SOURCE_TYPE =
+  'application/vnd.aval; codecs="avc1.42E020"';
+
 export function createPublicMotionElement(
   sourceUrl: string,
   parent: HTMLElement,
@@ -26,15 +29,31 @@ export function createPublicMotionElement(
   element.className = "certification-motion";
   element.autoplay = "visible";
   element.motion = "full";
-  element.src = sourceUrl;
-  if (integrity !== undefined) element.integrity = integrity;
+  const source = document.createElement("source");
+  source.src = sourceUrl;
+  source.type = DEFAULT_SOURCE_TYPE;
+  if (integrity !== undefined) source.setAttribute("integrity", integrity);
   const fallback = document.createElement("span");
   fallback.slot = "fallback";
   fallback.textContent = "Motion fallback";
-  element.append(fallback);
+  element.append(source, fallback);
   if (routeLedger !== undefined) attachRouteLedger(element, routeLedger);
   parent.append(element);
   return element;
+}
+
+export function replacePublicMotionSource(
+  element: AvalElement,
+  sourceUrl: string,
+  integrity?: string
+): void {
+  const source = element.querySelector(":scope > source");
+  if (!(source instanceof HTMLSourceElement)) {
+    throw new Error("public motion source is unavailable");
+  }
+  source.src = sourceUrl;
+  if (integrity === undefined) source.removeAttribute("integrity");
+  else source.setAttribute("integrity", integrity);
 }
 
 export async function preparePublicMotion(

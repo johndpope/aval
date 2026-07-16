@@ -1,4 +1,4 @@
-import type { CompiledManifestV01, UnitV01 } from "@pixel-point/aval-format";
+import type { CompiledManifest, Unit } from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
 
 import type { RuntimeFrameKey } from "./model.js";
@@ -51,19 +51,19 @@ describe("generalized interaction cache plan", () => {
 
   it("charges packed-alpha interaction layers at their full coded geometry", () => {
     const manifest = routeManifest({
+      layout: "packed-alpha",
       renditions: [{
         id: "opaque",
-        profile: "avc-annexb-packed-alpha-v0",
-        codec: "avc1.42E020",
+        codec: "avc1.640020",
+        bitDepth: 8,
         codedWidth: 64,
         codedHeight: 144,
         alphaLayout: {
-          type: "stacked-v0",
+          type: "stacked",
           colorRect: [0, 0, 64, 64],
           alphaRect: [0, 72, 64, 64]
         },
-        bitrate: { average: 100_000, peak: 200_000 },
-        capabilities: ["webcodecs", "webgl2"]
+        bitrate: { average: 100_000, peak: 200_000 }
       }]
     });
     const plan = createInteractionCachePlan({
@@ -322,28 +322,30 @@ function device(
 function body(
   id: string,
   playback: "loop" | "finite",
-  frameCount: number
-): Extract<UnitV01, { readonly kind: "body" }> {
+  frameCount: number,
+  chunkStart = 0
+): Extract<Unit, { readonly kind: "body" }> {
   return {
     id,
     kind: "body",
     playback,
     frameCount,
     ports: [{ id: "default", entryFrame: 0, portalFrames: [frameCount - 1] }],
-    samples: [{
+    chunks: [{
       rendition: "opaque",
-      sampleStart: 0,
-      sampleCount: frameCount,
+      chunkStart,
+      chunkCount: frameCount,
+      frameCount,
       sha256: "0".repeat(64)
     }]
   };
 }
 
-function routeManifest(overrides: Partial<CompiledManifestV01> = {}): CompiledManifestV01 {
-  const units: readonly UnitV01[] = [
-    body("a-body", "loop", 2),
-    body("b-body", "finite", 2),
-    body("c-body", "loop", 2),
+function routeManifest(overrides: Partial<CompiledManifest> = {}): CompiledManifest {
+  const units: readonly Unit[] = [
+    body("a-body", "loop", 2, 0),
+    body("b-body", "finite", 2, 2),
+    body("c-body", "loop", 2, 4),
     {
       id: "shift",
       kind: "reversible",
@@ -354,17 +356,21 @@ function routeManifest(overrides: Partial<CompiledManifestV01> = {}): CompiledMa
           { state: "b", port: "default", frames: 6 }
         ]
       },
-      samples: [{
+      chunks: [{
         rendition: "opaque",
-        sampleStart: 4,
-        sampleCount: 2,
+        chunkStart: 6,
+        chunkCount: 2,
+        frameCount: 2,
         sha256: "0".repeat(64)
       }]
     }
   ];
   return {
-    formatVersion: "0.1",
+    formatVersion: "1.0",
     generator: "test",
+    codec: "h264",
+    bitstream: "annex-b",
+    layout: "opaque",
     canvas: {
       width: 64,
       height: 64,
@@ -375,13 +381,12 @@ function routeManifest(overrides: Partial<CompiledManifestV01> = {}): CompiledMa
     frameRate: { numerator: 30, denominator: 1 },
     renditions: [{
       id: "opaque",
-      profile: "avc-annexb-opaque-v0",
-      codec: "avc1.42E020",
+      codec: "avc1.640020",
+      bitDepth: 8,
       codedWidth: 64,
       codedHeight: 64,
-      alphaLayout: { type: "opaque-v0", colorRect: [0, 0, 64, 64] },
-      bitrate: { average: 100_000, peak: 200_000 },
-      capabilities: ["webcodecs", "webgl2"]
+      alphaLayout: { type: "opaque", colorRect: [0, 0, 64, 64] },
+      bitrate: { average: 100_000, peak: 200_000 }
     }],
     units,
     initialState: "a",

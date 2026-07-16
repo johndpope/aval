@@ -37,13 +37,16 @@
           >
             <aval-player
               id="favorite-motion"
-              src="/favorite.avl"
               state="idle"
               interaction-for="favorite-control"
               width="48"
               height="48"
               aria-hidden="true"
             >
+              <source src="/favorite/av1.avl" type='application/vnd.aval; codecs="av01.0.00M.08.0.110.01.01.01.0"'>
+              <source src="/favorite/vp9.avl" type='application/vnd.aval; codecs="vp09.00.10.08.01.01.01.01.00"'>
+              <source src="/favorite/h265.avl" type='application/vnd.aval; codecs="hvc1.1.6.L30.90"'>
+              <source src="/favorite/h264.avl" type='application/vnd.aval; codecs="avc1.42E020"'>
               <img
                 slot="fallback"
                 src="/favorite.png"

@@ -1,5 +1,3 @@
-import { isAvcCodec } from "@pixel-point/aval-format";
-
 export interface CapabilityProbeRecord {
   readonly id: string;
   readonly supported: boolean;
@@ -14,7 +12,8 @@ export const REQUIRED_ANIMATED_CAPABILITY_PROBES = Object.freeze([
   "video-decoder"
 ] as const);
 
-const EXACT_AVC_CODEC_PROBE = /^avc1\.([0-9a-f]{6})-exact-config$/u;
+const EXACT_VIDEO_CODEC_PROBE =
+  /^(?:h264|h265|vp9|av1)-exact-config$/u;
 
 export function capabilityOutcome(
   probes: readonly CapabilityProbeRecord[]
@@ -46,6 +45,5 @@ export function capabilityOutcome(
 }
 
 function isSupportedExactCodecProbe(id: string): boolean {
-  const match = EXACT_AVC_CODEC_PROBE.exec(id);
-  return match !== null && isAvcCodec(`avc1.${match[1]!.toUpperCase()}`);
+  return EXACT_VIDEO_CODEC_PROBE.test(id);
 }

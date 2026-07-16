@@ -7,7 +7,7 @@ import {
 } from "@pixel-point/aval-graph";
 import { describe, expect, it } from "vitest";
 
-import { createIntegratedPathTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedPathTestAsset } from "./asset-test-support.js";
 import type { EffectHostEvent } from "./effect-host.js";
 import {
   IntegratedPlayer,
@@ -21,6 +21,7 @@ import {
   type IntegratedPreparedContentTick,
   type IntegratedFallbackStore
 } from "./integrated-player.js";
+import { createIntegratedTestVideoSource } from "./integrated-player-video-test-support.js";
 import type {
   RuntimeMediaCursor,
   RuntimeMediaPresentation,
@@ -362,7 +363,7 @@ async function createHarness(
   const events: Readonly<EffectHostEvent>[] = [];
   let player!: IntegratedPlayer;
   player = new IntegratedPlayer({
-    bytes: createIntegratedPathTestAsset(),
+    ...createIntegratedTestVideoSource(createIntegratedPathTestAsset()),
     createFallbackStore: () => new ImmediateStaticStore(),
     candidateFactory: factory,
     eventSink(event) {

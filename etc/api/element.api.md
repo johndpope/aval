@@ -193,8 +193,6 @@ export interface AvalElement extends HTMLElement {
     // (undocumented)
     readonly inputBindings: readonly Readonly<BindingV01>[];
     // (undocumented)
-    integrity: string;
-    // (undocumented)
     interactionFor: string;
     // (undocumented)
     interactionTarget: Element | null;
@@ -229,8 +227,6 @@ export interface AvalElement extends HTMLElement {
     // (undocumented)
     setState(name: string): Promise<void>;
     // (undocumented)
-    src: string;
-    // (undocumented)
     state: string | null;
     // (undocumented)
     readonly stateNames: readonly string[];
@@ -257,11 +253,7 @@ export interface AvalElementAttributes {
     // (undocumented)
     readonly height?: number | `${number}`;
     // (undocumented)
-    readonly integrity?: string;
-    // (undocumented)
     readonly motion?: AvalMotion;
-    // (undocumented)
-    readonly src?: string;
     // (undocumented)
     readonly state?: string;
     // (undocumented)
@@ -448,6 +440,18 @@ export interface AvalRuntimeTraceRecord {
     readonly settledRequestIds: readonly number[];
     // (undocumented)
     readonly submitted: readonly Readonly<AvalRuntimeMediaCursor>[];
+}
+
+// @public (undocumented)
+export interface AvalSourceCandidate {
+    // (undocumented)
+    readonly codec: string;
+    // (undocumented)
+    readonly integrity: string;
+    // (undocumented)
+    readonly src: string;
+    // (undocumented)
+    readonly type: `application/vnd.aval; codecs="${string}"`;
 }
 
 // @public (undocumented)

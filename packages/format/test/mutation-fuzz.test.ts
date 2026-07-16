@@ -5,8 +5,8 @@ import { FormatError } from "../src/errors.js";
 import { deriveCanonicalAssetLayout } from "../src/layout.js";
 import { parseFrontIndex, validateCompleteAsset } from "../src/parser.js";
 import {
-  generateReferenceGraphFixture,
-  generateReferenceLoopFixture
+  generateVideoGraphFixture,
+  generateVideoLoopFixture
 } from "./fixture-generator.js";
 import { canonicalAssetFixture } from "./asset-fixture.js";
 import { mutationSeeds } from "../../../tests/mutation/seed-profile.js";
@@ -143,8 +143,8 @@ function fixtureWithPadding(): Uint8Array {
   throw new Error("could not construct a fixture with padding");
 }
 
-describe("M4 seeded complete-asset mutation fuzzing", () => {
-  const sources = [generateReferenceLoopFixture(), generateReferenceGraphFixture()];
+describe("seeded complete-asset mutation fuzzing", () => {
+  const sources = [generateVideoLoopFixture(), generateVideoGraphFixture()];
 
   for (const seed of SEEDS) {
     it(
@@ -269,18 +269,18 @@ describe("M4 seeded complete-asset mutation fuzzing", () => {
         }
       ],
       [
-        "record unit order",
+        "record displayed frame count",
         () => {
           const bytes = source.slice();
-          writeUint32LE(bytes, firstRecord + 12, 1, "INDEX_INVALID", "unit");
+          writeUint32LE(bytes, firstRecord + 12, 0, "INDEX_INVALID", "displayed frames");
           return bytes;
         }
       ],
       [
-        "record rendition order",
+        "record unsafe presentation timestamp",
         () => {
           const bytes = source.slice();
-          writeUint16LE(bytes, firstRecord + 16, 1, "INDEX_INVALID", "rendition");
+          writeUint64LE(bytes, firstRecord + 16, 1n << 53n, "INDEX_INVALID", "timestamp");
           return bytes;
         }
       ],
@@ -288,27 +288,27 @@ describe("M4 seeded complete-asset mutation fuzzing", () => {
         "record flags",
         () => {
           const bytes = source.slice();
-          writeUint16LE(bytes, firstRecord + 18, 2, "INDEX_INVALID", "flags");
+          writeUint32LE(bytes, firstRecord + 32, 2, "INDEX_INVALID", "flags");
           return bytes;
         }
       ],
       [
-        "record frame order",
+        "record zero duration",
         () => {
           const bytes = source.slice();
-          writeUint32LE(bytes, firstRecord + 20, 1, "INDEX_INVALID", "frame");
+          writeUint64LE(bytes, firstRecord + 24, 0, "INDEX_INVALID", "duration");
           return bytes;
         }
       ],
-      ["record reserved", () => withByte(source, firstRecord + 24, 1)],
+      ["record reserved", () => withByte(source, firstRecord + 36, 1)],
       ["padding byte", () => withByte(source, padding.offset, 1)],
       [
-        "manifest profile",
-        () => replaceAscii(source, "reference-rgba-v0", "reference-rgbx-v0")
+        "manifest codec",
+        () => replaceAscii(source, "avc1.640020", "avc1.64002G")
       ],
       [
-        "reference sample profile",
-        () => withByte(source, front.records[0]!.payloadOffset + 4, 1)
+        "opaque encoded payload",
+        () => withByte(source, front.records[0]!.byteOffset + 1, 1)
       ]
     ];
 

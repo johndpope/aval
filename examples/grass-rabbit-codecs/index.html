@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark">
+    <meta
+      name="description"
+      content="Compare one interactive AVAL animation encoded as AV1, VP9, H.265, and H.264."
+    >
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="/style.css">
+    <title>AVAL · Grass rabbit codec comparison</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="%BASE_URL%" aria-label="AVAL codec comparison home">AVAL</a>
+      <p>One authored motion · four browser codecs</p>
+    </header>
+
+    <main>
+      <header class="hero">
+        <p class="eyebrow">Interactive codec lab</p>
+        <h1>See the same stateful motion in four encodings.</h1>
+        <p class="lede">
+          Choose a codec to check this browser’s exact WebCodecs support, load
+          its standalone <code>.avl</code> file, and interact with the grass rabbit.
+        </p>
+      </header>
+
+      <section class="codec-lab" aria-labelledby="codec-lab-title">
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">Codec source</p>
+            <h2 id="codec-lab-title">Choose an encoding</h2>
+          </div>
+          <p id="probe-status" class="probe-status" role="status" aria-live="polite">
+            Checking exact browser support…
+          </p>
+        </div>
+
+        <div
+          class="tab-list"
+          role="tablist"
+          aria-label="Grass rabbit video codec"
+          aria-orientation="horizontal"
+        >
+          <button
+            id="codec-tab-av1"
+            class="codec-tab"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="codec-panel-av1"
+            tabindex="0"
+            data-codec="av1"
+          >
+            <span class="tab-label">AV1</span>
+            <span class="tab-support" data-tab-support aria-hidden="true">Checking</span>
+          </button>
+          <button
+            id="codec-tab-vp9"
+            class="codec-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="codec-panel-vp9"
+            tabindex="-1"
+            data-codec="vp9"
+          >
+            <span class="tab-label">VP9</span>
+            <span class="tab-support" data-tab-support aria-hidden="true">Checking</span>
+          </button>
+          <button
+            id="codec-tab-h265"
+            class="codec-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="codec-panel-h265"
+            tabindex="-1"
+            data-codec="h265"
+          >
+            <span class="tab-label">H.265 / HEVC</span>
+            <span class="tab-support" data-tab-support aria-hidden="true">Checking</span>
+          </button>
+          <button
+            id="codec-tab-h264"
+            class="codec-tab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="codec-panel-h264"
+            tabindex="-1"
+            data-codec="h264"
+          >
+            <span class="tab-label">H.264 / AVC</span>
+            <span class="tab-support" data-tab-support aria-hidden="true">Checking</span>
+          </button>
+        </div>
+
+        <section
+          id="codec-panel-av1"
+          class="codec-panel"
+          role="tabpanel"
+          aria-labelledby="codec-tab-av1"
+          data-codec="av1"
+          data-codec-panel="av1"
+        ></section>
+        <section
+          id="codec-panel-vp9"
+          class="codec-panel"
+          role="tabpanel"
+          aria-labelledby="codec-tab-vp9"
+          data-codec="vp9"
+          data-codec-panel="vp9"
+          hidden
+        ></section>
+        <section
+          id="codec-panel-h265"
+          class="codec-panel"
+          role="tabpanel"
+          aria-labelledby="codec-tab-h265"
+          data-codec="h265"
+          data-codec-panel="h265"
+          hidden
+        ></section>
+        <section
+          id="codec-panel-h264"
+          class="codec-panel"
+          role="tabpanel"
+          aria-labelledby="codec-tab-h264"
+          data-codec="h264"
+          data-codec-panel="h264"
+          hidden
+        ></section>
+      </section>
+
+      <section class="build-note" aria-labelledby="build-note-title">
+        <div>
+          <p class="section-kicker">Reproduce the assets</p>
+          <h2 id="build-note-title">Compile all four standalone sources</h2>
+        </div>
+        <code>avl compile motion.json --out public/grass-rabbit --force</code>
+        <p>
+          AVAL stores elementary video payloads per graph unit, so container tags,
+          fast-start flags, and MP4/WebM output are intentionally not encoding knobs.
+          Audio is ignored by the format.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

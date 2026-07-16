@@ -17,9 +17,11 @@ import { describe, expect, it } from "vitest";
 import { installRuntimeAssetCatalog } from "./asset-catalog.js";
 import {
   createIntegratedPathTestAsset,
-  createOpaqueTestAsset
-} from "./asset-test-fixture.js";
+  createRuntimeTestAsset
+} from "./asset-test-support.js";
 import { DecodeTimeline } from "./decode-timeline.js";
+import { inspectSelectedVideoRendition } from "./video-rendition-inspection.js";
+import { createVideoRenditionCandidates } from "./video-rendition-selection.js";
 import {
   PathScheduler,
   type PathSchedulerResidentFrame,
@@ -116,6 +118,7 @@ describe("PathScheduler continuous source pumping", () => {
       fixture.scheduler.snapshot().ringSize
     )).toEqual([4, 4]);
   });
+
 });
 
 describe("PathScheduler locked and target paths", () => {
@@ -667,16 +670,25 @@ function createFixture(options: FakeWorkerOptions = {}) {
   const catalog = installRuntimeAssetCatalog(
     options.integratedPathAsset === true
       ? createIntegratedPathTestAsset()
-      : createOpaqueTestAsset()
+      : createRuntimeTestAsset()
   );
   const timeline = new DecodeTimeline(catalog.manifest.frameRate);
   const worker = new FakeWorker(options);
+  const rendition = options.integratedPathAsset === true
+    ? "opaque-path"
+    : "opaque";
+  const candidate = createVideoRenditionCandidates(catalog.manifest)
+    .find((value) => value.rendition.id === rendition);
+  if (candidate === undefined) throw new Error("test rendition is missing");
+  const inspection = inspectSelectedVideoRendition(
+    catalog,
+    candidate
+  ).inspection;
   const samples = new WorkerSampleFactory({
     catalog,
     timeline,
-    rendition: options.integratedPathAsset === true
-      ? "opaque-path"
-      : "opaque",
+    rendition,
+    inspection,
     limits: LIMITS
   });
   let now = 0;
@@ -980,6 +992,7 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   public readonly unitId: string;
   public readonly unitInstance: number;
   public readonly unitFrame: number;
+  public readonly decodeIndex: number;
   public readonly timestamp: number;
   public readonly duration: number;
   public readonly decodedBytes = 128;
@@ -987,14 +1000,19 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   #closed = false;
 
   public constructor(pending: PendingFakeSample, release: () => void) {
+    const unitFrame = pending.sample.presentationIndices[0];
+    if (unitFrame === undefined) {
+      throw new Error("fake path worker cannot emit a hidden chunk");
+    }
     this.frame = { close() {} } as unknown as VideoFrame;
-    this.frameId = pending.sample.ordinal + 1;
+    this.frameId = pending.sample.presentationOrdinalBase + unitFrame + 1;
     this.generation = pending.generation;
-    this.ordinal = pending.sample.ordinal;
+    this.ordinal = pending.sample.presentationOrdinalBase + unitFrame;
     this.unitId = pending.sample.unitId;
     this.unitInstance = pending.sample.unitInstance;
-    this.unitFrame = pending.sample.unitFrame;
-    this.timestamp = pending.sample.timestamp;
+    this.unitFrame = unitFrame;
+    this.decodeIndex = pending.sample.decodeIndex;
+    this.timestamp = pending.sample.presentationTimestamp;
     this.duration = pending.sample.duration;
     this.#release = release;
   }

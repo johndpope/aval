@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import {
   PlayerWebPageRuntime,
   type PlayerWebRuntimeParticipant
@@ -38,7 +38,7 @@ describe("player web page runtime", () => {
     const page = new PlayerWebPageRuntime();
     const participant = page.createParticipant();
     const session = await participant.openAssetBytes(
-      createIntegratedOpaqueTestAsset()
+      createIntegratedTestAsset()
     );
     const disposePlayer = vi.fn();
     participant.ownPlayer({ dispose: disposePlayer });

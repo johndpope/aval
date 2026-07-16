@@ -1,6 +1,5 @@
 import { join, relative, sep } from "node:path";
 
-import type { CanvasV01, RationalV01 } from "@pixel-point/aval-format";
 
 import { CompilerError } from "../diagnostics.js";
 import {
@@ -22,14 +21,16 @@ import { resolveExistingLocalFile } from "../local-path.js";
 import type {
   MediaProbe,
   AlphaAuditSummary,
-  SourceDescriptorV01
+  Canvas,
+  Rational,
+  SourceDescriptor
 } from "../model.js";
 import { normalizeHoldTimeline } from "./normalize-timeline.js";
 import { materializeNormalizedRgbaSource } from "./rgba-spool.js";
 
 export interface PreparedProjectSource {
   readonly id: string;
-  readonly input: Extract<FfmpegFrameInput, { readonly type: "raw-rgba" }>;
+  readonly input: Extract<FfmpegFrameInput, { readonly type: "raw-rgba64" }>;
   /** Exact native-source probe retained for provenance and diagnostics. */
   readonly sourceProbe: MediaProbe;
   /** Canonical project-grid probe used by later compiler stages. */
@@ -75,9 +76,9 @@ export type SourceNormalizationReport =
 
 export async function prepareProjectSources(input: {
   readonly root: string;
-  readonly sources: readonly SourceDescriptorV01[];
-  readonly canvas: CanvasV01;
-  readonly frameRate: RationalV01;
+  readonly sources: readonly SourceDescriptor[];
+  readonly canvas: Canvas;
+  readonly frameRate: Rational;
   readonly sourceFrameReferences: ReadonlyMap<string, readonly number[]>;
   readonly ffmpeg: string;
   readonly ffprobe?: string;
@@ -109,7 +110,7 @@ export async function cleanupProjectSources(
 }
 
 async function prepareVideoSource(
-  source: Extract<SourceDescriptorV01, { readonly type: "video" }>,
+  source: Extract<SourceDescriptor, { readonly type: "video" }>,
   input: Parameters<typeof prepareProjectSources>[0]
 ): Promise<PreparedProjectSource> {
   const path = await resolveExistingLocalFile(input.root, source.path, true);
@@ -229,7 +230,7 @@ async function prepareVideoSource(
     invocations: Object.freeze([
       probeInvocation,
       preparedInvocation(
-        `${source.id}:materialize-rgba`,
+        `${source.id}:materialize-rgba16`,
         "ffmpeg",
         materialized.invocation.arguments,
         path,
@@ -242,7 +243,7 @@ async function prepareVideoSource(
 }
 
 async function preparePngSource(
-  source: Extract<SourceDescriptorV01, { readonly type: "png-sequence" }>,
+  source: Extract<SourceDescriptor, { readonly type: "png-sequence" }>,
   input: Parameters<typeof prepareProjectSources>[0]
 ): Promise<PreparedProjectSource> {
   const token = `%0${String(source.digits)}d`;
@@ -349,7 +350,7 @@ async function preparePngSource(
     invocations: Object.freeze([
       probeInvocation,
       preparedInvocation(
-        `${source.id}:materialize-rgba`,
+        `${source.id}:materialize-rgba16`,
         "ffmpeg",
         materialized.invocation.arguments,
         sequence.pattern,
@@ -445,8 +446,8 @@ export function resolvePreparedFrameRange(
 function normalizedProbe(
   probe: MediaProbe,
   frameCount: number,
-  canvas: CanvasV01,
-  frameRate: RationalV01
+  canvas: Canvas,
+  frameRate: Rational
 ): MediaProbe {
   return Object.freeze({
     ...probe,
@@ -459,7 +460,7 @@ function normalizedProbe(
     }),
     frameCount,
     durationMicros: framesToRoundedMicros(frameCount, frameRate),
-    pixelFormat: "rgba",
+    pixelFormat: "rgba64le",
     hasAlpha: true,
     variableFrameRate: false,
     frames: Object.freeze([])
@@ -512,7 +513,7 @@ function preparedInvocation(
 
 function validateSourceGeometry(
   probe: MediaProbe,
-  canvas: CanvasV01,
+  canvas: Canvas,
   id: string
 ): void {
   if (
@@ -528,14 +529,14 @@ function validateSourceGeometry(
   }
 }
 
-function sameRate(left: RationalV01, right: RationalV01): boolean {
+function sameRate(left: Rational, right: Rational): boolean {
   return BigInt(left.numerator) * BigInt(right.denominator) ===
     BigInt(right.numerator) * BigInt(left.denominator);
 }
 
 function framesToRoundedMicros(
   frameCount: number,
-  frameRate: RationalV01
+  frameRate: Rational
 ): number {
   const denominator = BigInt(frameRate.numerator);
   const numerator =

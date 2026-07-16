@@ -1,32 +1,39 @@
 import type {
-  AvcParameterSetSummary,
-  AvcUnitInspection,
-  ValidatedAssetLayout
+  AlphaLayout,
+  ValidatedAssetLayout,
+  VideoBitstream,
+  VideoCodec,
+  VideoLayout
 } from "@pixel-point/aval-format";
 
 import { throwIfAborted } from "../cancellation.js";
 import {
-  describeAccessUnits,
+  describeChunks,
   readValidatedAsset,
   sha256AssetBytes,
-  type InspectedAccessUnitRange
+  type InspectedChunkRange,
+  type VideoRenditionInspection
 } from "./asset-validation.js";
 
 export interface AssetInspection {
   readonly file: string;
   readonly bytes: number;
   readonly sha256: string;
-  readonly formatVersion: string;
+  readonly formatVersion: "1.0";
   readonly generator: string;
+  readonly codec: VideoCodec;
+  readonly bitstream: VideoBitstream;
+  readonly layout: VideoLayout;
   readonly canvas: { readonly width: number; readonly height: number };
   readonly frameRate: string;
   readonly initialState: string;
   readonly states: readonly string[];
   readonly renditions: readonly {
     readonly id: string;
-    readonly profile: string;
     readonly codec: string;
+    readonly bitDepth: 8 | 10;
     readonly coded: string;
+    readonly alphaLayout: AlphaLayout;
   }[];
   readonly units: readonly {
     readonly id: string;
@@ -39,35 +46,26 @@ export interface AssetInspection {
     readonly startSeconds: number;
     readonly endSeconds: number;
   }[];
-  readonly accessUnits: number;
-  readonly samples: readonly InspectedAccessUnitRange[];
+  readonly chunks: number;
+  readonly chunkRanges: readonly InspectedChunkRange[];
   readonly digestClaim: "all-internal-and-whole-file";
-  readonly avcClaim: "syntax-and-dependency-inspected" | "not-applicable";
-  readonly avc: readonly AvcRenditionSummary[];
+  readonly videoClaim: "syntax-dependency-and-timeline-inspected";
+  readonly video: readonly VideoRenditionInspection[];
 }
-
-export interface AvcRenditionSummary {
-  readonly rendition: string;
-  readonly macroblocksPerFrame: number;
-  readonly codedWidth: number;
-  readonly codedHeight: number;
-  readonly constraintSet2: boolean;
-  readonly parameterSet: AvcParameterSetSummary;
-  readonly units: readonly AvcUnitInspection[];
-}
-
-/** @deprecated Use the profile-neutral AvcRenditionSummary name. */
-export type OpaqueRenditionSummary = AvcRenditionSummary;
 
 export interface AssetValidationReport {
   readonly command: "validate";
   readonly file: string;
   readonly bytes: number;
   readonly sha256: string;
-  readonly accessUnits: number;
+  readonly codec: VideoCodec;
+  readonly bitstream: VideoBitstream;
+  readonly layout: VideoLayout;
+  readonly chunks: number;
   readonly unitBlobs: number;
   readonly digestClaim: "all-internal-and-whole-file";
-  readonly avcClaim: "syntax-and-dependency-inspected" | "not-applicable";
+  readonly videoClaim: "syntax-dependency-and-timeline-inspected";
+  readonly video: readonly VideoRenditionInspection[];
 }
 
 export async function inspectAssetFile(
@@ -102,6 +100,9 @@ export async function inspectAssetFile(
     sha256: sha256AssetBytes(bytes, signal),
     formatVersion: front.manifest.formatVersion,
     generator: front.manifest.generator,
+    codec: front.manifest.codec,
+    bitstream: front.manifest.bitstream,
+    layout: front.manifest.layout,
     canvas: Object.freeze({
       width: front.manifest.canvas.width,
       height: front.manifest.canvas.height
@@ -112,29 +113,18 @@ export async function inspectAssetFile(
     renditions: Object.freeze(front.manifest.renditions.map((rendition) =>
       Object.freeze({
         id: rendition.id,
-        profile: rendition.profile,
         codec: rendition.codec,
-        coded: `${String(rendition.codedWidth)}x${String(rendition.codedHeight)}`
+        bitDepth: rendition.bitDepth,
+        coded: `${String(rendition.codedWidth)}x${String(rendition.codedHeight)}`,
+        alphaLayout: rendition.alphaLayout
       })
     )),
     units: Object.freeze(units),
-    accessUnits: front.records.length,
-    samples: describeAccessUnits(bytes, front, signal),
+    chunks: front.records.length,
+    chunkRanges: describeChunks(bytes, front, signal),
     digestClaim: "all-internal-and-whole-file",
-    avcClaim: validated.avc.length === 0
-      ? "not-applicable"
-      : "syntax-and-dependency-inspected",
-    avc: Object.freeze(validated.avc.map(({ rendition, inspection }) =>
-      Object.freeze({
-        rendition,
-        macroblocksPerFrame: inspection.macroblocksPerFrame,
-        codedWidth: inspection.parameterSet.codedWidth,
-        codedHeight: inspection.parameterSet.codedHeight,
-        constraintSet2: inspection.parameterSet.constraintSet2,
-        parameterSet: inspection.parameterSet,
-        units: inspection.units
-      })
-    ))
+    videoClaim: "syntax-dependency-and-timeline-inspected",
+    video: validated.video
   });
 }
 
@@ -149,25 +139,31 @@ export async function validateAssetReport(
   file: string,
   signal?: AbortSignal
 ): Promise<Readonly<AssetValidationReport>> {
-  const { bytes, layout, avc } = await readValidatedAsset(file, signal);
+  const { bytes, layout, video } = await readValidatedAsset(file, signal);
+  const { manifest, records, unitBlobs } = layout.frontIndex;
   throwIfAborted(signal);
   return Object.freeze({
     command: "validate",
     file,
     bytes: bytes.byteLength,
     sha256: sha256AssetBytes(bytes, signal),
-    accessUnits: layout.frontIndex.records.length,
-    unitBlobs: layout.frontIndex.unitBlobs.length,
+    codec: manifest.codec,
+    bitstream: manifest.bitstream,
+    layout: manifest.layout,
+    chunks: records.length,
+    unitBlobs: unitBlobs.length,
     digestClaim: "all-internal-and-whole-file",
-    avcClaim: avc.length === 0
-      ? "not-applicable"
-      : "syntax-and-dependency-inspected"
+    videoClaim: "syntax-dependency-and-timeline-inspected",
+    video
   });
 }
 
 export { unpackAssetFile } from "./unpack-asset.js";
 export type { UnpackReport } from "./unpack-asset.js";
-export type { InspectedAccessUnitRange } from "./asset-validation.js";
+export type {
+  InspectedChunkRange,
+  VideoRenditionInspection
+} from "./asset-validation.js";
 
 function rationalTime(
   frame: number,

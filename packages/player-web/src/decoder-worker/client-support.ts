@@ -1,12 +1,13 @@
 import {
   DECODER_WORKER_HARD_LIMITS,
-  type DecoderWorkerAvcProfile,
-  type DecoderWorkerAvcConfig,
   type DecoderWorkerErrorCode,
   type DecoderWorkerEvent,
   type DecoderWorkerLimits,
   type DecoderWorkerOutputExpectation,
-  type DecoderWorkerSample
+  type DecoderWorkerProbeConfig,
+  type DecoderWorkerSample,
+  type DecoderWorkerVideoConfig,
+  type DecoderWorkerVideoProfile
 } from "./protocol.js";
 
 export interface DecoderWorkerClientOptions {
@@ -15,11 +16,17 @@ export interface DecoderWorkerClientOptions {
 }
 
 export interface DecoderWorkerConfigureOptions {
-  readonly config: DecoderWorkerAvcConfig;
-  readonly avcProfile: DecoderWorkerAvcProfile;
+  readonly config: DecoderWorkerVideoConfig;
+  readonly videoProfile: DecoderWorkerVideoProfile;
   readonly expectedOutput: DecoderWorkerOutputExpectation;
   readonly limits: DecoderWorkerLimits;
 }
+
+export interface DecoderWorkerProbeOptions {
+  readonly signal?: AbortSignal;
+}
+
+export type { DecoderWorkerProbeConfig };
 
 export interface DecoderWorkerWaitOptions {
   readonly signal?: AbortSignal;
@@ -34,6 +41,7 @@ export interface ManagedDecoderWorkerFrame {
   readonly unitId: string;
   readonly unitInstance: number;
   readonly unitFrame: number;
+  readonly decodeIndex: number;
   readonly timestamp: number;
   readonly duration: number;
   readonly outputCallbackMicroseconds?: number;
@@ -92,6 +100,7 @@ export class ManagedDecoderWorkerFrameImpl
   public readonly unitId: string;
   public readonly unitInstance: number;
   public readonly unitFrame: number;
+  public readonly decodeIndex: number;
   public readonly timestamp: number;
   public readonly duration: number;
   public readonly outputCallbackMicroseconds: number;
@@ -110,6 +119,7 @@ export class ManagedDecoderWorkerFrameImpl
     this.unitId = event.unitId;
     this.unitInstance = event.unitInstance;
     this.unitFrame = event.unitFrame;
+    this.decodeIndex = event.decodeIndex;
     this.timestamp = event.timestamp;
     this.duration = event.duration;
     this.outputCallbackMicroseconds = event.outputCallbackMicroseconds;
@@ -188,7 +198,7 @@ export function collectUniqueSampleBuffers(
 }
 
 export function assertSubmissionCredit(
-  sampleCount: number,
+  samples: readonly DecoderWorkerSample[],
   limits: DecoderWorkerLimits,
   metrics: {
     readonly pendingSamples: number;
@@ -197,12 +207,28 @@ export function assertSubmissionCredit(
   }
 ): void {
   const pendingCredit = limits.maxPendingSamples - metrics.pendingSamples;
-  const outstandingCredit =
-    limits.maxOutstandingFrames -
-    metrics.pendingSamples -
+  let displayedFrames = 0;
+  for (const sample of samples) {
+    if (
+      !Number.isSafeInteger(sample.displayedFrameCount) ||
+      sample.displayedFrameCount < 0 ||
+      displayedFrames > Number.MAX_SAFE_INTEGER - sample.displayedFrameCount
+    ) {
+      throw new DecoderWorkerRemoteError(
+        "PROTOCOL_ERROR",
+        "decode batch displayed-frame count is invalid",
+        false
+      );
+    }
+    displayedFrames += sample.displayedFrameCount;
+  }
+  const outstandingCredit = limits.maxOutstandingFrames -
     metrics.submittedFrames -
     metrics.leasedFrames;
-  if (sampleCount > pendingCredit || sampleCount > outstandingCredit) {
+  if (
+    samples.length > pendingCredit ||
+    displayedFrames > outstandingCredit
+  ) {
     throw new DecoderWorkerRemoteError(
       "BACKPRESSURE_LIMIT",
       "decode batch exceeds available worker credit",

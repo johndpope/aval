@@ -127,7 +127,7 @@ export interface PlayerWebRuntimeParticipant {
 }
 
 /**
- * Page-wide production composition for M7 resource policy. One instance owns
+ * Page-wide production composition for resource policy. One instance owns
  * the physical-byte authority, FIFO decoder authority, reclamation lane, and
  * every participant created through it.
  */

@@ -1,5 +1,5 @@
 import type {
-  BindingV01,
+  Binding,
   BrowserPresentationPlanesSnapshot,
   IntegratedPlayerSnapshot,
   MotionPolicy,
@@ -15,8 +15,12 @@ export interface BrowserRuntimeMetadata {
   readonly initialState: string;
   readonly stateNames: readonly string[];
   readonly eventNames: readonly string[];
-  readonly bindings: readonly Readonly<BindingV01>[];
-  readonly renditions: readonly Readonly<{ id: string; profile: string }>[];
+  readonly bindings: readonly Readonly<Binding>[];
+  readonly renditions: readonly Readonly<{
+    id: string;
+    codec: string;
+    bitDepth: 8 | 10;
+  }>[];
   readonly canvas: Readonly<{
     width: number;
     height: number;
@@ -30,7 +34,8 @@ export interface BrowserRuntimePlayerSnapshot {
   readonly visibility: Readonly<RuntimeVisibilitySnapshot>;
   readonly presentation: Readonly<BrowserPresentationPlanesSnapshot>;
   readonly selectedRendition: string | null;
-  readonly selectedProfile: string | null;
+  readonly selectedCodec: string | null;
+  readonly selectedBitDepth: 8 | 10 | null;
   readonly transportMode: "range" | "full";
   readonly declaredFileBytes: number;
   readonly metadataBytes: number;

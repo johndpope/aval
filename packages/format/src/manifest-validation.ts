@@ -1,7 +1,7 @@
 import { IDENTIFIER_PATTERN, SHA256_HEX_PATTERN } from "./constants.js";
 import { FormatError } from "./errors.js";
 import { utf8ByteLength } from "./utf8.js";
-import type { ResidencyEndpointV01 } from "./model.js";
+import type { ResidencyEndpoint } from "./model.js";
 
 export function record(value: unknown, path: string): Record<string, unknown> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
@@ -200,8 +200,8 @@ export function requireNumberOrder(values: readonly number[], path: string): voi
 }
 
 export function compareEndpoint(
-  a: ResidencyEndpointV01,
-  b: ResidencyEndpointV01
+  a: ResidencyEndpoint,
+  b: ResidencyEndpoint
 ): number {
   return compareAscii(a.state, b.state) || compareAscii(a.port, b.port);
 }

@@ -29,7 +29,8 @@ export interface PumpPathSchedulerInput {
   readonly output: PathSchedulerOutput;
   readonly build: PathSequenceState;
   readonly buildFrame: (
-    state: PathSequenceState
+    state: PathSequenceState,
+    continueCodecGroup: boolean
   ) => Readonly<PathFramePlan> | null;
   readonly commitBuild: (state: PathSequenceState) => void;
   readonly recordSubmitted: (
@@ -97,26 +98,85 @@ export async function pumpPathScheduler(
       0,
       input.limits.maxOutstandingFrames - outstanding
     );
-    const batchLimit = Math.min(
-      input.maxBatchSamples,
-      pendingCredit,
-      outstandingCredit,
-      Math.max(1, deficit)
-    );
-
-    if (batchLimit > 0 && deficit > 0) {
+    const reorderWaitCandidate =
+      ringSize < targetRingFrames &&
+      input.output.hasExpected() &&
+      input.worker.queuedFrames === 0 &&
+      metrics.pendingSamples === 0 &&
+      metrics.decodeQueueSize === 0 &&
+      metrics.submittedFrames > 0;
+    if (
+      pendingCredit > 0 &&
+      outstandingCredit > 0 &&
+      (deficit > 0 || reorderWaitCandidate)
+    ) {
       const draft = clonePathSequenceState(build);
       const plans: Readonly<PathFramePlan>[] = [];
-      for (let index = 0; index < batchLimit; index += 1) {
-        const plan = input.buildFrame(draft);
-        if (plan === null) break;
-        plans.push(plan);
+      const first = input.buildFrame(draft, false);
+      if (first !== null) {
+        const requirement = input.samples.nextGroupRequirement({
+          unitId: first.unitId,
+          unitFrame: first.unitFrame
+        });
+        if (
+          !Number.isSafeInteger(requirement.reorderFrameCount) ||
+          requirement.reorderFrameCount < 0 ||
+          requirement.frameCount > input.maxBatchSamples ||
+          requirement.chunkCount > input.maxBatchSamples ||
+          requirement.frameCount > input.limits.maxOutstandingFrames ||
+          requirement.chunkCount > input.limits.maxPendingSamples ||
+          requirement.reorderFrameCount > input.limits.maxOutstandingFrames
+        ) {
+          throw new RangeError(
+            "codec presentation group exceeds the configured scheduler limits"
+          );
+        }
+        const freeRingSlots = input.ringCapacity - ringSize -
+          input.output.presentableExpectedCount();
+        // A codec may retain already-submitted frames behind a presentation
+        // gap until this whole safe group arrives. Those retained frames do
+        // not need presentation-ring slots for every newly submitted frame:
+        // drain() leaves any decoded overflow queued once the ring is full.
+        const fitsReorderAdjustedRing = freeRingSlots >= 0 &&
+          requirement.frameCount <= checkedAdd(
+            freeRingSlots,
+            requirement.reorderFrameCount,
+            "reorder-adjusted presentation-ring slots"
+          );
+        // A fully idle decoder can be retaining an earlier output until the
+        // next safe group supplies its future references. Outstanding-frame
+        // credit bounds both the decoder-held frames and the worker-side
+        // overflow that drain() intentionally leaves outside a full ring.
+        const unblocksReorderedOutput =
+          reorderWaitCandidate && requirement.reorderFrameCount > 0;
+        if (
+          requirement.frameCount <= outstandingCredit &&
+          requirement.chunkCount <= pendingCredit &&
+          (fitsReorderAdjustedRing || unblocksReorderedOutput)
+        ) {
+          plans.push(first);
+          for (let index = 1; index < requirement.frameCount; index += 1) {
+            // The first frame already passed the unresolved-source horizon.
+            // Finish its atomic codec group without reapplying that horizon
+            // to each continuation frame. The path-sequence builder keeps a
+            // selected route exact by marking its dependency tail discarded.
+            const plan = input.buildFrame(draft, true);
+            if (plan === null) {
+              throw new RangeError(
+                "path ended inside a codec presentation group"
+              );
+            }
+            plans.push(plan);
+          }
+        }
       }
       // A phase-only transition is semantic progress too. Persist terminal
       // finite state even when it emits no decoder request, otherwise reserve
       // reports an underflow forever instead of a held presentation.
-      input.commitBuild(draft);
-      build = draft;
+      if (first === null || plans.length > 0) {
+        input.commitBuild(draft);
+        build = draft;
+      }
       if (plans.length > 0) {
         const batch = input.samples.createBatch({
           frames: plans.map((plan) => ({
@@ -127,15 +187,29 @@ export async function pumpPathScheduler(
           outstandingFrames: outstanding
         });
         try {
-          const outputs = input.output.schedule(plans, batch.samples);
+          const outputs = input.output.schedule(plans, batch.outputs);
           input.recordSubmitted(outputs);
-          submittedFrames += batch.samples.length;
+          submittedFrames += batch.outputs.length;
           await input.worker.submit(batch.generation, batch.samples);
         } finally {
           batch.release?.();
         }
         continue;
       }
+    }
+
+    if (reorderWaitCandidate && ringSize > 0) {
+      // A decoder can retain presentation-reordered frames until its next
+      // codec-safe group arrives. If that group needs more outstanding-frame
+      // credit than remains, waiting cannot make progress: consuming one of
+      // the already-presentable ring frames is what releases the credit.
+      return report(input.output, {
+        submittedFrames,
+        decodedFrames,
+        discardedFrames,
+        staleFrames,
+        waits
+      });
     }
 
     if (input.output.hasExpected()) {

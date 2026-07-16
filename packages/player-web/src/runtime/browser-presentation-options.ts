@@ -1,4 +1,4 @@
-import type { CanvasV01 } from "@pixel-point/aval-format";
+import type { Canvas } from "@pixel-point/aval-format";
 
 import type {
   BrowserPresentationPlanesOptions,
@@ -17,7 +17,7 @@ import {
 
 export interface CapturedBrowserPresentationPlanesOptions {
   readonly animatedCanvas: HTMLCanvasElement;
-  readonly canvas: Readonly<CanvasV01>;
+  readonly canvas: Readonly<Canvas>;
   readonly maxBackingWidth: number;
   readonly maxBackingHeight: number;
   readonly maxBackingBytes: number;

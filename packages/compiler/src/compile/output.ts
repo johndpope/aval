@@ -332,5 +332,5 @@ export function throwIfAborted(signal: AbortSignal | undefined): void {
 }
 
 export function ffmpegGenerator(): string {
-  return "aval-compiler/0.1";
+  return "aval-compiler/1.0";
 }

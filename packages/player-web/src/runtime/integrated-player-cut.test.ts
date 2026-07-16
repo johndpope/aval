@@ -16,7 +16,7 @@ import type {
 import { describe, expect, it } from "vitest";
 
 import { installRuntimeAssetCatalog } from "./asset-catalog.js";
-import { createIntegratedOpaqueTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedTestAsset } from "./asset-test-support.js";
 import {
   CutPresentationCoordinator,
   CutPresentationSupersededError,
@@ -35,13 +35,15 @@ import type {
   RenderFrameHandle,
   ResidentFrameHandle,
   StreamingFrameHandle
-} from "./opaque-frame-renderer.js";
+} from "./frame-renderer.js";
 import {
   PathScheduler,
   type PathSchedulerWorkerAdapter
 } from "./path-scheduler.js";
 import { RequestPromises } from "./request-promises.js";
 import { WorkerSampleFactory } from "./worker-samples.js";
+import { inspectSelectedVideoRendition } from "./video-rendition-inspection.js";
+import { selectIntegratedTestVideoRendition } from "./integrated-player-video-test-support.js";
 
 const LIMITS = Object.freeze({
   maxDecodeQueueSize: 8,
@@ -319,7 +321,7 @@ interface CutFixture {
 }
 
 async function createFixture(options: FixtureOptions = {}): Promise<CutFixture> {
-  const catalog = installRuntimeAssetCatalog(createIntegratedOpaqueTestAsset());
+  const catalog = installRuntimeAssetCatalog(createIntegratedTestAsset());
   const definition = catalog.graph.definition;
   const idle = requireState(definition.states, "idle");
   const hover = requireState(definition.states, "hover");
@@ -344,6 +346,8 @@ async function createFixture(options: FixtureOptions = {}): Promise<CutFixture> 
   effects.apply(graph.tick({ contentOrdinal: 1n }), () => undefined);
 
   const timeline = new DecodeTimeline(catalog.manifest.frameRate);
+  const selected = selectIntegratedTestVideoRendition(catalog);
+  const inspection = inspectSelectedVideoRendition(catalog, selected).inspection;
   const worker = new FakeWorker({
     retainOneStaleOutput: options.retainOneStaleOutput === true
   });
@@ -351,6 +355,7 @@ async function createFixture(options: FixtureOptions = {}): Promise<CutFixture> 
     catalog,
     timeline,
     rendition: "opaque-high",
+    inspection,
     limits: LIMITS
   });
   let now = 0;
@@ -711,6 +716,7 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   public readonly unitId: string;
   public readonly unitInstance: number;
   public readonly unitFrame: number;
+  public readonly decodeIndex: number;
   public readonly timestamp: number;
   public readonly duration: number;
   public readonly decodedBytes = 128;
@@ -718,13 +724,19 @@ class FakeManagedFrame implements ManagedDecoderWorkerFrame {
   #closed = false;
 
   public constructor(pending: PendingSample, release: () => void) {
-    this.frameId = pending.sample.ordinal + 1;
+    const unitFrame = pending.sample.presentationIndices[0];
+    if (unitFrame === undefined) {
+      throw new Error("fake integrated cut worker requires a displayed chunk");
+    }
+    const ordinal = pending.sample.presentationOrdinalBase + unitFrame;
+    this.frameId = ordinal + 1;
     this.generation = pending.generation;
-    this.ordinal = pending.sample.ordinal;
+    this.ordinal = ordinal;
     this.unitId = pending.sample.unitId;
     this.unitInstance = pending.sample.unitInstance;
-    this.unitFrame = pending.sample.unitFrame;
-    this.timestamp = pending.sample.timestamp;
+    this.unitFrame = unitFrame;
+    this.decodeIndex = pending.sample.decodeIndex;
+    this.timestamp = pending.sample.presentationTimestamp;
     this.duration = pending.sample.duration;
     this.#release = release;
   }

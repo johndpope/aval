@@ -1,12 +1,12 @@
 import type {
-  AccessUnitRecord,
+  EncodedChunkRecord,
   ByteRange,
-  EdgeV01,
-  PortV01,
+  Edge,
+  Port,
   ParsedFrontIndex,
-  RenditionV01,
-  StateV01,
-  UnitV01,
+  ProductionRendition,
+  State,
+  Unit,
   UnitBlobRange
 } from "@pixel-point/aval-format";
 
@@ -26,7 +26,7 @@ export interface RuntimeCatalogIdIndex<TValue> {
 
 export interface RuntimeCatalogPortEntry {
   readonly unit: string;
-  readonly port: Readonly<PortV01>;
+  readonly port: Readonly<Port>;
 }
 
 export interface RuntimeCatalogPortIndex {
@@ -36,31 +36,31 @@ export interface RuntimeCatalogPortIndex {
   values(): readonly Readonly<RuntimeCatalogPortEntry>[];
 }
 
-export interface RuntimeCatalogAccessUnit {
+export interface RuntimeCatalogChunk {
   readonly rendition: string;
   readonly unit: string;
-  readonly localFrame: number;
+  readonly decodeIndex: number;
   readonly ordinal: number;
-  readonly record: Readonly<AccessUnitRecord>;
+  readonly record: Readonly<EncodedChunkRecord>;
   readonly blobKey?: string;
   readonly blobRange?: Readonly<UnitBlobRange>;
   readonly relativeRange?: Readonly<ByteRange>;
   readonly range: Readonly<ByteRange>;
 }
 
-export interface RuntimeCatalogRecordIndex {
+export interface RuntimeCatalogChunkIndex {
   readonly size: number;
   get(
     rendition: string,
     unit: string,
-    localFrame: number
-  ): Readonly<RuntimeCatalogAccessUnit> | undefined;
+    decodeIndex: number
+  ): Readonly<RuntimeCatalogChunk> | undefined;
   require(
     rendition: string,
     unit: string,
-    localFrame: number
-  ): Readonly<RuntimeCatalogAccessUnit>;
-  values(): readonly Readonly<RuntimeCatalogAccessUnit>[];
+    decodeIndex: number
+  ): Readonly<RuntimeCatalogChunk>;
+  values(): readonly Readonly<RuntimeCatalogChunk>[];
 }
 
 export interface CatalogMapBuildInput {
@@ -69,12 +69,12 @@ export interface CatalogMapBuildInput {
 }
 
 export interface CatalogMaps {
-  readonly renditions: Map<string, Readonly<RenditionV01>>;
-  readonly units: Map<string, Readonly<UnitV01>>;
-  readonly states: Map<string, Readonly<StateV01>>;
-  readonly edges: Map<string, Readonly<EdgeV01>>;
+  readonly renditions: Map<string, Readonly<ProductionRendition>>;
+  readonly units: Map<string, Readonly<Unit>>;
+  readonly states: Map<string, Readonly<State>>;
+  readonly edges: Map<string, Readonly<Edge>>;
   readonly ports: Map<string, Readonly<RuntimeCatalogPortEntry>>;
-  readonly records: Map<string, Readonly<RuntimeCatalogAccessUnit>>;
+  readonly chunks: Map<string, Readonly<RuntimeCatalogChunk>>;
 }
 
 export function buildCatalogMaps(
@@ -95,15 +95,15 @@ export function buildCatalogMaps(
     throw indexError("asset catalog front-index geometry is invalid");
   }
   const manifest = frontIndex.manifest;
-  const renditions = indexById<RenditionV01>(
+  const renditions = indexById<ProductionRendition>(
     manifest.renditions,
     "rendition"
   );
-  const units = indexById<UnitV01>(manifest.units, "unit");
-  const states = indexById<StateV01>(manifest.states, "state");
-  const edges = indexById<EdgeV01>(manifest.edges, "edge");
+  const units = indexById<Unit>(manifest.units, "unit");
+  const states = indexById<State>(manifest.states, "state");
+  const edges = indexById<Edge>(manifest.edges, "edge");
   const ports = new Map<string, Readonly<RuntimeCatalogPortEntry>>();
-  const records = new Map<string, Readonly<RuntimeCatalogAccessUnit>>();
+  const chunks = new Map<string, Readonly<RuntimeCatalogChunk>>();
   const unitBlobs = indexUnitBlobs(frontIndex, byteLength);
 
   for (const unit of manifest.units) {
@@ -118,63 +118,56 @@ export function buildCatalogMaps(
     }
   }
 
-  for (let ordinal = 0; ordinal < frontIndex.records.length; ordinal += 1) {
-    const record = frontIndex.records[ordinal];
-    if (record === undefined) {
-      throw indexError("validated asset record array is sparse");
-    }
-    const rendition = manifest.renditions[record.renditionIndex];
-    const unit = manifest.units[record.unitIndex];
+  for (const blob of unitBlobs.values()) {
+    const rendition = renditions.get(blob.rendition);
+    const unit = units.get(blob.unit);
     if (rendition === undefined || unit === undefined) {
-      throw indexError("validated asset record relation is missing");
-    }
-    checkedCatalogRangeEnd(
-      record.payloadOffset,
-      record.payloadLength,
-      byteLength
-    );
-    const blob = unitBlobs.get(unitBlobIdentity(rendition.id, unit.id));
-    if (blob === undefined) {
-      throw indexError("validated asset record has no containing unit blob");
+      throw indexError("validated asset chunk span relation is missing");
     }
     const blobEnd = checkedCatalogRangeEnd(
       blob.offset,
       blob.length,
       byteLength
     );
-    const recordEnd = record.payloadOffset + record.payloadLength;
-    if (
-      ordinal < blob.sampleStart ||
-      ordinal >= blob.sampleStart + blob.sampleCount ||
-      record.payloadOffset < blob.offset ||
-      recordEnd > blobEnd
-    ) {
-      throw indexError("validated asset record exceeds its unit blob");
+    for (let decodeIndex = 0; decodeIndex < blob.chunkCount; decodeIndex += 1) {
+      const ordinal = blob.chunkStart + decodeIndex;
+      const record = frontIndex.records[ordinal];
+      if (record === undefined) {
+        throw indexError("validated asset chunk array is sparse");
+      }
+      const recordEnd = checkedCatalogRangeEnd(
+        record.byteOffset,
+        record.byteLength,
+        byteLength
+      );
+      if (record.byteOffset < blob.offset || recordEnd > blobEnd) {
+        throw indexError("validated asset chunk exceeds its unit blob");
+      }
+      const range = Object.freeze({
+        offset: record.byteOffset,
+        length: record.byteLength
+      });
+      const relativeRange = Object.freeze({
+        offset: record.byteOffset - blob.offset,
+        length: record.byteLength
+      });
+      insertUnique(
+        chunks,
+        chunkIdentity(rendition.id, unit.id, decodeIndex),
+        Object.freeze({
+          rendition: rendition.id,
+          unit: unit.id,
+          decodeIndex,
+          ordinal,
+          record,
+          blobKey: runtimeUnitBlobKey(rendition.id, unit.id),
+          blobRange: blob,
+          relativeRange,
+          range
+        }),
+        "validated asset contains a duplicate encoded-chunk identity"
+      );
     }
-    const range = Object.freeze({
-      offset: record.payloadOffset,
-      length: record.payloadLength
-    });
-    const relativeRange = Object.freeze({
-      offset: record.payloadOffset - blob.offset,
-      length: record.payloadLength
-    });
-    insertUnique(
-      records,
-      recordIdentity(rendition.id, unit.id, record.frameIndex),
-      Object.freeze({
-        rendition: rendition.id,
-        unit: unit.id,
-        localFrame: record.frameIndex,
-        ordinal,
-        record,
-        blobKey: runtimeUnitBlobKey(rendition.id, unit.id),
-        blobRange: blob,
-        relativeRange,
-        range
-      }),
-      "validated asset contains a duplicate access-unit identity"
-    );
   }
 
   return Object.freeze({
@@ -183,7 +176,7 @@ export function buildCatalogMaps(
     states,
     edges,
     ports,
-    records
+    chunks
   });
 }
 
@@ -199,14 +192,14 @@ function indexUnitBlobs(
   for (const blob of frontIndex.unitBlobs) {
     checkedCatalogRangeEnd(blob.offset, blob.length, declaredFileLength);
     if (
-      !Number.isSafeInteger(blob.sampleStart) ||
-      !Number.isSafeInteger(blob.sampleCount) ||
-      blob.sampleStart < 0 ||
-      blob.sampleCount < 1 ||
-      blob.sampleStart > frontIndex.records.length ||
-      blob.sampleCount > frontIndex.records.length - blob.sampleStart
+      !Number.isSafeInteger(blob.chunkStart) ||
+      !Number.isSafeInteger(blob.chunkCount) ||
+      blob.chunkStart < 0 ||
+      blob.chunkCount < 1 ||
+      blob.chunkStart > frontIndex.records.length ||
+      blob.chunkCount > frontIndex.records.length - blob.chunkStart
     ) {
-      throw indexError("validated unit blob sample span is invalid");
+      throw indexError("validated unit blob chunk span is invalid");
     }
     insertUnique(
       result,
@@ -275,9 +268,9 @@ export function createCatalogPortIndex(
   });
 }
 
-export function createCatalogRecordIndex(
-  map: () => ReadonlyMap<string, Readonly<RuntimeCatalogAccessUnit>>
-): RuntimeCatalogRecordIndex {
+export function createCatalogChunkIndex(
+  map: () => ReadonlyMap<string, Readonly<RuntimeCatalogChunk>>
+): RuntimeCatalogChunkIndex {
   return Object.freeze({
     get size(): number {
       return map().size;
@@ -285,26 +278,26 @@ export function createCatalogRecordIndex(
     get(
       rendition: string,
       unit: string,
-      localFrame: number
-    ): Readonly<RuntimeCatalogAccessUnit> | undefined {
-      return map().get(recordIdentity(rendition, unit, localFrame));
+      decodeIndex: number
+    ): Readonly<RuntimeCatalogChunk> | undefined {
+      return map().get(chunkIdentity(rendition, unit, decodeIndex));
     },
     require(
       rendition: string,
       unit: string,
-      localFrame: number
-    ): Readonly<RuntimeCatalogAccessUnit> {
-      const value = map().get(recordIdentity(rendition, unit, localFrame));
+      decodeIndex: number
+    ): Readonly<RuntimeCatalogChunk> {
+      const value = map().get(chunkIdentity(rendition, unit, decodeIndex));
       if (value === undefined) {
-        throw indexError("asset catalog access-unit lookup failed", {
+        throw indexError("asset catalog encoded-chunk lookup failed", {
           rendition,
           unit,
-          localFrame
+          decodeIndex
         });
       }
       return value;
     },
-    values(): readonly Readonly<RuntimeCatalogAccessUnit>[] {
+    values(): readonly Readonly<RuntimeCatalogChunk>[] {
       return Object.freeze([...map().values()]);
     }
   });
@@ -362,12 +355,12 @@ function unitBlobIdentity(rendition: string, unit: string): string {
   return runtimeUnitBlobKey(rendition, unit);
 }
 
-function recordIdentity(
+function chunkIdentity(
   rendition: string,
   unit: string,
-  localFrame: number
+  decodeIndex: number
 ): string {
-  return `${rendition}/${unit}/${String(localFrame)}`;
+  return `${rendition}/${unit}/${String(decodeIndex)}`;
 }
 
 function indexError(

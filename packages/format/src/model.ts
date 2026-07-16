@@ -1,5 +1,4 @@
 import type { ValidatedMotionGraph } from "@pixel-point/aval-graph";
-import type { AvcCodecV01 } from "./avc/codec.js";
 
 export type Id = string;
 export type Sha256Hex = string;
@@ -10,11 +9,16 @@ export type Rect = readonly [
   height: number
 ];
 
+export type VideoCodec = "h264" | "h265" | "vp9" | "av1";
+export type VideoBitstream = "annex-b" | "frame" | "low-overhead";
+export type VideoLayout = "opaque" | "packed-alpha";
+export type VideoBitDepth = 8 | 10;
+
 export interface FormatBudgets {
   readonly maxFileBytes: number;
   readonly maxManifestBytes: number;
   readonly maxIndexBytes: number;
-  readonly maxSampleBytes: number;
+  readonly maxChunkBytes: number;
   readonly maxPngBytes: number;
   readonly maxJsonDepth: number;
   readonly maxJsonNodes: number;
@@ -26,7 +30,7 @@ export interface FormatBudgets {
   readonly maxBindings: number;
   readonly maxBlobRanges: number;
   readonly maxTotalUnitFrames: number;
-  readonly maxSampleRecords: number;
+  readonly maxChunkRecords: number;
   readonly maxPortsPerBody: number;
   readonly maxReversibleFrames: number;
 }
@@ -35,12 +39,12 @@ export interface FormatOptions {
   readonly budgets?: Partial<FormatBudgets>;
 }
 
-export interface RationalV01 {
+export interface Rational {
   readonly numerator: number;
   readonly denominator: number;
 }
 
-export interface CanvasV01 {
+export interface Canvas {
   readonly width: number;
   readonly height: number;
   readonly fit: "contain" | "cover" | "fill" | "none";
@@ -48,136 +52,86 @@ export interface CanvasV01 {
   readonly colorSpace: "srgb";
 }
 
-export interface BitrateV01 {
+export interface Bitrate {
   readonly average: number;
   readonly peak: number;
 }
 
-export type AvcProductionRenditionProfileV01 =
-  | "avc-annexb-opaque-v0"
-  | "avc-annexb-packed-alpha-v0"
-  | "avc-annexb-opaque-v1"
-  | "avc-annexb-packed-alpha-v1";
-
-export type RenditionV01 =
+export type AlphaLayout =
   | {
-      readonly id: Id;
-      readonly profile: "reference-rgba-v0";
-      readonly codec: "aval.reference-rgba";
-      readonly codedWidth: number;
-      readonly codedHeight: number;
-      readonly alphaLayout: { readonly type: "straight-rgba-v0" };
-      readonly capabilities: readonly [];
+      readonly type: "opaque";
+      readonly colorRect: Rect;
     }
   | {
-      readonly id: Id;
-      readonly profile: "avc-annexb-opaque-v0";
-      readonly codec: AvcCodecV01;
-      readonly codedWidth: number;
-      readonly codedHeight: number;
-      readonly alphaLayout: {
-        readonly type: "opaque-v0";
-        readonly colorRect: Rect;
-      };
-      readonly bitrate: BitrateV01;
-      readonly capabilities: readonly ["webcodecs", "webgl2"];
-    }
-  | {
-      readonly id: Id;
-      readonly profile: "avc-annexb-packed-alpha-v0";
-      readonly codec: AvcCodecV01;
-      readonly codedWidth: number;
-      readonly codedHeight: number;
-      readonly alphaLayout: {
-        readonly type: "stacked-v0";
-        readonly colorRect: Rect;
-        readonly alphaRect: Rect;
-      };
-      readonly bitrate: BitrateV01;
-      readonly capabilities: readonly ["webcodecs", "webgl2"];
-    }
-  | {
-      readonly id: Id;
-      readonly profile: "avc-annexb-opaque-v1";
-      readonly codec: AvcCodecV01;
-      readonly codedWidth: number;
-      readonly codedHeight: number;
-      readonly alphaLayout: {
-        readonly type: "opaque-v0";
-        readonly colorRect: Rect;
-      };
-      readonly bitrate: BitrateV01;
-      readonly capabilities: readonly ["webcodecs", "webgl2"];
-    }
-  | {
-      readonly id: Id;
-      readonly profile: "avc-annexb-packed-alpha-v1";
-      readonly codec: AvcCodecV01;
-      readonly codedWidth: number;
-      readonly codedHeight: number;
-      readonly alphaLayout: {
-        readonly type: "stacked-v0";
-        readonly colorRect: Rect;
-        readonly alphaRect: Rect;
-      };
-      readonly bitrate: BitrateV01;
-      readonly capabilities: readonly ["webcodecs", "webgl2"];
+      readonly type: "stacked";
+      readonly colorRect: Rect;
+      readonly alphaRect: Rect;
     };
 
-export interface SampleSpanV01 {
+/** One quality rung in a single-codec asset. Array order is author preference. */
+export interface ProductionRendition {
+  readonly id: Id;
+  readonly codec: string;
+  readonly bitDepth: VideoBitDepth;
+  readonly codedWidth: number;
+  readonly codedHeight: number;
+  readonly alphaLayout: AlphaLayout;
+  readonly bitrate: Bitrate;
+}
+
+/** One unit/rendition blob in the global decode-order chunk array. */
+export interface UnitChunkSpan {
   readonly rendition: Id;
-  readonly sampleStart: number;
-  readonly sampleCount: number;
+  readonly chunkStart: number;
+  readonly chunkCount: number;
+  readonly frameCount: number;
   readonly sha256: Sha256Hex;
 }
 
-export interface PortV01 {
+export interface Port {
   readonly id: Id;
   readonly entryFrame: 0;
   readonly portalFrames: readonly number[];
 }
 
-export interface ResidencyEndpointV01 {
+export interface ResidencyEndpoint {
   readonly state: Id;
   readonly port: Id;
   readonly frames: number;
 }
 
-interface UnitBaseV01 {
+interface UnitBase {
   readonly id: Id;
   readonly frameCount: number;
-  readonly samples: readonly SampleSpanV01[];
+  readonly chunks: readonly UnitChunkSpan[];
 }
 
-export type UnitV01 =
-  | (UnitBaseV01 & {
+export type Unit =
+  | (UnitBase & {
       readonly kind: "body";
       readonly playback: "loop" | "finite";
-      readonly ports: readonly PortV01[];
+      readonly ports: readonly Port[];
     })
-  | (UnitBaseV01 & { readonly kind: "bridge" })
-  | (UnitBaseV01 & {
+  | (UnitBase & { readonly kind: "bridge" })
+  | (UnitBase & {
       readonly kind: "reversible";
       readonly residency: {
-        readonly endpoints: readonly [
-          ResidencyEndpointV01,
-          ResidencyEndpointV01
-        ];
+        readonly endpoints: readonly [ResidencyEndpoint, ResidencyEndpoint];
       };
     })
-  | (UnitBaseV01 & { readonly kind: "one-shot" });
+  | (UnitBase & { readonly kind: "one-shot" });
 
-export interface StateV01 {
+export interface State {
   readonly id: Id;
   readonly bodyUnit: Id;
   readonly initialUnit?: Id;
 }
 
-export type TriggerV01 =
+export type Trigger =
   | { readonly type: "event"; readonly name: Id }
   | { readonly type: "completion" };
 
-export type StartV01 =
+export type Start =
   | {
       readonly type: "portal";
       readonly sourcePort: Id;
@@ -195,7 +149,7 @@ export type StartV01 =
       readonly maxWaitFrames: 1;
     };
 
-export type TransitionV01 =
+export type Transition =
   | { readonly kind: "locked"; readonly unit: Id }
   | {
       readonly kind: "reversible";
@@ -204,31 +158,31 @@ export type TransitionV01 =
       readonly reverseOf?: Id;
     };
 
-interface NonCutEdgeV01 {
+interface NonCutEdge {
   readonly id: Id;
   readonly from: Id;
   readonly to: Id;
-  readonly trigger?: TriggerV01;
-  readonly start: Exclude<StartV01, { readonly type: "cut" }>;
-  readonly transition?: TransitionV01;
+  readonly trigger?: Trigger;
+  readonly start: Exclude<Start, { readonly type: "cut" }>;
+  readonly transition?: Transition;
   readonly continuity: "exact-authored" | "exact-reverse";
   readonly targetRunwayFrames?: never;
 }
 
-interface CutEdgeV01 {
+interface CutEdge {
   readonly id: Id;
   readonly from: Id;
   readonly to: Id;
-  readonly trigger?: TriggerV01;
-  readonly start: Extract<StartV01, { readonly type: "cut" }>;
+  readonly trigger?: Trigger;
+  readonly start: Extract<Start, { readonly type: "cut" }>;
   readonly transition?: never;
   readonly continuity: "cut";
   readonly targetRunwayFrames: number;
 }
 
-export type EdgeV01 = NonCutEdgeV01 | CutEdgeV01;
+export type Edge = NonCutEdge | CutEdge;
 
-export type BindingSourceV01 =
+export type BindingSource =
   | "activate"
   | "engagement.off"
   | "engagement.on"
@@ -239,18 +193,18 @@ export type BindingSourceV01 =
   | "pointer.leave"
   | "visible";
 
-export interface BindingV01 {
-  readonly source: BindingSourceV01;
+export interface Binding {
+  readonly source: BindingSource;
   readonly event: Id;
 }
 
-export interface ReadinessV01 {
+export interface Readiness {
   readonly policy: "all-routes";
   readonly bootstrapUnits: readonly Id[];
   readonly immediateEdges: readonly Id[];
 }
 
-export interface DeclaredLimitsV01 {
+export interface DeclaredLimits {
   readonly maxCompiledBytes: number;
   readonly maxRuntimeBytes: number;
   readonly decodedPixelBytes: number;
@@ -258,24 +212,27 @@ export interface DeclaredLimitsV01 {
   readonly runtimeWorkingSetBytes: number;
 }
 
-export interface CompiledManifestV01 {
-  readonly formatVersion: "0.1";
+export interface CompiledManifest {
+  readonly formatVersion: "1.0";
   readonly generator: string;
-  readonly canvas: CanvasV01;
-  readonly frameRate: RationalV01;
-  readonly renditions: readonly RenditionV01[];
-  readonly units: readonly UnitV01[];
+  readonly codec: VideoCodec;
+  readonly bitstream: VideoBitstream;
+  readonly layout: VideoLayout;
+  readonly canvas: Canvas;
+  readonly frameRate: Rational;
+  readonly renditions: readonly ProductionRendition[];
+  readonly units: readonly Unit[];
   readonly initialState: Id;
-  readonly states: readonly StateV01[];
-  readonly edges: readonly EdgeV01[];
-  readonly bindings: readonly BindingV01[];
-  readonly readiness: ReadinessV01;
-  readonly limits: DeclaredLimitsV01;
+  readonly states: readonly State[];
+  readonly edges: readonly Edge[];
+  readonly bindings: readonly Binding[];
+  readonly readiness: Readiness;
+  readonly limits: DeclaredLimits;
 }
 
 export interface FormatHeader {
-  readonly major: 0;
-  readonly minor: 1;
+  readonly major: 1;
+  readonly minor: 0;
   readonly headerLength: 64;
   readonly requiredFeatureFlags: 0;
   readonly declaredFileLength: number;
@@ -285,13 +242,14 @@ export interface FormatHeader {
   readonly indexLength: number;
 }
 
-export interface AccessUnitRecord {
-  readonly payloadOffset: number;
-  readonly payloadLength: number;
-  readonly unitIndex: number;
-  readonly renditionIndex: number;
-  readonly key: boolean;
-  readonly frameIndex: number;
+/** Fixed-width decode-order metadata for one elementary encoded chunk. */
+export interface EncodedChunkRecord {
+  readonly byteOffset: number;
+  readonly byteLength: number;
+  readonly presentationTimestamp: number;
+  readonly duration: number;
+  readonly randomAccess: boolean;
+  readonly displayedFrameCount: number;
 }
 
 export interface ByteRange {
@@ -302,16 +260,17 @@ export interface ByteRange {
 export interface UnitBlobRange extends ByteRange {
   readonly rendition: Id;
   readonly unit: Id;
-  readonly sampleStart: number;
-  readonly sampleCount: number;
+  readonly chunkStart: number;
+  readonly chunkCount: number;
+  readonly frameCount: number;
   readonly sha256: Sha256Hex;
 }
 
 export interface ParsedFrontIndex {
   readonly header: FormatHeader;
-  readonly manifest: CompiledManifestV01;
+  readonly manifest: CompiledManifest;
   readonly graph: ValidatedMotionGraph;
-  readonly records: readonly AccessUnitRecord[];
+  readonly records: readonly EncodedChunkRecord[];
   readonly frontIndexRange: ByteRange;
   readonly unitBlobs: readonly UnitBlobRange[];
 }
@@ -321,51 +280,41 @@ export interface ValidatedAssetLayout {
   readonly fileRange: ByteRange;
 }
 
-export interface ReferenceFrameHeader {
-  readonly width: number;
-  readonly height: number;
-  readonly frameIndex: number;
-  readonly rgbaLength: number;
-}
-
-export interface ReferenceFrameDescriptor extends ReferenceFrameHeader {
-  readonly rgbaRange: ByteRange;
-}
-
-export interface SampleDigestInputV01 {
+export interface ChunkDigestInput {
   readonly rendition: Id;
   readonly sha256: Sha256Hex;
 }
 
-type UnitInputOf<TKind extends UnitV01["kind"]> = Omit<
-  Extract<UnitV01, { readonly kind: TKind }>,
-  "samples"
+type UnitInputOf<TKind extends Unit["kind"]> = Omit<
+  Extract<Unit, { readonly kind: TKind }>,
+  "chunks"
 > & {
-  readonly samples: readonly SampleDigestInputV01[];
+  readonly chunks: readonly ChunkDigestInput[];
 };
 
-export type UnitInputV01 =
+export type UnitInput =
   | UnitInputOf<"body">
   | UnitInputOf<"bridge">
   | UnitInputOf<"reversible">
   | UnitInputOf<"one-shot">;
 
-export type CompiledManifestInputV01 = Omit<
-  CompiledManifestV01,
-  "units"
-> & {
-  readonly units: readonly UnitInputV01[];
+export type CompiledManifestInput = Omit<CompiledManifest, "units"> & {
+  readonly units: readonly UnitInput[];
 };
 
-export interface AccessUnitInputV01 {
+/** Caller-owned payload plus timeline metadata, identified within one unit. */
+export interface EncodedChunkInput {
   readonly rendition: Id;
   readonly unit: Id;
-  readonly frameIndex: number;
-  readonly key: boolean;
+  readonly decodeIndex: number;
+  readonly presentationTimestamp: number;
+  readonly duration: number;
+  readonly randomAccess: boolean;
+  readonly displayedFrameCount: number;
   readonly bytes: Uint8Array;
 }
 
-export interface CanonicalAssetInputV01 {
-  readonly manifest: CompiledManifestInputV01;
-  readonly accessUnits: readonly AccessUnitInputV01[];
+export interface CanonicalAssetInput {
+  readonly manifest: CompiledManifestInput;
+  readonly chunks: readonly EncodedChunkInput[];
 }

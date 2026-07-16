@@ -4,7 +4,7 @@ import {
   type DecoderWorkerErrorCode,
   type DecoderWorkerEvent,
   type DecoderWorkerMetrics,
-  type DecoderWorkerRequestOperation
+  type DecoderWorkerAckOperation
 } from "./protocol.js";
 
 export function isDecoderWorkerCommand(
@@ -15,13 +15,20 @@ export function isDecoderWorkerCommand(
   }
 
   switch (value.type) {
+    case "probe-config":
+      return hasRequestId(value) && hasExactKeys(value, [
+        "type",
+        "protocolVersion",
+        "requestId",
+        "config"
+      ]);
     case "configure":
       return hasRequestId(value) && hasExactKeys(value, [
         "type",
         "protocolVersion",
         "requestId",
         "config",
-        "avcProfile",
+        "videoProfile",
         "expectedOutput",
         "limits"
       ]);
@@ -71,10 +78,21 @@ export function isDecoderWorkerEvent(value: unknown): value is DecoderWorkerEven
     return false;
   }
   switch (value.type) {
+    case "probe-result":
+      return (
+        hasRequestId(value) &&
+        typeof value.supported === "boolean" &&
+        hasExactKeys(value, [
+          "type",
+          "protocolVersion",
+          "requestId",
+          "supported"
+        ])
+      );
     case "ack":
       return (
         hasRequestId(value) &&
-        isRequestOperation(value.operation) &&
+        isAckOperation(value.operation) &&
         hasExactKeys(value, [
           "type",
           "protocolVersion",
@@ -90,6 +108,7 @@ export function isDecoderWorkerEvent(value: unknown): value is DecoderWorkerEven
         typeof value.unitId === "string" &&
         isNonNegativeSafeInteger(value.unitInstance) &&
         isNonNegativeSafeInteger(value.unitFrame) &&
+        isNonNegativeSafeInteger(value.decodeIndex) &&
         isNonNegativeSafeInteger(value.timestamp) &&
         isPositiveSafeInteger(value.duration) &&
         isNonNegativeSafeInteger(value.outputCallbackMicroseconds) &&
@@ -104,6 +123,7 @@ export function isDecoderWorkerEvent(value: unknown): value is DecoderWorkerEven
           "unitId",
           "unitInstance",
           "unitFrame",
+          "decodeIndex",
           "timestamp",
           "duration",
           "outputCallbackMicroseconds",
@@ -175,9 +195,9 @@ function isClosableFrame(value: unknown): value is VideoFrame {
   return isRecord(value) && typeof value.close === "function";
 }
 
-function isRequestOperation(
+function isAckOperation(
   value: unknown
-): value is DecoderWorkerRequestOperation {
+): value is DecoderWorkerAckOperation {
   return (
     value === "configure" ||
     value === "activate-generation" ||
@@ -193,6 +213,7 @@ function isErrorCode(value: unknown): value is DecoderWorkerErrorCode {
     value === "ALREADY_CONFIGURED" ||
     value === "GENERATION_MISMATCH" ||
     value === "BACKPRESSURE_LIMIT" ||
+    value === "DECODER_PROBE_FAILED" ||
     value === "DECODER_CONFIGURE_FAILED" ||
     value === "DECODER_SUBMIT_FAILED" ||
     value === "DECODER_OUTPUT_INVALID" ||
@@ -231,8 +252,6 @@ function isMetrics(value: unknown): value is DecoderWorkerMetrics {
   }
   if (
     value.resetCalls !== 0 ||
-    value.flushCalls !== 0 ||
-    value.boundaryFlushCalls !== 0 ||
     typeof value.disposed !== "boolean" ||
     (value.activeGeneration !== null &&
       !isPositiveSafeInteger(value.activeGeneration))
@@ -241,6 +260,8 @@ function isMetrics(value: unknown): value is DecoderWorkerMetrics {
   }
   for (const key of [
     "configureCalls",
+    "flushCalls",
+    "boundaryFlushCalls",
     "acceptedSamples",
     "submittedChunks",
     "outputFrames",

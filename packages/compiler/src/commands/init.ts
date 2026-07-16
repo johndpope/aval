@@ -35,7 +35,7 @@ export interface InitCommandDependencies {
   readonly publicationSyncDirectory?: (path: string) => Promise<void>;
 }
 
-/** Create the deterministic, transparent idle/hover M8 starter atomically. */
+/** Create the deterministic transparent idle/hover starter atomically. */
 export async function runInitCommand(
   arguments_: InitCliArguments,
   cwd: string,
@@ -68,8 +68,8 @@ export async function runInitCommand(
       ...frameFiles
     ]);
     const provenance = Object.freeze({
-      provenanceVersion: "0.1",
-      generator: "@pixel-point/aval-compiler init idle-hover-v2",
+      provenanceVersion: "1.0",
+      generator: "@pixel-point/aval-compiler init 1.0",
       license: "CC0-1.0",
       project: Object.freeze({
         path: PROJECT_FILE,
@@ -143,8 +143,8 @@ async function writeSyncedFile(path: string, bytes: Uint8Array): Promise<void> {
 
 function starterProject(): Record<string, unknown> {
   return {
-    projectVersion: "0.3",
-    profile: "avc-annexb-auto-v1",
+    projectVersion: "1.0",
+    alpha: "auto",
     canvas: {
       width: 48,
       height: 48,
@@ -163,16 +163,35 @@ function starterProject(): Record<string, unknown> {
       firstNumber: 0,
       frameCount: FRAME_COUNT
     }],
-    renditions: [{
-      id: "avc.1x",
-      width: 48,
-      height: 48,
-      encoding: {
+    encodings: [
+      {
+        codec: "av1",
+        bitDepth: 10,
+        cpuUsed: 8,
+        tiles: { columns: 1, rows: 1 },
+        rowMt: true,
+        threads: 2,
+        renditions: [{ id: "motion.1x", width: 48, height: 48, crf: 1 }]
+      },
+      {
+        codec: "vp9",
+        deadline: "good",
+        cpuUsed: 4,
+        threads: 2,
+        renditions: [{ id: "motion.1x", width: 48, height: 48, crf: 1 }]
+      },
+      {
+        codec: "h265",
+        preset: "slow",
+        threads: 2,
+        renditions: [{ id: "motion.1x", width: 48, height: 48, crf: 1 }]
+      },
+      {
         codec: "h264",
         preset: "slow",
-        rateControl: { mode: "crf", crf: 1, maxBitrate: 800_000 }
+        renditions: [{ id: "motion.1x", width: 48, height: 48, crf: 1 }]
       }
-    }],
+    ],
     units: [
       {
         id: "idle.body",
@@ -309,13 +328,17 @@ const STARTER_PACKAGE = Object.freeze({
   private: true,
   type: "module",
   scripts: {
-    build: "avl compile motion.json --out starter.avl",
-    validate: "avl validate starter.avl",
-    dev: "avl dev motion.json --out starter.avl --force"
+    build: "avl compile motion.json --out motion --force",
+    validate: "avl validate motion/av1.avl && avl validate motion/vp9.avl && avl validate motion/h265.avl && avl validate motion/h264.avl",
+    dev: "avl dev motion.json --out motion --force",
+    preview: "vite --host 127.0.0.1"
   },
   dependencies: {
-    "@pixel-point/aval-compiler": "1.0.0",
     "@pixel-point/aval-element": "1.0.0"
+  },
+  devDependencies: {
+    "@pixel-point/aval-compiler": "1.0.0",
+    vite: "8.1.4"
   }
 });
 
@@ -325,19 +348,24 @@ The state names (\`idle\` and \`engaged\`) and event names
 (\`control.engage\` and \`control.release\`) are ordinary author data. The
 runtime does not contain a special hover state.
 
-Build and validate locally:
+Build the ordered AV1, VP9, H.265, and H.264 bundle, then open the starter page:
 
 \`\`\`sh
 npm install
 npm run build
 npm run validate
-npm run dev
+npm run preview
 \`\`\`
 
-\`npm run dev\` is the zero-config compiler/watch/browser workflow. The included
-\`index.html\` is the equivalent bundler entry: its npm package import is resolved
-by Vite, Parcel, Webpack, and other package-aware web tooling. It demonstrates
-a native button as the semantic interaction target and a light-DOM fallback.
+The compiler writes one asset per codec plus \`motion/build.json\`. Before the
+element is defined, \`main.js\` copies each exact MIME type and integrity digest
+from that report onto the literal, ordered \`<source>\` children. The player has
+no host \`src\` or host \`integrity\` attribute.
+
+\`npm run dev\` runs the compiler's watch/browser workflow. The included
+\`index.html\` is the package-aware Vite entry used by \`npm run preview\`. It
+demonstrates a native button as the semantic interaction target and a light-DOM
+fallback.
 
 The generated RGBA frames are CC0-1.0 and their exact provenance is recorded
 in \`provenance.json\`. No upload, account, framework, or remote asset is
@@ -349,7 +377,11 @@ const HTML_EXAMPLE = `<!doctype html>
 <head><meta charset="UTF-8"><title>Idle/hover AVAL</title></head>
 <body>
   <button id="favorite" type="button">
-    <aval-player src="./starter.avl" interaction-for="favorite" aria-hidden="true">
+    <aval-player id="motion" interaction-for="favorite" aria-hidden="true">
+      <source data-aval-codec="av1">
+      <source data-aval-codec="vp9">
+      <source data-aval-codec="h265">
+      <source data-aval-codec="h264">
       <img slot="fallback" src="./frames/frame-0000.png" alt="" width="48" height="48">
     </aval-player>
     <span>Favorite</span>
@@ -359,7 +391,37 @@ const HTML_EXAMPLE = `<!doctype html>
 </html>
 `;
 
-const STARTER_SCRIPT = `import "@pixel-point/aval-element/auto";
+const STARTER_SCRIPT = `const player = document.querySelector("#motion");
+if (!(player instanceof HTMLElement)) throw new Error("starter markup is incomplete");
+
+try {
+  const response = await fetch("./motion/build.json");
+  if (!response.ok) throw new Error(\`could not load motion/build.json (\${response.status})\`);
+  const report = await response.json();
+  if (!report || report.reportVersion !== "1.0" || !Array.isArray(report.assets)) {
+    throw new Error("motion/build.json is not an AVAL build report 1.0");
+  }
+  const assets = new Map(report.assets.map((asset) => [asset.codec, asset]));
+  const sources = player.querySelectorAll(":scope > source[data-aval-codec]");
+  for (const source of sources) {
+    const codec = source.getAttribute("data-aval-codec");
+    const asset = assets.get(codec);
+    if (
+      !asset || asset.path !== \`\${codec}.avl\` ||
+      typeof asset.type !== "string" || typeof asset.integrity !== "string"
+    ) {
+      throw new Error(\`motion/build.json is missing the \${codec} source\`);
+    }
+    source.setAttribute("src", \`./motion/\${asset.path}\`);
+    source.setAttribute("type", asset.type);
+    source.setAttribute("integrity", asset.integrity);
+    source.removeAttribute("data-aval-codec");
+  }
+} catch (error) {
+  console.error("AVAL starter source setup failed; the fallback remains available.", error);
+}
+
+await import("@pixel-point/aval-element/auto");
 `;
 
 const ASSET_LICENSE = `# Generated starter asset license

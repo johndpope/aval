@@ -120,7 +120,7 @@ interface ByteLeaseRecord {
 
 /**
  * One page-wide authority for physical bytes and per-player logical bytes.
- * Decoder tickets and reclamation are composed in the following M7 slice.
+ * Decoder tickets and reclamation are composed by the page runtime.
  */
 export class PageResourceManager {
   readonly #policy: Readonly<RuntimePageResourcePolicy>;

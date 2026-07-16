@@ -1,4 +1,4 @@
-import type { SourceProjectV01, SourceUnitV01 } from "../model.js";
+import type { SourceProject, SourceUnit } from "../model.js";
 import { CompilerError } from "../diagnostics.js";
 import {
   type PreparedProjectSource,
@@ -37,13 +37,13 @@ export interface ContinuityReport {
 }
 
 interface FramePoint {
-  readonly unit: SourceUnitV01;
+  readonly unit: SourceUnit;
   readonly frame: number;
   readonly direction: "forward" | "reverse";
 }
 
 type ProjectMediaDefinition = Pick<
-  SourceProjectV01,
+  SourceProject,
   "canvas" | "units" | "initialState" | "states" | "edges"
 >;
 
@@ -260,7 +260,7 @@ async function analyzeBoundary(
 }
 
 function portalDepartures(
-  unit: Extract<SourceUnitV01, { readonly kind: "body" }>,
+  unit: Extract<SourceUnit, { readonly kind: "body" }>,
   portId: string
 ): number[] {
   const port = unit.ports.find(({ id }) => id === portId);
@@ -274,7 +274,7 @@ function portalDepartures(
 }
 
 function transitionPoint(
-  unit: SourceUnitV01,
+  unit: SourceUnit,
   direction: "forward" | "reverse",
   first: boolean
 ): FramePoint {
@@ -347,20 +347,20 @@ function requiredSource(
   return source;
 }
 
-function requiredUnit<K extends SourceUnitV01["kind"]>(
-  units: ReadonlyMap<string, SourceUnitV01>,
+function requiredUnit<K extends SourceUnit["kind"]>(
+  units: ReadonlyMap<string, SourceUnit>,
   id: string,
   kind: K
-): Extract<SourceUnitV01, { readonly kind: K }>;
+): Extract<SourceUnit, { readonly kind: K }>;
 function requiredUnit(
-  units: ReadonlyMap<string, SourceUnitV01>,
+  units: ReadonlyMap<string, SourceUnit>,
   id: string
-): SourceUnitV01;
+): SourceUnit;
 function requiredUnit(
-  units: ReadonlyMap<string, SourceUnitV01>,
+  units: ReadonlyMap<string, SourceUnit>,
   id: string,
-  kind?: SourceUnitV01["kind"]
-): SourceUnitV01 {
+  kind?: SourceUnit["kind"]
+): SourceUnit {
   const unit = units.get(id);
   if (unit === undefined || (kind !== undefined && unit.kind !== kind)) {
     throw new CompilerError(

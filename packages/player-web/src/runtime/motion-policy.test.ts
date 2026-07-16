@@ -115,7 +115,7 @@ describe("MotionPolicyCoordinator", () => {
 
   it("keeps codec, resource, readiness, animation, and fallback failures sticky", () => {
     for (const origin of [
-      "no-avc-rendition",
+      "no-video-rendition",
       "codec-unsupported",
       "resource-budget",
       "readiness-failed",
@@ -242,7 +242,7 @@ describe("MotionPolicyCoordinator", () => {
       1 as unknown as boolean
     )).toThrow("boolean");
     expect(() => coordinator.installStatic(
-      "legacy" as unknown as "reduced-motion"
+      "removed" as unknown as "reduced-motion"
     )).toThrow("static origin");
 
     coordinator.installAnimated();

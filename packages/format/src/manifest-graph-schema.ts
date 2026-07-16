@@ -18,18 +18,18 @@ import {
   requireStringOrder
 } from "./manifest-validation.js";
 import type {
-  BindingSourceV01,
-  BindingV01,
-  EdgeV01,
+  BindingSource,
+  Binding,
+  Edge,
   FormatBudgets,
-  ReadinessV01,
-  StartV01,
-  StateV01,
-  TransitionV01,
-  TriggerV01
+  Readiness,
+  Start,
+  State,
+  Transition,
+  Trigger
 } from "./model.js";
 
-const BINDING_SOURCES = new Set<BindingSourceV01>([
+const BINDING_SOURCES = new Set<BindingSource>([
   "activate",
   "engagement.off",
   "engagement.on",
@@ -45,7 +45,7 @@ export function cloneStates(
   value: unknown,
   budgets: FormatBudgets,
   path: string
-): readonly StateV01[] {
+): readonly State[] {
   const inputs = boundedArray(value, path, 1, budgets.maxStates);
   const states = inputs.map((entry, index) => {
     const statePath = `${path}[${String(index)}]`;
@@ -71,7 +71,7 @@ export function cloneEdges(
   value: unknown,
   budgets: FormatBudgets,
   path: string
-): readonly EdgeV01[] {
+): readonly Edge[] {
   const inputs = boundedArray(value, path, 0, budgets.maxEdges);
   const edges = inputs.map((entry, index) =>
     cloneEdge(entry, `${path}[${String(index)}]`)
@@ -80,7 +80,7 @@ export function cloneEdges(
   return Object.freeze(edges);
 }
 
-function cloneEdge(value: unknown, path: string): EdgeV01 {
+function cloneEdge(value: unknown, path: string): Edge {
   const input = record(value, path);
   const startProbe = record(input.start, `${path}.start`);
   const cut = startProbe.type === "cut";
@@ -138,7 +138,7 @@ function cloneEdge(value: unknown, path: string): EdgeV01 {
   return Object.freeze({ ...base, trigger, transition });
 }
 
-function cloneTrigger(value: unknown, path: string): TriggerV01 {
+function cloneTrigger(value: unknown, path: string): Trigger {
   const input = record(value, path);
   if (input.type === "completion") {
     exactKeys(input, ["type"], path);
@@ -154,7 +154,7 @@ function cloneTrigger(value: unknown, path: string): TriggerV01 {
   invalid(`${path}.type`, "must be event or completion");
 }
 
-function cloneStart(value: unknown, path: string): StartV01 {
+function cloneStart(value: unknown, path: string): Start {
   const input = record(value, path);
   if (input.type === "portal") {
     exactKeys(input, ["type", "sourcePort", "targetPort", "maxWaitFrames"], path);
@@ -185,7 +185,7 @@ function cloneStart(value: unknown, path: string): StartV01 {
   invalid(`${path}.type`, "must be portal, finish, or cut");
 }
 
-function cloneTransition(value: unknown, path: string): TransitionV01 {
+function cloneTransition(value: unknown, path: string): Transition {
   const input = record(value, path);
   if (input.kind === "locked") {
     exactKeys(input, ["kind", "unit"], path);
@@ -220,17 +220,17 @@ export function cloneBindings(
   value: unknown,
   budgets: FormatBudgets,
   path: string
-): readonly BindingV01[] {
+): readonly Binding[] {
   const inputs = boundedArray(value, path, 0, budgets.maxBindings);
   const bindings = inputs.map((entry, index) => {
     const bindingPath = `${path}[${String(index)}]`;
     const input = record(entry, bindingPath);
     exactKeys(input, ["source", "event"], bindingPath);
-    if (typeof input.source !== "string" || !BINDING_SOURCES.has(input.source as BindingSourceV01)) {
+    if (typeof input.source !== "string" || !BINDING_SOURCES.has(input.source as BindingSource)) {
       invalid(`${bindingPath}.source`, "is not a supported binding source");
     }
     return Object.freeze({
-      source: input.source as BindingSourceV01,
+      source: input.source as BindingSource,
       event: identifier(input.event, `${bindingPath}.event`)
     });
   });
@@ -253,7 +253,7 @@ export function cloneReadiness(
   value: unknown,
   budgets: FormatBudgets,
   path: string
-): ReadinessV01 {
+): Readiness {
   const input = record(value, path);
   exactKeys(input, ["policy", "bootstrapUnits", "immediateEdges"], path);
   literal(input.policy, "all-routes", `${path}.policy`);

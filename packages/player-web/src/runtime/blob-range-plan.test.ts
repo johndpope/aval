@@ -1,7 +1,7 @@
 import { validateCompleteAsset } from "@pixel-point/aval-format";
 import { describe, expect, it } from "vitest";
 
-import { createIntegratedPathTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedPathTestAsset } from "./asset-test-support.js";
 import { planBlobStorageRanges } from "./blob-range-plan.js";
 
 describe("unit blob range plan", () => {

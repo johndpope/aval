@@ -1,7 +1,7 @@
 import { RuntimePlaybackError, normalizeRuntimeFailure } from "./errors.js";
 import type {
-  AvcCandidateResourceAuthority
-} from "./avc-candidate-factory-model.js";
+  VideoCandidateResourceAuthority
+} from "./video-candidate-model.js";
 import type {
   RuntimeDecoderLease,
   RuntimeDecoderTicket,
@@ -38,8 +38,8 @@ export interface IntegratedPlayerParticipantConnection {
 }
 
 export interface IntegratedPlayerParticipantBinding {
-  /** Wire this exact authority into the player's AVC candidate factory. */
-  readonly candidateResourceAuthority: AvcCandidateResourceAuthority;
+  /** Wire this exact authority into the player's video candidate factory. */
+  readonly candidateResourceAuthority: VideoCandidateResourceAuthority;
   attach(options: Readonly<{
     readonly onDecoderGrant: () => boolean | void;
   }>): IntegratedPlayerParticipantConnection;
@@ -64,7 +64,7 @@ export function createIntegratedPlayerParticipantBinding(input: Readonly<{
 }
 
 class PlayerParticipantBinding implements IntegratedPlayerParticipantBinding {
-  public readonly candidateResourceAuthority: AvcCandidateResourceAuthority;
+  public readonly candidateResourceAuthority: VideoCandidateResourceAuthority;
   readonly #account: PlayerResourceAccount;
   readonly #decoders: PageDecoderLeases;
   readonly #generation: number;

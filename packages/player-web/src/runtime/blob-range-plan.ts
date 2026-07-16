@@ -26,8 +26,9 @@ export interface PlannedRuntimeUnitBlob extends PlannedRuntimeBlobBase {
   readonly kind: "unit";
   readonly rendition: string;
   readonly unit: string;
-  readonly sampleStart: number;
-  readonly sampleCount: number;
+  readonly chunkStart: number;
+  readonly chunkCount: number;
+  readonly frameCount: number;
 }
 
 export interface PlannedBlobTransportRange {
@@ -218,8 +219,9 @@ function freezePlannedBlob(
     kind: "unit",
     rendition: source.rendition,
     unit: source.unit,
-    sampleStart: source.sampleStart,
-    sampleCount: source.sampleCount,
+    chunkStart: source.chunkStart,
+    chunkCount: source.chunkCount,
+    frameCount: source.frameCount,
     sha256: source.sha256,
     paddingRange: entry.paddingRange,
     blobRange: entry.blobRange,
@@ -234,8 +236,9 @@ function validateSourceIdentity(
   requireDigest(source.sha256);
   requireNonEmptyString(source.rendition, "rendition id");
   requireNonEmptyString(source.unit, "unit id");
-  requireNonNegativeSafeInteger(source.sampleStart, "sample start");
-  requirePositiveSafeInteger(source.sampleCount, "sample count");
+  requireNonNegativeSafeInteger(source.chunkStart, "chunk start");
+  requirePositiveSafeInteger(source.chunkCount, "chunk count");
+  requirePositiveSafeInteger(source.frameCount, "displayed frame count");
 }
 
 function assertUniqueCanonicalIdentities(blobs: readonly CanonicalBlob[]): void {

@@ -1,4 +1,4 @@
-import { parseAccessUnitIndex } from "./access-unit-index.js";
+import { parseEncodedChunkIndex } from "./access-unit-index.js";
 import { parseCanonicalJson, serializeCanonicalJson } from "./canonical-json.js";
 import { checkedAdd, requireByteRange } from "./checked-integer.js";
 import { adaptManifestToMotionGraph } from "./graph-adapter.js";
@@ -7,12 +7,11 @@ import {
   deriveCanonicalAssetLayout,
   validateZeroPadding
 } from "./layout.js";
-import { validateCompiledManifestV01 } from "./manifest-schema.js";
-import { validateReferenceFrame } from "./reference-frame.js";
+import { validateCompiledManifest } from "./manifest-schema.js";
 import { FormatError, isFormatError } from "./errors.js";
 import type {
-  AccessUnitRecord,
-  CompiledManifestV01,
+  CompiledManifest,
+  EncodedChunkRecord,
   FormatHeader,
   FormatOptions,
   ParsedFrontIndex,
@@ -32,13 +31,13 @@ const HEADER_FIELDS = Object.freeze([
 ] as const satisfies readonly (keyof FormatHeader)[]);
 
 const RECORD_FIELDS = Object.freeze([
-  "payloadOffset",
-  "payloadLength",
-  "unitIndex",
-  "renditionIndex",
-  "key",
-  "frameIndex"
-] as const satisfies readonly (keyof AccessUnitRecord)[]);
+  "byteOffset",
+  "byteLength",
+  "presentationTimestamp",
+  "duration",
+  "randomAccess",
+  "displayedFrameCount"
+] as const satisfies readonly (keyof EncodedChunkRecord)[]);
 
 function rethrowAtFileOffset(error: unknown, baseOffset: number): never {
   if (isFormatError(error)) {
@@ -88,7 +87,7 @@ function assertMatchingFrontIndex(
   let suppliedManifestBytes: Uint8Array;
   let reparsedManifestBytes: Uint8Array;
   try {
-    const suppliedManifest = validateCompiledManifestV01(
+    const suppliedManifest = validateCompiledManifest(
       supplied.manifest,
       options
     );
@@ -140,7 +139,7 @@ function parseManifest(
   bytes: Uint8Array,
   header: FormatHeader,
   options?: FormatOptions
-): CompiledManifestV01 {
+): CompiledManifest {
   const end = requireByteRange(
     bytes,
     header.manifestOffset,
@@ -157,7 +156,7 @@ function parseManifest(
   } catch (error) {
     rethrowAtFileOffset(error, header.manifestOffset);
   }
-  return validateCompiledManifestV01(parsed, options);
+  return validateCompiledManifest(parsed, options);
 }
 
 /**
@@ -202,9 +201,9 @@ export function parseFrontIndex(
       })
     ]);
 
-    let records: readonly AccessUnitRecord[];
+    let records: readonly EncodedChunkRecord[];
     try {
-      records = parseAccessUnitIndex(
+      records = parseEncodedChunkIndex(
         bytesFromFileStart.subarray(header.indexOffset, frontIndexEnd),
         manifest,
         options
@@ -229,35 +228,6 @@ export function parseFrontIndex(
     }
     throw new FormatError("INPUT_INVALID", "front index could not be parsed");
   }
-}
-
-function validatePayloadProfiles(
-  bytes: Uint8Array,
-  frontIndex: ParsedFrontIndex,
-  options?: FormatOptions
-): void {
-  for (const record of frontIndex.records) {
-    const rendition = frontIndex.manifest.renditions[record.renditionIndex];
-    if (rendition?.profile !== "reference-rgba-v0") continue;
-    const sampleEnd = checkedAdd(
-      record.payloadOffset,
-      record.payloadLength,
-      bytes.byteLength,
-      "reference sample end"
-    );
-    try {
-      validateReferenceFrame({
-        sample: bytes.subarray(record.payloadOffset, sampleEnd),
-        expectedWidth: rendition.codedWidth,
-        expectedHeight: rendition.codedHeight,
-        expectedFrameIndex: record.frameIndex,
-        options
-      });
-    } catch (error) {
-      rethrowAtFileOffset(error, record.payloadOffset);
-    }
-  }
-
 }
 
 /** Reparse and completely validate one exact, caller-owned asset byte array. */
@@ -303,8 +273,6 @@ export function validateCompleteAsset(input: {
       input.options
     );
     validateZeroPadding(input.bytes, layout.paddingRanges);
-    validatePayloadProfiles(input.bytes, reparsed, input.options);
-
     return Object.freeze({
       frontIndex: reparsed,
       fileRange: layout.fileRange

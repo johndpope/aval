@@ -2,28 +2,27 @@ import { isAbsolute } from "node:path";
 
 import { CompilerError } from "./diagnostics.js";
 import {
-  AVC_ENCODER_PRESETS,
-  type AvcEncoderPreset,
-  type RationalV01,
-  type SourceAlphaPolicy
+  H264_ENCODER_PRESETS,
+  H265_ENCODER_PRESETS,
+  VP9_DEADLINES,
+  type H264EncoderPreset,
+  type H265EncoderPreset,
+  type Rational,
+  type SourceAlphaPolicy,
+  type Vp9Deadline
 } from "./model.js";
 
 interface CliBaseArguments {
   readonly json: boolean;
 }
 
-export interface CompileCliArguments extends CliBaseArguments {
+interface CompileCliBaseArguments extends CliBaseArguments {
   readonly command: "compile";
   readonly input: string;
   readonly output: string;
-  readonly report?: string;
   readonly loop?: readonly [number, number];
-  readonly fps?: RationalV01;
+  readonly fps?: Rational;
   readonly canvas?: readonly [number, number];
-  readonly bitrate?: { readonly average: number; readonly peak: number };
-  readonly crf?: number;
-  readonly maxBitrate?: number;
-  readonly preset?: AvcEncoderPreset;
   readonly alpha?: SourceAlphaPolicy;
   readonly frames?: { readonly firstNumber: number; readonly frameCount: number };
   readonly ffmpegPath?: string;
@@ -32,6 +31,80 @@ export interface CompileCliArguments extends CliBaseArguments {
   readonly normalizeVfr: boolean;
   readonly force: boolean;
 }
+
+interface H264CompileCodecArguments {
+  readonly codec: "h264";
+  readonly crf?: number;
+  readonly preset?: H264EncoderPreset;
+  readonly deadline?: never;
+  readonly cpuUsed?: never;
+  readonly bitDepth?: never;
+  readonly tiles?: never;
+  readonly rowMt?: never;
+  readonly threads?: never;
+}
+
+interface H265CompileCodecArguments {
+  readonly codec: "h265";
+  readonly crf?: number;
+  readonly preset?: H265EncoderPreset;
+  readonly threads?: number;
+  readonly deadline?: never;
+  readonly cpuUsed?: never;
+  readonly bitDepth?: never;
+  readonly tiles?: never;
+  readonly rowMt?: never;
+}
+
+interface Vp9CompileCodecArguments {
+  readonly codec: "vp9";
+  readonly crf?: number;
+  readonly deadline?: Vp9Deadline;
+  readonly cpuUsed?: number;
+  readonly threads?: number;
+  readonly preset?: never;
+  readonly bitDepth?: never;
+  readonly tiles?: never;
+  readonly rowMt?: never;
+}
+
+interface Av1CompileCodecArguments {
+  readonly codec: "av1";
+  readonly crf?: number;
+  readonly bitDepth?: 8 | 10;
+  readonly cpuUsed?: number;
+  readonly tiles?: Readonly<{ readonly columns: number; readonly rows: number }>;
+  readonly rowMt: boolean;
+  readonly threads?: number;
+  readonly preset?: never;
+  readonly deadline?: never;
+}
+
+interface ProjectCompileCodecArguments {
+  readonly codec?: never;
+  readonly crf?: never;
+  readonly preset?: never;
+  readonly deadline?: never;
+  readonly cpuUsed?: never;
+  readonly bitDepth?: never;
+  readonly tiles?: never;
+  readonly rowMt?: never;
+  readonly threads?: never;
+}
+
+type DirectCompileCodecArguments =
+  | H264CompileCodecArguments
+  | H265CompileCodecArguments
+  | Vp9CompileCodecArguments
+  | Av1CompileCodecArguments;
+
+export type CompileCliArguments = CompileCliBaseArguments & (
+  | H264CompileCodecArguments
+  | H265CompileCodecArguments
+  | Vp9CompileCodecArguments
+  | Av1CompileCodecArguments
+  | ProjectCompileCodecArguments
+);
 
 export interface InspectCliArguments extends CliBaseArguments {
   readonly command: "inspect";
@@ -81,14 +154,17 @@ export type CliArguments =
 
 const VALUE_FLAGS = new Set([
   "--out",
-  "--report",
   "--loop",
   "--fps",
   "--canvas",
-  "--bitrate",
+  "--codec",
   "--crf",
-  "--max-bitrate",
   "--preset",
+  "--deadline",
+  "--cpu-used",
+  "--bit-depth",
+  "--tiles",
+  "--threads",
   "--alpha",
   "--frames",
   "--ffmpeg",
@@ -101,6 +177,7 @@ const BOOLEAN_FLAGS = new Set([
   "--json",
   "--force",
   "--normalize-vfr",
+  "--row-mt",
   "--open"
 ]);
 
@@ -110,7 +187,7 @@ interface RawCommand {
   readonly booleans: ReadonlySet<string>;
 }
 
-/** Parse the closed, noninteractive M5 command grammar without reading IO. */
+/** Parse the closed, noninteractive launch command grammar without reading IO. */
 export function parseCliArguments(argv: readonly string[]): CliArguments {
   if (argv.length === 0 || argv[0] === "help" || argv[0] === "--help") {
     return Object.freeze({ command: "help" });
@@ -189,10 +266,10 @@ function parseRaw(tokens: readonly string[]): RawCommand {
 
 function parseCompile(raw: RawCommand): CompileCliArguments {
   allowFlags(raw, [
-    "--out", "--report", "--loop", "--fps", "--canvas", "--bitrate",
-    "--crf", "--max-bitrate", "--preset", "--alpha", "--frames",
-    "--ffmpeg", "--ffprobe", "--media-timeout-ms", "--json", "--force",
-    "--normalize-vfr"
+    "--out", "--loop", "--fps", "--canvas", "--codec",
+    "--crf", "--preset", "--deadline", "--cpu-used", "--bit-depth",
+    "--tiles", "--threads", "--row-mt", "--alpha", "--frames", "--ffmpeg",
+    "--ffprobe", "--media-timeout-ms", "--json", "--force", "--normalize-vfr"
   ]);
   const input = onePositional(raw, "compile");
   const output = requiredValue(raw, "--out");
@@ -203,8 +280,9 @@ function parseCompile(raw: RawCommand): CompileCliArguments {
   }
   if (!direct) {
     for (const flag of [
-      "--loop", "--fps", "--canvas", "--bitrate", "--alpha", "--frames",
-      "--crf", "--max-bitrate", "--preset", "--normalize-vfr"
+      "--loop", "--fps", "--canvas", "--codec", "--crf", "--preset",
+      "--deadline", "--cpu-used", "--bit-depth", "--tiles", "--threads",
+      "--row-mt", "--alpha", "--frames", "--normalize-vfr"
     ]) {
       if (raw.values.has(flag) || raw.booleans.has(flag)) {
         usage(`${flag} is valid only for direct media input`);
@@ -212,8 +290,8 @@ function parseCompile(raw: RawCommand): CompileCliArguments {
     }
   } else if (pngPattern) {
     const fileName = input.split(/[\\/]/u).at(-1) ?? "";
-    if (!/^[^%]*%0(?:[1-9]|1[0-2])d[^%]*\.png$/u.test(fileName)) {
-      usage("PNG input requires exactly one %0Nd token with N from 1 through 12");
+    if (!/^[^%]+%0(?:[1-9]|1[0-2])d\.png$/u.test(fileName)) {
+      usage("PNG input requires <prefix>%0Nd.png with N from 1 through 12");
     }
     for (const flag of ["--frames", "--fps"] as const) {
       if (!raw.values.has(flag)) usage(`PNG input requires ${flag}`);
@@ -227,15 +305,7 @@ function parseCompile(raw: RawCommand): CompileCliArguments {
   if (raw.booleans.has("--normalize-vfr") && !raw.values.has("--fps")) {
     usage("--normalize-vfr requires --fps");
   }
-  if (raw.values.has("--crf") && raw.values.has("--bitrate")) {
-    usage("--crf and --bitrate are mutually exclusive");
-  }
-  if (raw.values.has("--crf") && !raw.values.has("--max-bitrate")) {
-    usage("--crf requires --max-bitrate");
-  }
-  if (raw.values.has("--max-bitrate") && !raw.values.has("--crf")) {
-    usage("--max-bitrate is valid only with --crf");
-  }
+  const codecArguments = direct ? parseDirectCodecArguments(raw) : {};
   const ffmpegPath = optionalToolPath(raw.values.get("--ffmpeg"), "--ffmpeg");
   const ffprobePath = optionalToolPath(raw.values.get("--ffprobe"), "--ffprobe");
   const mediaTimeoutMs = raw.values.has("--media-timeout-ms")
@@ -254,9 +324,6 @@ function parseCompile(raw: RawCommand): CompileCliArguments {
     command: "compile",
     input,
     output: pathToken(output, "--out"),
-    ...(raw.values.has("--report")
-      ? { report: pathToken(raw.values.get("--report")!, "--report") }
-      : {}),
     ...(loop === undefined ? {} : { loop }),
     ...(raw.values.has("--fps")
       ? { fps: parseRational(raw.values.get("--fps")!, "--fps") }
@@ -264,23 +331,7 @@ function parseCompile(raw: RawCommand): CompileCliArguments {
     ...(raw.values.has("--canvas")
       ? { canvas: parseCanvas(raw.values.get("--canvas")!) }
       : {}),
-    ...(raw.values.has("--bitrate")
-      ? { bitrate: parseBitrate(raw.values.get("--bitrate")!) }
-      : {}),
-    ...(raw.values.has("--crf")
-      ? { crf: parseCrf(raw.values.get("--crf")!) }
-      : {}),
-    ...(raw.values.has("--max-bitrate")
-      ? {
-          maxBitrate: parsePositiveInteger(
-            raw.values.get("--max-bitrate")!,
-            "--max-bitrate"
-          )
-        }
-      : {}),
-    ...(raw.values.has("--preset")
-      ? { preset: parsePreset(raw.values.get("--preset")!) }
-      : {}),
+    ...codecArguments,
     ...(direct
       ? { alpha: parseAlphaPolicy(raw.values.get("--alpha") ?? "auto") }
       : {}),
@@ -301,21 +352,168 @@ function parseAlphaPolicy(value: string): SourceAlphaPolicy {
   return value;
 }
 
-function parseCrf(value: string): number {
-  if (!/^\d+$/u.test(value)) usage("--crf must be an integer from 1 through 51");
-  const crf = safeInteger(value, "--crf");
-  if (crf < 1 || crf > 51) {
-    usage("--crf must be an integer from 1 through 51");
+function parseDirectCodecArguments(raw: RawCommand): DirectCompileCodecArguments {
+  const codec = parseVideoCodec(requiredValue(raw, "--codec"));
+  const allowed = new Set<string>(["--crf"]);
+  switch (codec) {
+    case "h264":
+      allowed.add("--preset");
+      break;
+    case "h265":
+      allowed.add("--preset");
+      allowed.add("--threads");
+      break;
+    case "vp9":
+      allowed.add("--deadline");
+      allowed.add("--cpu-used");
+      allowed.add("--threads");
+      break;
+    case "av1":
+      allowed.add("--bit-depth");
+      allowed.add("--cpu-used");
+      allowed.add("--tiles");
+      allowed.add("--row-mt");
+      allowed.add("--threads");
+      break;
   }
-  return crf;
+  const codecFlags = [
+    "--crf", "--preset", "--deadline", "--cpu-used", "--bit-depth",
+    "--tiles", "--row-mt", "--threads"
+  ];
+  for (const flag of codecFlags) {
+    if (
+      (raw.values.has(flag) || raw.booleans.has(flag)) &&
+      !allowed.has(flag)
+    ) {
+      usage(`${flag} is not valid with --codec ${codec}`);
+    }
+  }
+  const crf = raw.values.has("--crf")
+    ? parseCrf(raw.values.get("--crf")!, codec)
+    : undefined;
+  switch (codec) {
+    case "h264":
+      return Object.freeze({
+        codec,
+        ...(crf === undefined ? {} : { crf }),
+        ...(raw.values.has("--preset")
+          ? { preset: parseH264Preset(raw.values.get("--preset")!) }
+          : {})
+      });
+    case "h265":
+      return Object.freeze({
+        codec,
+        ...(crf === undefined ? {} : { crf }),
+        ...(raw.values.has("--preset")
+          ? { preset: parseH265Preset(raw.values.get("--preset")!) }
+          : {}),
+        ...(raw.values.has("--threads")
+          ? { threads: parseThreads(raw.values.get("--threads")!) }
+          : {})
+      });
+    case "vp9":
+      return Object.freeze({
+        codec,
+        ...(crf === undefined ? {} : { crf }),
+        ...(raw.values.has("--deadline")
+          ? { deadline: parseDeadline(raw.values.get("--deadline")!) }
+          : {}),
+        ...(raw.values.has("--cpu-used")
+          ? { cpuUsed: parseCpuUsed(raw.values.get("--cpu-used")!, codec) }
+          : {}),
+        ...(raw.values.has("--threads")
+          ? { threads: parseThreads(raw.values.get("--threads")!) }
+          : {})
+      });
+    case "av1":
+      return Object.freeze({
+        codec,
+        ...(crf === undefined ? {} : { crf }),
+        ...(raw.values.has("--bit-depth")
+          ? { bitDepth: parseBitDepth(raw.values.get("--bit-depth")!) }
+          : {}),
+        ...(raw.values.has("--cpu-used")
+          ? { cpuUsed: parseCpuUsed(raw.values.get("--cpu-used")!, codec) }
+          : {}),
+        ...(raw.values.has("--tiles")
+          ? { tiles: parseTiles(raw.values.get("--tiles")!) }
+          : {}),
+        rowMt: raw.booleans.has("--row-mt"),
+        ...(raw.values.has("--threads")
+          ? { threads: parseThreads(raw.values.get("--threads")!) }
+          : {})
+      });
+  }
 }
 
-function parsePreset(value: string): AvcEncoderPreset {
-  const preset = AVC_ENCODER_PRESETS.find((candidate) => candidate === value);
+function parseVideoCodec(value: string): DirectCompileCodecArguments["codec"] {
+  if (value !== "h264" && value !== "h265" && value !== "vp9" && value !== "av1") {
+    usage("--codec must be h264, h265, vp9, or av1");
+  }
+  return value;
+}
+
+function parseCrf(
+  value: string,
+  codec: DirectCompileCodecArguments["codec"]
+): number {
+  const maximum = codec === "h264" || codec === "h265" ? 51 : 63;
+  return parseIntegerInRange(value, "--crf", 0, maximum);
+}
+
+function parseH264Preset(value: string): H264EncoderPreset {
+  const preset = H264_ENCODER_PRESETS.find((candidate) => candidate === value);
   if (preset === undefined) {
-    usage(`--preset must be one of ${AVC_ENCODER_PRESETS.join(", ")}`);
+    usage(`--preset must be one of ${H264_ENCODER_PRESETS.join(", ")}`);
   }
   return preset;
+}
+
+function parseH265Preset(value: string): H265EncoderPreset {
+  const preset = H265_ENCODER_PRESETS.find((candidate) => candidate === value);
+  if (preset === undefined) {
+    usage(`--preset must be one of ${H265_ENCODER_PRESETS.join(", ")}`);
+  }
+  return preset;
+}
+
+function parseDeadline(value: string): Vp9Deadline {
+  const deadline = VP9_DEADLINES.find((candidate) => candidate === value);
+  if (deadline === undefined) {
+    usage(`--deadline must be one of ${VP9_DEADLINES.join(", ")}`);
+  }
+  return deadline;
+}
+
+function parseCpuUsed(value: string, codec: "vp9" | "av1"): number {
+  return parseIntegerInRange(value, "--cpu-used", codec === "vp9" ? -8 : 0, 8);
+}
+
+function parseBitDepth(value: string): 8 | 10 {
+  const parsed = parseIntegerInRange(value, "--bit-depth", 8, 10);
+  if (parsed !== 8 && parsed !== 10) usage("--bit-depth must be 8 or 10");
+  return parsed;
+}
+
+function parseTiles(value: string): Readonly<{ columns: number; rows: number }> {
+  const match = /^(\d+)x(\d+)$/u.exec(value);
+  if (match === null) usage("--tiles must use columnsxrows");
+  const columns = parseTileDimension(match[1]!, "--tiles columns");
+  const rows = parseTileDimension(match[2]!, "--tiles rows");
+  if (columns * rows > 64) usage("--tiles product must be at most 64");
+  return Object.freeze({ columns, rows });
+}
+
+function parseTileDimension(value: string, label: string): number {
+  const dimension = parseIntegerInRange(value, label, 1, 64);
+  if ((dimension & (dimension - 1)) !== 0) {
+    usage(`${label} must be a power of two`);
+  }
+  return dimension;
+}
+
+function parseThreads(value: string): number {
+  return parseIntegerInRange(value, "--threads", 1, 64);
 }
 
 function parseOneInput(
@@ -428,7 +626,7 @@ function parseHalfOpenRange(
   return Object.freeze([start, end]);
 }
 
-function parseRational(value: string, label: string): RationalV01 {
+function parseRational(value: string, label: string): Rational {
   const match = /^(\d+)\/(\d+)$/u.exec(value);
   if (match === null) usage(`${label} must use numerator/denominator`);
   const numerator = safeInteger(match[1]!, label);
@@ -454,17 +652,6 @@ function parseCanvas(value: string): readonly [number, number] {
     usage("--canvas dimensions must fit positive unsigned 32-bit PNG fields");
   }
   return Object.freeze([width, height]);
-}
-
-function parseBitrate(value: string): { readonly average: number; readonly peak: number } {
-  const match = /^(\d+):(\d+)$/u.exec(value);
-  if (match === null) usage("--bitrate must use average:peak");
-  const average = safeInteger(match[1]!, "--bitrate");
-  const peak = safeInteger(match[2]!, "--bitrate");
-  if (average < 1 || peak < average) {
-    usage("--bitrate requires positive safe integers with average <= peak");
-  }
-  return Object.freeze({ average, peak });
 }
 
 function parseFrameSelection(value: string): {
@@ -493,6 +680,22 @@ function parsePositiveInteger(value: string, label: string): number {
   if (!/^\d+$/u.test(value)) usage(`${label} must be a positive safe integer`);
   const parsed = safeInteger(value, label);
   if (parsed < 1) usage(`${label} must be a positive safe integer`);
+  return parsed;
+}
+
+function parseIntegerInRange(
+  value: string,
+  label: string,
+  minimum: number,
+  maximum: number
+): number {
+  if (!/^-?\d+$/u.test(value)) {
+    usage(`${label} must be an integer from ${String(minimum)} through ${String(maximum)}`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    usage(`${label} must be an integer from ${String(minimum)} through ${String(maximum)}`);
+  }
   return parsed;
 }
 

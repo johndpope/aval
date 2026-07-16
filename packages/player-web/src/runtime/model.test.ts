@@ -201,10 +201,10 @@ describe("runtime model boundary", () => {
     expect(Object.isFrozen(report)).toBe(true);
   });
 
-  it("uses the exact M7 static reasons and deterministic precedence", () => {
+  it("uses the exact runtime static reasons and deterministic precedence", () => {
     expect(STATIC_REASONS).toEqual([
       "reduced-motion",
-      "no-avc-rendition",
+      "no-video-rendition",
       "worker-unavailable",
       "renderer-unavailable",
       "codec-unsupported",
@@ -224,7 +224,7 @@ describe("runtime model boundary", () => {
     expect(Object.isFrozen(TRANSIENT_STATIC_REASONS)).toBe(true);
     expect(STATIC_REASON_CLASSIFICATIONS).toEqual({
       "reduced-motion": "sticky",
-      "no-avc-rendition": "sticky",
+      "no-video-rendition": "sticky",
       "worker-unavailable": "sticky",
       "renderer-unavailable": "sticky",
       "codec-unsupported": "sticky",
@@ -248,7 +248,7 @@ describe("runtime model boundary", () => {
       phase: "preparation" as const,
       staticReady: true,
       deadlineExpired: false,
-      hasAvcRendition: true,
+      hasVideoRendition: true,
       workerAvailable: true,
       rendererAvailable: true,
       candidateFailures: [readiness]
@@ -262,10 +262,10 @@ describe("runtime model boundary", () => {
     );
     expect(summarizeStaticReason({
       ...base,
-      hasAvcRendition: false,
+      hasVideoRendition: false,
       workerAvailable: false,
       rendererAvailable: false
-    })).toBe("no-avc-rendition");
+    })).toBe("no-video-rendition");
     expect(summarizeStaticReason({
       ...base,
       workerAvailable: false,
@@ -296,7 +296,7 @@ describe("runtime model boundary", () => {
     expect(RUNTIME_TRACE_CAPACITY).toBe(512);
   });
 
-  it("freezes the closed M7 transport, residency, and byte categories", () => {
+  it("freezes the closed runtime transport, residency, and byte categories", () => {
     expect(RUNTIME_TRANSPORT_MODES).toEqual(["range", "full"]);
     expect(RUNTIME_BLOB_RESIDENCY_STATES).toEqual([
       "absent",

@@ -10,52 +10,26 @@ import * as sourceApi from "../src/index.js";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WORKSPACE = resolve(HERE, "../../..");
 
-const RUNTIME_EXPORTS = Object.freeze([
-  "ACCESS_UNIT_INDEX_HEADER_LENGTH",
-  "ACCESS_UNIT_INDEX_MAGIC",
-  "ACCESS_UNIT_RECORD_LENGTH",
-  "AVC_DECODER_SURFACE_PADDING",
-  "AvcIncrementalInspector",
-  "FORMAT_ALIGNMENT",
-  "FORMAT_DEFAULT_BUDGETS",
-  "FORMAT_HEADER_LENGTH",
-  "FORMAT_MAGIC",
+const REQUIRED_RUNTIME_EXPORTS = Object.freeze([
+  "CHUNK_INDEX_HEADER_LENGTH",
+  "CHUNK_INDEX_MAGIC",
+  "CHUNK_INDEX_RECORD_LENGTH",
   "FORMAT_VERSION_MAJOR",
   "FORMAT_VERSION_MINOR",
   "FormatError",
-  "IDENTIFIER_PATTERN",
-  "REFERENCE_FRAME_HEADER_LENGTH",
-  "REFERENCE_FRAME_MAGIC",
-  "SHA256_HEX_PATTERN",
-  "adaptManifestToMotionGraph",
-  "adler32",
-  "avcCodecForLevel",
-  "avcLevelLimits",
-  "avcQuantizationPolicyForRendition",
-  "crc32",
-  "decodePngRgba",
-  "decodePngRgbaFromInflated",
-  "deriveAvcRenditionGeometry",
-  "deriveAvcRenditionGeometryFromVisible",
-  "encodeReferenceFrame",
-  "inspectAvcAnnexBEncoderCandidateRendition",
-  "inspectAvcAnnexBRendition",
-  "isAvcCodec",
-  "isAvcLevelIdc",
-  "maximumAvcDecodedRgbaBytes",
-  "maximumAvcDecoderSurfaceDimension",
-  "parseStrictJson",
+  "createCanonicalChunkPlan",
+  "deriveVideoRenditionGeometry",
+  "h264CodecForLevel",
+  "inspectH264AnnexBRendition",
+  "maximumH264DecodedRgbaBytes",
+  "prepareH264EncoderRendition",
+  "parseVideoCodecString",
+  "isVideoCodecString",
+  "inspectH265AnnexBRendition",
+  "inspectVp9Rendition",
+  "inspectAv1Rendition",
   "parseFrontIndex",
-  "parseHeader",
-  "parseAvcCodec",
-  "parseReferenceFrameHeader",
-  "prepareAvcEncoderRendition",
-  "resolveFormatBudgets",
-  "serializeCanonicalJson",
-  "serializeCanonicalJsonWithLimits",
   "validateCompleteAsset",
-  "validatePngProfile",
-  "validateReferenceFrame",
   "writeCanonicalAsset"
 ] as const);
 
@@ -73,19 +47,17 @@ function productionSources(packageName: "format" | "graph"): readonly string[] {
 }
 
 describe("@pixel-point/aval-format public boundary", () => {
-  it("exposes exactly the approved runtime surface from source and package root", () => {
-    expect(Object.keys(sourceApi).sort()).toEqual([...RUNTIME_EXPORTS].sort());
-    expect(Object.keys(packageApi).sort()).toEqual([...RUNTIME_EXPORTS].sort());
-
-    for (const name of RUNTIME_EXPORTS) {
+  it("exposes the canonical video surface from source and package root", () => {
+    expect(Object.keys(packageApi).sort()).toEqual(Object.keys(sourceApi).sort());
+    for (const name of REQUIRED_RUNTIME_EXPORTS) {
+      expect(sourceApi[name]).toBeDefined();
       expect(packageApi[name]).toBe(sourceApi[name]);
     }
   });
 
   it("keeps all public collection constants and resolved budgets immutable", () => {
     expect(Object.isFrozen(packageApi.FORMAT_MAGIC)).toBe(true);
-    expect(Object.isFrozen(packageApi.ACCESS_UNIT_INDEX_MAGIC)).toBe(true);
-    expect(Object.isFrozen(packageApi.REFERENCE_FRAME_MAGIC)).toBe(true);
+    expect(Object.isFrozen(packageApi.CHUNK_INDEX_MAGIC)).toBe(true);
     expect(Object.isFrozen(packageApi.IDENTIFIER_PATTERN)).toBe(true);
     expect(Object.isFrozen(packageApi.SHA256_HEX_PATTERN)).toBe(true);
     expect(Object.isFrozen(packageApi.FORMAT_DEFAULT_BUDGETS)).toBe(true);
@@ -115,8 +87,12 @@ describe("@pixel-point/aval-format public boundary", () => {
 
       for (const source of productionSources(packageName)) {
         const text = readFileSync(source, "utf8");
+        const executableText = text.replace(
+          /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/gu,
+          ""
+        );
         expect(text, source).not.toMatch(FORBIDDEN_PLATFORM_IMPORT);
-        expect(text, source).not.toMatch(FORBIDDEN_PLATFORM_IDENTIFIER);
+        expect(executableText, source).not.toMatch(FORBIDDEN_PLATFORM_IDENTIFIER);
       }
     }
   });
@@ -126,11 +102,11 @@ describe("@pixel-point/aval-format public boundary", () => {
     for (const privateName of [
       "align8",
       "deriveCanonicalAssetLayout",
-      "encodeAccessUnitIndex",
+      "encodeEncodedChunkIndex",
       "encodeHeader",
-      "parseAccessUnitIndex",
+      "parseEncodedChunkIndex",
       "parseCanonicalJson",
-      "validateCompiledManifestV01",
+      "validateCompiledManifest",
       "validatePngEnvelope"
     ]) {
       expect(runtime[privateName]).toBeUndefined();

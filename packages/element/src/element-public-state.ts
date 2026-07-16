@@ -1,5 +1,5 @@
 import type {
-  BindingV01,
+  Binding,
   RuntimeReadiness,
   RuntimeReadinessResult,
   StaticReason
@@ -23,7 +23,7 @@ export class ElementPublicState {
   #transitioning = false;
   #stateNames: readonly string[] = Object.freeze([]);
   #eventNames: readonly string[] = Object.freeze([]);
-  #inputBindings: readonly Readonly<BindingV01>[] = Object.freeze([]);
+  #inputBindings: readonly Readonly<Binding>[] = Object.freeze([]);
   #lastFailure: Readonly<AvalPublicFailure> | null = null;
 
   public get readiness(): RuntimeReadiness { return this.#readiness; }
@@ -36,7 +36,7 @@ export class ElementPublicState {
   public get transitioning(): boolean { return this.#transitioning; }
   public get stateNames(): readonly string[] { return this.#stateNames; }
   public get eventNames(): readonly string[] { return this.#eventNames; }
-  public get inputBindings(): readonly Readonly<BindingV01>[] { return this.#inputBindings; }
+  public get inputBindings(): readonly Readonly<Binding>[] { return this.#inputBindings; }
   public get lastFailure(): Readonly<AvalPublicFailure> | null {
     return this.#lastFailure;
   }
@@ -61,7 +61,7 @@ export class ElementPublicState {
     initialState: string;
     stateNames: readonly string[];
     eventNames: readonly string[];
-    bindings: readonly Readonly<BindingV01>[];
+    bindings: readonly Readonly<Binding>[];
   }>): void {
     this.#initialState = metadata.initialState;
     this.#requestedState = metadata.initialState;

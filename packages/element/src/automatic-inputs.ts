@@ -1,4 +1,4 @@
-import type { BindingSourceV01 } from "@pixel-point/aval-player-web";
+import type { BindingSource } from "@pixel-point/aval-player-web";
 
 import type {
   ElementOwnershipHandle,
@@ -28,7 +28,7 @@ interface InputAttachment {
 }
 
 export class AutomaticInputs {
-  readonly #route: (source: BindingSourceV01) => void;
+  readonly #route: (source: BindingSource) => void;
   readonly #ledger: ElementOwnershipLedger;
   readonly #engagement: EngagementController;
   #target: Element | null = null;
@@ -40,7 +40,7 @@ export class AutomaticInputs {
   #disposed = false;
 
   public constructor(
-    route: (source: BindingSourceV01) => void,
+    route: (source: BindingSource) => void,
     ledger: ElementOwnershipLedger
   ) {
     this.#route = route;
@@ -235,7 +235,7 @@ export class AutomaticInputs {
     }
   }
 
-  #emit(source: BindingSourceV01): void {
+  #emit(source: BindingSource): void {
     if (
       this.#enabled && this.#metadataReady &&
       this.#runtimeVisible && !this.#disposed

@@ -47,9 +47,10 @@ import {
   type RuntimeReadinessResult
 } from "./model.js";
 import {
-  createAvcRenditionCandidates,
-  inspectAvcRenditionCandidate
-} from "./avc-rendition-selection.js";
+  inspectSelectedVideoRendition,
+  type InspectedVideoRendition
+} from "./video-rendition-inspection.js";
+import type { VideoRenditionCandidate } from "./video-rendition-selection.js";
 
 export interface IntegratedAnimatedActivationCommit {
   readonly attempt: IntegratedCandidateAttempt;
@@ -65,6 +66,7 @@ interface IntegratedAnimatedPreparationOptions {
   readonly graph: MotionGraphEngine;
   readonly staticPreparation: IntegratedStaticPreparation;
   readonly candidateFactory: IntegratedCandidateFactory;
+  readonly selectedRendition: Readonly<VideoRenditionCandidate>;
   readonly availability: Readonly<IntegratedCandidateAvailability>;
   readonly hostMaxRuntimeBytes: number | null;
   readonly residency: Readonly<IntegratedCandidateResidency>;
@@ -97,6 +99,7 @@ export class IntegratedAnimatedPreparation {
   readonly #graph: MotionGraphEngine;
   readonly #staticPreparation: IntegratedStaticPreparation;
   readonly #candidateFactory: IntegratedCandidateFactory;
+  readonly #selectedRendition: Readonly<VideoRenditionCandidate>;
   readonly #availability: Readonly<IntegratedCandidateAvailability>;
   readonly #hostMaxRuntimeBytes: number | null;
   readonly #residency: Readonly<IntegratedCandidateResidency>;
@@ -123,6 +126,7 @@ export class IntegratedAnimatedPreparation {
     this.#graph = options.graph;
     this.#staticPreparation = options.staticPreparation;
     this.#candidateFactory = options.candidateFactory;
+    this.#selectedRendition = options.selectedRendition;
     this.#availability = options.availability;
     this.#hostMaxRuntimeBytes = options.hostMaxRuntimeBytes;
     this.#residency = options.residency;
@@ -181,20 +185,17 @@ export class IntegratedAnimatedPreparation {
     this.#control = control;
     const reports: RuntimeCandidateReport[] = [];
     const failures: RuntimeFailure[] = [];
-    let hasAvcRendition = false;
+    let hasVideoRendition = false;
 
     try {
       await this.#staticPreparation.ensure(control.controller.signal);
-      const candidates = createAvcRenditionCandidates(
-        this.#catalog.renditions.values(),
-        this.#catalog.manifest.canvas
-      );
-      hasAvcRendition = candidates.length > 0;
+      const candidates = Object.freeze([this.#selectedRendition]);
+      hasVideoRendition = true;
 
-      // Rendition order is authored quality policy. A failed preferred
-      // rendition is an explicit static fallback, never permission to switch
-      // the user's media to a lower-quality candidate.
-      for (const candidate of candidates.slice(0, 1)) {
+      // Source/rendition selection finished before this transaction. The
+      // exact immutable rung is the only activation candidate; preparation
+      // never re-ranks or silently falls through to another asset/rendition.
+      for (const candidate of candidates) {
         throwIfIntegratedAborted(control.controller.signal);
         try {
           if (this.#residency.requiresEnsure) {
@@ -214,12 +215,12 @@ export class IntegratedAnimatedPreparation {
           const failure = normalizeIntegratedCandidateFailure(
             error,
             candidate.rendition.id,
-            candidate.rank
+            candidate.authoredIndex
           );
           failures.push(failure);
           reports.push(createRuntimeCandidateReport({
             rendition: candidate.rendition.id,
-            rank: candidate.rank,
+            rank: candidate.authoredIndex,
             outcome: "rejected",
             failure
           }));
@@ -227,15 +228,23 @@ export class IntegratedAnimatedPreparation {
           this.#releaseFailedResidency(candidate.rendition.id);
           continue;
         }
-        const inspected = inspectAvcRenditionCandidate(
-          this.#catalog,
-          candidate
-        );
-        if (!inspected.ok) {
-          reports.push(inspected.report);
-          if (inspected.report.failure !== null) {
-            failures.push(inspected.report.failure);
-          }
+        let inspected: Readonly<InspectedVideoRendition>;
+        try {
+          inspected = inspectSelectedVideoRendition(this.#catalog, candidate);
+        } catch (error) {
+          const failure = normalizeIntegratedCandidateFailure(
+            error,
+            candidate.rendition.id,
+            candidate.authoredIndex
+          );
+          failures.push(failure);
+          reports.push(createRuntimeCandidateReport({
+            rendition: candidate.rendition.id,
+            rank: candidate.authoredIndex,
+            outcome: "rejected",
+            failure
+          }));
+          this.#reportFailure(failure);
           this.#releaseFailedResidency(candidate.rendition.id);
           continue;
         }
@@ -302,7 +311,7 @@ export class IntegratedAnimatedPreparation {
 
           reports.push(createRuntimeCandidateReport({
             rendition: candidate.rendition.id,
-            rank: candidate.rank,
+            rank: candidate.authoredIndex,
             outcome: "selected",
             failure: null
           }));
@@ -340,7 +349,7 @@ export class IntegratedAnimatedPreparation {
           const failure = normalizeIntegratedCandidateFailure(
             error,
             candidate.rendition.id,
-            candidate.rank
+            candidate.authoredIndex
           );
           if (this.#graph.snapshot().readiness === "animated") {
             if (this.#attempt === attempt) this.#attempt = null;
@@ -368,7 +377,7 @@ export class IntegratedAnimatedPreparation {
                 disposeError,
                 {
                   rendition: candidate.rendition.id,
-                  rank: candidate.rank,
+                  rank: candidate.authoredIndex,
                   operation: "candidate-cleanup"
                 }
               );
@@ -384,7 +393,7 @@ export class IntegratedAnimatedPreparation {
           failures.push(failure);
           reports.push(createRuntimeCandidateReport({
             rendition: candidate.rendition.id,
-            rank: candidate.rank,
+            rank: candidate.authoredIndex,
             outcome: "rejected",
             failure
           }));
@@ -411,7 +420,7 @@ export class IntegratedAnimatedPreparation {
             phase: "preparation",
             staticReady: this.#staticPreparation.staticReady,
             deadlineExpired: false,
-            hasAvcRendition,
+            hasVideoRendition: hasVideoRendition,
             workerAvailable: this.#availability.workerAvailable,
             rendererAvailable: this.#availability.rendererAvailable,
             candidateFailures: failures
@@ -424,7 +433,7 @@ export class IntegratedAnimatedPreparation {
           phase: "preparation",
           staticReady: this.#staticPreparation.staticReady,
           deadlineExpired: false,
-          hasAvcRendition,
+          hasVideoRendition: hasVideoRendition,
           workerAvailable: this.#availability.workerAvailable,
           rendererAvailable: this.#availability.rendererAvailable,
           candidateFailures: failures

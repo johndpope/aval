@@ -12,7 +12,7 @@ unbounded attachments, and digest mismatches.
 
 Removing product-policy media ceilings does not remove structural defenses.
 Parsers still check integer representation, every byte range and product,
-canonical JSON, AVC profile consistency, and digests before
+canonical JSON, codec syntax/dependencies/timelines, and digests before
 use. Publishers are responsible for the resource cost of large trusted assets;
 hosts may configure an explicit lower policy for their deployment.
 

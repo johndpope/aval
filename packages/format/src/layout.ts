@@ -1,25 +1,24 @@
 import { align8, checkedAdd, checkedMultiply } from "./checked-integer.js";
 import {
-  ACCESS_UNIT_INDEX_HEADER_LENGTH,
-  ACCESS_UNIT_RECORD_LENGTH,
+  CHUNK_INDEX_HEADER_LENGTH,
+  CHUNK_INDEX_RECORD_LENGTH,
   FORMAT_HEADER_LENGTH,
   resolveFormatBudgets
 } from "./constants.js";
+import {
+  createCanonicalChunkPlan,
+  validateCanonicalChunkSpans
+} from "./chunk-plan.js";
 import { FormatError, isFormatError } from "./errors.js";
 import type {
-  AccessUnitRecord,
   ByteRange,
-  CompiledManifestV01,
+  CompiledManifest,
+  EncodedChunkRecord,
   FormatHeader,
   FormatOptions,
   UnitBlobRange
 } from "./model.js";
-import {
-  createCanonicalSamplePlan,
-  validateCanonicalSampleSpans
-} from "./sample-plan.js";
 
-/** Internal canonical geometry shared by the reader and writer. */
 export interface CanonicalAssetLayout {
   readonly frontIndexRange: ByteRange;
   readonly unitBlobs: readonly UnitBlobRange[];
@@ -27,16 +26,18 @@ export interface CanonicalAssetLayout {
   readonly fileRange: ByteRange;
 }
 
-interface SamplePayloadShape {
-  readonly payloadLength: number;
-  readonly key: boolean;
+interface ChunkPayloadShape {
+  readonly byteLength: number;
+  readonly presentationTimestamp: number;
+  readonly duration: number;
+  readonly randomAccess: boolean;
+  readonly displayedFrameCount: number;
 }
 
-/** Complete deterministic plan from which both index records and files derive. */
 export interface CanonicalAssetPlan extends CanonicalAssetLayout {
   readonly indexOffset: number;
   readonly indexLength: number;
-  readonly records: readonly AccessUnitRecord[];
+  readonly records: readonly EncodedChunkRecord[];
 }
 
 function fail(
@@ -50,239 +51,201 @@ function freezeRange(offset: number, length: number): ByteRange {
   return Object.freeze({ offset, length });
 }
 
-function addPaddingRange(
-  ranges: ByteRange[],
-  offset: number,
-  end: number
-): void {
+function addPaddingRange(ranges: ByteRange[], offset: number, end: number): void {
   if (end > offset) ranges.push(freezeRange(offset, end - offset));
 }
 
-function checkedEnd(
-  offset: number,
-  length: number,
-  limit: number,
-  label: string
-): number {
-  return checkedAdd(offset, length, limit, label);
-}
-
-/**
- * Produce the sole legal version-0.1 layout from bounded payload descriptors.
- * This is the canonical owner of header/index geometry, sample order, unit
- * alignment and final file length.
- */
+/** Build the sole legal 1.0 file layout from bounded chunk descriptors. */
 export function planCanonicalAssetLayout(
   manifestLength: number,
-  manifest: CompiledManifestV01,
-  samples: readonly SamplePayloadShape[],
+  manifest: CompiledManifest,
+  chunks: readonly ChunkPayloadShape[],
   options?: FormatOptions
 ): Readonly<CanonicalAssetPlan> {
-  const sampleCount = safeArrayLength(samples);
   try {
-    return planCanonicalAssetLayoutUnchecked(
-      manifestLength,
-      manifest,
-      samples,
-      options
+    const budgets = resolveFormatBudgets(options);
+    const chunkPlan = createCanonicalChunkPlan(
+      manifest.renditions,
+      manifest.units,
+      budgets.maxChunkRecords,
+      budgets.maxTotalUnitFrames
     );
-  } catch (error) {
-    if (isFormatError(error)) throw error;
-    throw new FormatError(
-      "LAYOUT_INVALID",
-      `canonical layout allocation for ${sampleCount} samples failed`
-    );
-  }
-}
-
-function planCanonicalAssetLayoutUnchecked(
-  manifestLength: number,
-  manifest: CompiledManifestV01,
-  samples: readonly SamplePayloadShape[],
-  options?: FormatOptions
-): Readonly<CanonicalAssetPlan> {
-  const budgets = resolveFormatBudgets(options);
-  const samplePlan = createCanonicalSamplePlan(
-    manifest.renditions,
-    manifest.units,
-    budgets.maxSampleRecords,
-    budgets.maxTotalUnitFrames
-  );
-  validateCanonicalSampleSpans(samplePlan, manifest.units);
-
-  if (samples.length !== samplePlan.recordCount) {
-    fail(
-      `sample payload count must be ${String(samplePlan.recordCount)}, received ${String(samples.length)}`
-    );
-  }
-  const blobRangeCount = samplePlan.spans.length;
-  if (blobRangeCount > budgets.maxBlobRanges) {
-    throw new FormatError(
-      "BUDGET_EXCEEDED",
-      "canonical blob range count exceeds the active budget"
-    );
-  }
-
-  const manifestEnd = checkedEnd(
-    FORMAT_HEADER_LENGTH,
-    manifestLength,
-    budgets.maxFileBytes,
-    "manifest end"
-  );
-  if (manifestLength > budgets.maxManifestBytes) {
-    throw new FormatError(
-      "BUDGET_EXCEEDED",
-      `manifest length exceeds the active limit of ${String(budgets.maxManifestBytes)}`
-    );
-  }
-  const indexOffset = align8(
-    manifestEnd,
-    budgets.maxFileBytes,
-    "access-unit index offset"
-  );
-  const indexLength = checkedAdd(
-    ACCESS_UNIT_INDEX_HEADER_LENGTH,
-    checkedMultiply(
-      samplePlan.recordCount,
-      ACCESS_UNIT_RECORD_LENGTH,
-      budgets.maxIndexBytes,
-      "access-unit records length"
-    ),
-    budgets.maxIndexBytes,
-    "access-unit index length"
-  );
-  const frontIndexEnd = checkedEnd(
-    indexOffset,
-    indexLength,
-    budgets.maxFileBytes,
-    "front index end"
-  );
-
-  const paddingRanges: ByteRange[] = [];
-  addPaddingRange(paddingRanges, manifestEnd, indexOffset);
-  const records: AccessUnitRecord[] = [];
-  const unitBlobs: UnitBlobRange[] = [];
-  let cursor = frontIndexEnd;
-
-  for (const span of samplePlan.spans) {
-    const aligned = align8(cursor, budgets.maxFileBytes, "unit blob offset");
-    addPaddingRange(paddingRanges, cursor, aligned);
-    cursor = aligned;
-    const blobOffset = cursor;
-    const unit = manifest.units[span.unitIndex];
-    const descriptor = unit?.samples[span.renditionIndex];
-    if (unit === undefined || descriptor === undefined) {
-      fail("canonical unit sample descriptor is missing");
-    }
-
-    const spanEnd = checkedAdd(
-      span.sampleStart,
-      span.sampleCount,
-      samplePlan.recordCount,
-      "sample span end"
-    );
-    for (let ordinal = span.sampleStart; ordinal < spanEnd; ordinal += 1) {
-      const slot = samplePlan.recordAt(ordinal);
-      const sample = samples[ordinal];
-      if (slot === undefined || sample === undefined) {
-        fail("canonical sample payload is missing");
-      }
-      if (typeof sample.key !== "boolean") {
-        fail("sample key marker must be boolean");
-      }
-      if (!Number.isSafeInteger(sample.payloadLength) || sample.payloadLength < 1) {
-        fail("sample payload length must be a positive safe integer");
-      }
-      if (sample.payloadLength > budgets.maxSampleBytes) {
-        throw new FormatError(
-          "BUDGET_EXCEEDED",
-          `sample payload length exceeds the active limit of ${String(budgets.maxSampleBytes)}`
-        );
-      }
-      if (slot.keyRequired && !sample.key) {
-        fail("canonical sample requiring random access must be marked key");
-      }
-      records.push(Object.freeze({
-        payloadOffset: cursor,
-        payloadLength: sample.payloadLength,
-        unitIndex: slot.unitIndex,
-        renditionIndex: slot.renditionIndex,
-        key: sample.key,
-        frameIndex: slot.frameIndex
-      }));
-      cursor = checkedEnd(
-        cursor,
-        sample.payloadLength,
-        budgets.maxFileBytes,
-        "access-unit payload end"
+    validateCanonicalChunkSpans(chunkPlan, manifest.units);
+    if (chunks.length !== chunkPlan.recordCount) {
+      fail(
+        `encoded-chunk payload count must be ${String(chunkPlan.recordCount)}, received ${String(chunks.length)}`
       );
     }
-
-    unitBlobs.push(Object.freeze({
-      rendition: span.renditionId,
-      unit: span.unitId,
-      sampleStart: span.sampleStart,
-      sampleCount: span.sampleCount,
-      sha256: descriptor.sha256,
-      offset: blobOffset,
-      length: cursor - blobOffset
-    }));
-  }
-
-  if (cursor > manifest.limits.maxCompiledBytes) {
-    throw new FormatError(
-      "BUDGET_EXCEEDED",
-      "compiled file exceeds manifest limits.maxCompiledBytes",
-      { path: "limits.maxCompiledBytes" }
+    if (chunkPlan.spans.length > budgets.maxBlobRanges) {
+      throw new FormatError("BUDGET_EXCEEDED", "canonical blob range count exceeds the active budget");
+    }
+    if (manifestLength > budgets.maxManifestBytes) {
+      throw new FormatError(
+        "BUDGET_EXCEEDED",
+        `manifest length exceeds the active limit of ${String(budgets.maxManifestBytes)}`
+      );
+    }
+    const manifestEnd = checkedAdd(
+      FORMAT_HEADER_LENGTH,
+      manifestLength,
+      budgets.maxFileBytes,
+      "manifest end"
     );
-  }
+    const indexOffset = align8(manifestEnd, budgets.maxFileBytes, "encoded-chunk index offset");
+    const indexLength = checkedAdd(
+      CHUNK_INDEX_HEADER_LENGTH,
+      checkedMultiply(
+        chunkPlan.recordCount,
+        CHUNK_INDEX_RECORD_LENGTH,
+        budgets.maxIndexBytes,
+        "encoded-chunk records length"
+      ),
+      budgets.maxIndexBytes,
+      "encoded-chunk index length"
+    );
+    const frontIndexEnd = checkedAdd(
+      indexOffset,
+      indexLength,
+      budgets.maxFileBytes,
+      "front index end"
+    );
 
-  return Object.freeze({
-    indexOffset,
-    indexLength,
-    records: Object.freeze(records),
-    frontIndexRange: freezeRange(0, frontIndexEnd),
-    unitBlobs: Object.freeze(unitBlobs),
-    paddingRanges: Object.freeze(paddingRanges),
-    fileRange: freezeRange(0, cursor)
-  });
+    const paddingRanges: ByteRange[] = [];
+    addPaddingRange(paddingRanges, manifestEnd, indexOffset);
+    const records: EncodedChunkRecord[] = [];
+    const unitBlobs: UnitBlobRange[] = [];
+    let cursor = frontIndexEnd;
+    for (const span of chunkPlan.spans) {
+      const aligned = align8(cursor, budgets.maxFileBytes, "unit blob offset");
+      addPaddingRange(paddingRanges, cursor, aligned);
+      cursor = aligned;
+      const blobOffset = cursor;
+      const unit = manifest.units[span.unitIndex];
+      const descriptor = unit?.chunks[span.renditionIndex];
+      if (unit === undefined || descriptor === undefined) {
+        fail("canonical unit chunk descriptor is missing");
+      }
+      const spanEnd = checkedAdd(
+        span.chunkStart,
+        span.chunkCount,
+        chunkPlan.recordCount,
+        "chunk span end"
+      );
+      let displayedFrames = 0;
+      for (let ordinal = span.chunkStart; ordinal < spanEnd; ordinal += 1) {
+        const slot = chunkPlan.recordAt(ordinal);
+        const chunk = chunks[ordinal];
+        if (chunk === undefined) fail("canonical encoded-chunk payload is missing");
+        if (typeof chunk.randomAccess !== "boolean") {
+          fail("encoded-chunk random-access marker must be boolean");
+        }
+        if (!Number.isSafeInteger(chunk.byteLength) || chunk.byteLength < 1) {
+          fail("encoded-chunk byte length must be a positive safe integer");
+        }
+        if (chunk.byteLength > budgets.maxChunkBytes) {
+          throw new FormatError(
+            "BUDGET_EXCEEDED",
+            `encoded-chunk byte length exceeds the active limit of ${String(budgets.maxChunkBytes)}`
+          );
+        }
+        if (slot.randomAccessRequired && !chunk.randomAccess) {
+          fail("every unit must begin with a random-access chunk");
+        }
+        if (
+          !Number.isSafeInteger(chunk.presentationTimestamp) ||
+          chunk.presentationTimestamp < 0 ||
+          !Number.isSafeInteger(chunk.duration) ||
+          chunk.duration < 0 ||
+          !Number.isSafeInteger(chunk.displayedFrameCount) ||
+          chunk.displayedFrameCount < 0
+        ) {
+          fail("encoded-chunk timeline fields must be nonnegative safe integers");
+        }
+        if (chunk.displayedFrameCount > 0 && chunk.duration === 0) {
+          fail("a displayed encoded chunk must have a positive duration");
+        }
+        displayedFrames = checkedAdd(
+          displayedFrames,
+          chunk.displayedFrameCount,
+          budgets.maxTotalUnitFrames,
+          "unit displayed frame count"
+        );
+        records.push(Object.freeze({
+          byteOffset: cursor,
+          byteLength: chunk.byteLength,
+          presentationTimestamp: chunk.presentationTimestamp,
+          duration: chunk.duration,
+          randomAccess: chunk.randomAccess,
+          displayedFrameCount: chunk.displayedFrameCount
+        }));
+        cursor = checkedAdd(
+          cursor,
+          chunk.byteLength,
+          budgets.maxFileBytes,
+          "encoded-chunk payload end"
+        );
+      }
+      if (displayedFrames !== span.frameCount) {
+        fail(
+          `unit ${span.unitId} rendition ${span.renditionId} must display exactly ${String(span.frameCount)} frames`
+        );
+      }
+      unitBlobs.push(Object.freeze({
+        rendition: span.renditionId,
+        unit: span.unitId,
+        chunkStart: span.chunkStart,
+        chunkCount: span.chunkCount,
+        frameCount: span.frameCount,
+        sha256: descriptor.sha256,
+        offset: blobOffset,
+        length: cursor - blobOffset
+      }));
+    }
+    if (cursor > manifest.limits.maxCompiledBytes) {
+      throw new FormatError(
+        "BUDGET_EXCEEDED",
+        "compiled file exceeds manifest limits.maxCompiledBytes",
+        { path: "limits.maxCompiledBytes" }
+      );
+    }
+    return Object.freeze({
+      indexOffset,
+      indexLength,
+      records: Object.freeze(records),
+      frontIndexRange: freezeRange(0, frontIndexEnd),
+      unitBlobs: Object.freeze(unitBlobs),
+      paddingRanges: Object.freeze(paddingRanges),
+      fileRange: freezeRange(0, cursor)
+    });
+  } catch (error) {
+    if (isFormatError(error)) throw error;
+    throw new FormatError("LAYOUT_INVALID", "canonical asset layout could not be planned");
+  }
 }
 
-function safeArrayLength(value: unknown): string {
-  try {
-    const length = (value as { readonly length?: unknown })?.length;
-    return typeof length === "number" && Number.isSafeInteger(length) && length >= 0
-      ? String(length)
-      : "an unknown number of";
-  } catch {
-    return "an unknown number of";
-  }
-}
-
-/** Derive and validate the one legal version-0.1 byte layout. */
+/** Derive and validate the sole legal 1.0 byte layout. */
 export function deriveCanonicalAssetLayout(
   header: FormatHeader,
-  manifest: CompiledManifestV01,
-  records: readonly AccessUnitRecord[],
+  manifest: CompiledManifest,
+  records: readonly EncodedChunkRecord[],
   options?: FormatOptions
 ): Readonly<CanonicalAssetLayout> {
   try {
-    if (!Array.isArray(records)) fail("access-unit records must be an array");
+    if (!Array.isArray(records)) fail("encoded-chunk records must be an array");
     const plan = planCanonicalAssetLayout(
       header.manifestLength,
       manifest,
       records,
       options
     );
-
     if (header.manifestOffset !== FORMAT_HEADER_LENGTH) {
       fail("manifest offset is not canonical", { offset: header.manifestOffset });
     }
     if (header.indexOffset !== plan.indexOffset) {
-      fail("access-unit index offset is not canonical", { offset: header.indexOffset });
+      fail("encoded-chunk index offset is not canonical", { offset: header.indexOffset });
     }
     if (header.indexLength !== plan.indexLength) {
-      fail("access-unit index length is not canonical", { offset: header.indexOffset });
+      fail("encoded-chunk index length is not canonical", { offset: header.indexOffset });
     }
     if (header.declaredFileLength !== plan.fileRange.length) {
       fail(
@@ -292,22 +255,21 @@ export function deriveCanonicalAssetLayout(
         { offset: Math.min(header.declaredFileLength, plan.fileRange.length) }
       );
     }
-
     for (let index = 0; index < plan.records.length; index += 1) {
       const actual = records[index];
       const expected = plan.records[index];
       if (
         actual === undefined ||
         expected === undefined ||
-        actual.payloadOffset !== expected.payloadOffset ||
-        actual.payloadLength !== expected.payloadLength ||
-        actual.unitIndex !== expected.unitIndex ||
-        actual.renditionIndex !== expected.renditionIndex ||
-        actual.key !== expected.key ||
-        actual.frameIndex !== expected.frameIndex
+        actual.byteOffset !== expected.byteOffset ||
+        actual.byteLength !== expected.byteLength ||
+        actual.presentationTimestamp !== expected.presentationTimestamp ||
+        actual.duration !== expected.duration ||
+        actual.randomAccess !== expected.randomAccess ||
+        actual.displayedFrameCount !== expected.displayedFrameCount
       ) {
-        fail("access-unit record is not canonical", {
-          offset: actual?.payloadOffset ?? header.indexOffset
+        fail("encoded-chunk record is not canonical", {
+          offset: actual?.byteOffset ?? header.indexOffset
         });
       }
     }
@@ -323,26 +285,15 @@ export function deriveCanonicalAssetLayout(
   }
 }
 
-/** Require every byte in the supplied numeric ranges to be canonical zero. */
-export function validateZeroPadding(
-  bytes: Uint8Array,
-  ranges: readonly ByteRange[]
-): void {
+export function validateZeroPadding(bytes: Uint8Array, ranges: readonly ByteRange[]): void {
   try {
     if (!(bytes instanceof Uint8Array)) {
       throw new FormatError("INPUT_INVALID", "asset bytes must be a Uint8Array");
     }
     for (const range of ranges) {
-      const end = checkedEnd(
-        range.offset,
-        range.length,
-        bytes.byteLength,
-        "padding range end"
-      );
+      const end = checkedAdd(range.offset, range.length, bytes.byteLength, "padding range end");
       for (let offset = range.offset; offset < end; offset += 1) {
-        if (bytes[offset] !== 0) {
-          fail("alignment padding must contain only zero bytes", { offset });
-        }
+        if (bytes[offset] !== 0) fail("alignment padding must contain only zero bytes", { offset });
       }
     }
   } catch (error) {

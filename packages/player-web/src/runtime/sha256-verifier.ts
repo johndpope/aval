@@ -7,7 +7,7 @@ const consumedVerifiedInputs = new WeakSet<object>();
 
 declare const verifiedSha256InputBrand: unique symbol;
 
-/** M7 never hashes a body larger than the format's complete-file ceiling. */
+/** Runtime hashing never accepts a body larger than the format ceiling. */
 export const MAX_SHA256_INPUT_BYTES = FORMAT_DEFAULT_BUDGETS.maxFileBytes;
 
 export interface Sha256DigestAdapter {

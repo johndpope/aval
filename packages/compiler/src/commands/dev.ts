@@ -1,35 +1,28 @@
 import { watch, type FSWatcher } from "node:fs";
-import { join, resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { DevCliArguments } from "../cli-args.js";
-import {
-  assertPublicationTargetUnchanged,
-  backupPublicationTarget,
-  closePublicationWorkspace,
-  createPublicationWorkspace,
-  inspectPublicationTarget,
-  installStagedFile,
-  restorePublicationBackup,
-  stagePublicationFile,
-  syncDirectory,
-  throwIfAborted,
-  unlinkIfIdentity,
-  type PublicationTargetSnapshot,
-  type StagedPublicationFile
-} from "../compile/output.js";
-import { buildProjectArtifact } from "../compile/project-compiler.js";
+import { publishCompileBundleDirectory } from "./compile-bundle-publication.js";
+import { buildProjectBundleArtifact } from "../compile/project-compiler.js";
 import { CompilerError } from "../diagnostics.js";
 import type {
-  CompileArtifact,
-  CompileResult,
+  CompileBundleArtifact,
+  CompileBundleResult,
   ProjectArtifactOptions
 } from "../model.js";
 import { resolveProjectWatchPaths } from "./project-input-paths.js";
 import { assertDistinctDevOutput } from "./compile-collisions.js";
+import {
+  createDevServerBuild,
+  type DevServerBuild
+} from "./dev-server-model.js";
 
 export interface DevBuildEvent {
   readonly sequence: number;
-  readonly result: Readonly<CompileResult>;
+  readonly result: Readonly<CompileBundleResult>;
+  /** Exact immutable catalog published to the loopback dev server. */
+  readonly build: Readonly<DevServerBuild>;
 }
 
 export interface DevFailureEvent {
@@ -42,16 +35,16 @@ export interface WatchHandle {
 }
 
 export interface DevCommandDependencies {
-  readonly buildProjectArtifact: (
+  readonly buildProjectBundleArtifact: (
     options: ProjectArtifactOptions
-  ) => Promise<Readonly<CompileArtifact>>;
+  ) => Promise<Readonly<CompileBundleArtifact>>;
   readonly publishArtifact?: (
-    artifact: Readonly<CompileArtifact>,
+    artifact: Readonly<CompileBundleArtifact>,
     context: {
       readonly outputPath: string;
       readonly signal: AbortSignal;
     }
-  ) => Promise<Readonly<CompileResult>>;
+  ) => Promise<Readonly<CompileBundleResult>>;
   readonly watchPath: (path: string, onChange: () => void) => WatchHandle;
 }
 
@@ -65,7 +58,7 @@ export interface DevSession {
 }
 
 const DEFAULT_DEPENDENCIES: DevCommandDependencies = {
-  buildProjectArtifact,
+  buildProjectBundleArtifact,
   watchPath: nodeWatchPath
 };
 
@@ -94,6 +87,10 @@ export async function startDevCommand(
     arguments_.ffmpegPath,
     arguments_.ffprobePath
   );
+  await assertDevBundleDoesNotContainInputs(projectPath, outputPath, [
+    ...(arguments_.ffmpegPath === undefined ? [] : [arguments_.ffmpegPath]),
+    ...(arguments_.ffprobePath === undefined ? [] : [arguments_.ffprobePath])
+  ]);
   const initialOutput = await assertInitialOutput(outputPath, arguments_.force);
   const dependencies = options.dependencies ?? DEFAULT_DEPENDENCIES;
   const defaultPublisher = dependencies.publishArtifact === undefined
@@ -152,7 +149,7 @@ export async function startDevCommand(
 
   const compile = async (sequence: number, controller: AbortController): Promise<void> => {
     try {
-      const artifact = await dependencies.buildProjectArtifact({
+      const artifact = await dependencies.buildProjectBundleArtifact({
         projectPath,
         ...(arguments_.ffmpegPath === undefined
           ? {}
@@ -168,6 +165,7 @@ export async function startDevCommand(
       if (closing || sequence !== requestedSequence || controller.signal.aborted) {
         return;
       }
+      const build = createDevServerBuild(sequence, artifact);
       const result = dependencies.publishArtifact === undefined
         ? await defaultPublisher!.publish(artifact, controller.signal)
         : await dependencies.publishArtifact(artifact, {
@@ -175,7 +173,7 @@ export async function startDevCommand(
             signal: controller.signal
           });
       if (!closing && sequence === requestedSequence) {
-        options.onBuild?.(Object.freeze({ sequence, result }));
+        options.onBuild?.(Object.freeze({ sequence, result, build }));
         try {
           const nextPaths = await resolveProjectWatchPaths(projectPath);
           if (!closing && sequence === requestedSequence) {
@@ -267,119 +265,93 @@ export async function startDevCommand(
 async function assertInitialOutput(
   path: string,
   force: boolean
-): Promise<Readonly<PublicationTargetSnapshot>> {
-  const snapshot = await inspectPublicationTarget(path, "dev output");
-  if (snapshot.exists && !force) {
-    throw new CompilerError("IO_FAILED", "Dev output already exists", {
-      path,
-      hint: "Pass --force to replace this exact local output during development."
+): Promise<boolean> {
+  const metadata = await lstat(path, { bigint: true }).catch(
+    (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined;
+      throw new CompilerError("IO_FAILED", "Cannot inspect dev bundle path", {
+        path,
+        cause: error
+      });
+    }
+  );
+  if (metadata === undefined) return false;
+  if (metadata.isSymbolicLink()) {
+    throw new CompilerError("IO_FAILED", "Refusing symbolic-link dev bundle path", {
+      path
     });
   }
-  return snapshot;
+  if (!metadata.isDirectory()) {
+    throw new CompilerError("IO_FAILED", "Dev output must be a bundle directory", {
+      path
+    });
+  }
+  if (!force) {
+    throw new CompilerError("IO_FAILED", "Dev output already exists", {
+      path,
+      hint: "Pass --force to replace this exact local bundle during development."
+    });
+  }
+  return true;
 }
 
 function createDevPublisher(
   outputPath: string,
-  initial: Readonly<PublicationTargetSnapshot>
+  initiallyExists: boolean
 ): {
   publish(
-    artifact: Readonly<CompileArtifact>,
+    artifact: Readonly<CompileBundleArtifact>,
     signal: AbortSignal
-  ): Promise<Readonly<CompileResult>>;
+  ): Promise<Readonly<CompileBundleResult>>;
 } {
-  let expected = initial;
+  let replace = initiallyExists;
   return Object.freeze({
     publish: async (artifact, signal) => {
-      const workspace = await createPublicationWorkspace(outputPath);
-      let staged: Readonly<StagedPublicationFile> | undefined;
-      let backupPath: string | undefined;
-      let backupIdentity: Awaited<ReturnType<typeof backupPublicationTarget>> | undefined;
-      let installedIdentity: Awaited<ReturnType<typeof installStagedFile>> | undefined;
-      let committed = false;
-      try {
-        staged = await stagePublicationFile(
-          workspace,
-          "asset.avl",
-          artifact.assetBytes
-        );
-        await assertPublicationTargetUnchanged(outputPath, expected, "dev output");
-        throwIfAborted(signal);
-        if (expected.exists) {
-          backupPath = join(workspace.directory, "asset.previous");
-          backupIdentity = await backupPublicationTarget(
-            outputPath,
-            expected,
-            backupPath,
-            "dev output"
-          );
-          throwIfAborted(signal);
-        }
-        installedIdentity = await installStagedFile(
-          outputPath,
-          staged,
-          "dev output"
-        );
-        staged = undefined;
-        await syncDirectory(workspace.parent);
-        committed = true;
-        expected = Object.freeze({
-          exists: true as const,
-          identity: installedIdentity,
-          mode: 0o600
-        });
-        if (backupPath !== undefined && backupIdentity !== undefined) {
-          await unlinkIfIdentity(backupPath, backupIdentity);
-          backupPath = undefined;
-          backupIdentity = undefined;
-        }
-        await syncDirectory(workspace.parent);
-        return Object.freeze({
-          outputPath,
-          bytes: artifact.bytes,
-          sha256: artifact.sha256,
-          provenance: artifact.provenance,
-          warnings: artifact.warnings,
-          buildDetails: artifact.buildDetails
-        });
-      } catch (error) {
-        const rollbackFailures: unknown[] = [];
-        if (!committed && installedIdentity !== undefined) {
-          await unlinkIfIdentity(outputPath, installedIdentity).catch((failure) => {
-            rollbackFailures.push(failure);
-            return false;
-          });
-        }
-        if (!committed && backupPath !== undefined && backupIdentity !== undefined) {
-          await restorePublicationBackup(
-            outputPath,
-            backupPath,
-            backupIdentity,
-            "dev output"
-          ).catch((failure) => rollbackFailures.push(failure));
-        }
-        if (rollbackFailures.length > 0) {
-          throw new CompilerError(
-            "IO_FAILED",
-            "Dev publication failed and its previous output could not be restored",
-            {
-              path: outputPath,
-              cause: new AggregateError([error, ...rollbackFailures])
-            }
-          );
-        }
-        if (error instanceof CompilerError) throw error;
-        throw new CompilerError("IO_FAILED", "Could not publish dev artifact", {
-          path: outputPath,
-          cause: error
-        });
-      } finally {
-        if (staged !== undefined) {
-          await unlinkIfIdentity(staged.path, staged.identity).catch(() => false);
-        }
-        await closePublicationWorkspace(workspace).catch(() => undefined);
-      }
+      await publishCompileBundleDirectory(outputPath, {
+        assets: artifact.assets.map(({ codec, assetBytes }) => ({
+          codec,
+          bytes: assetBytes
+        })),
+        buildReportBytes: artifact.buildReportBytes
+      }, { force: replace, signal });
+      replace = true;
+      return Object.freeze({
+        outputPath,
+        reportPath: join(outputPath, "build.json"),
+        assets: Object.freeze(artifact.buildReport.assets.map((asset) =>
+          Object.freeze({ ...asset, path: join(outputPath, asset.path) })
+        )),
+        provenance: artifact.provenance,
+        warnings: artifact.warnings,
+        sourceMarkup: artifact.buildReport.sourceMarkup
+      });
     }
   });
+}
+
+async function assertDevBundleDoesNotContainInputs(
+  projectPath: string,
+  outputPath: string,
+  toolPaths: readonly string[]
+): Promise<void> {
+  const inputPaths = await resolveProjectWatchPaths(projectPath).catch(() =>
+    Object.freeze([projectPath])
+  );
+  for (const path of [...inputPaths, ...toolPaths]) {
+    const relation = relative(outputPath, resolve(path));
+    const inside = relation === "" || (
+      relation !== ".." &&
+      !relation.startsWith(`..${sep}`) &&
+      !isAbsolute(relation)
+    );
+    if (inside) {
+      throw new CompilerError(
+        "INPUT_INVALID",
+        "Dev bundle directory cannot contain a project input or compiler tool",
+        { path: outputPath }
+      );
+    }
+  }
 }
 
 function nodeWatchPath(path: string, onChange: () => void): FSWatcher {

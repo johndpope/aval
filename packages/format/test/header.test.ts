@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CHUNK_INDEX_HEADER_LENGTH,
+  CHUNK_INDEX_RECORD_LENGTH,
   FORMAT_HEADER_LENGTH,
   FORMAT_MAGIC,
   FORMAT_VERSION_MAJOR,
@@ -19,24 +21,24 @@ const HEADER: FormatHeader = {
   minor: FORMAT_VERSION_MINOR,
   headerLength: FORMAT_HEADER_LENGTH,
   requiredFeatureFlags: 0,
-  declaredFileLength: 128,
+  declaredFileLength: 136,
   manifestOffset: 64,
   manifestLength: 8,
   indexOffset: 72,
-  indexLength: 48
+  indexLength: 64
 };
 
 const GOLDEN_HEX =
   "41564c460d0a1a0a" +
-  "00000100" +
+  "01000000" +
   "40000000" +
   "00000000" +
   "00000000" +
-  "8000000000000000" +
+  "8800000000000000" +
   "4000000000000000" +
   "0800000000000000" +
   "4800000000000000" +
-  "3000000000000000";
+  "4000000000000000";
 
 function hex(bytes: Uint8Array): string {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
@@ -56,7 +58,7 @@ function expectFormatError(
   throw new Error("expected operation to throw");
 }
 
-describe("version-0.1 header codec", () => {
+describe("version-1.0 header codec", () => {
   it("emits the exact canonical 64-byte little-endian header", () => {
     const bytes = encodeHeader(HEADER);
     expect(bytes).toHaveLength(64);
@@ -94,7 +96,7 @@ describe("version-0.1 header codec", () => {
   it("rejects every noncanonical fixed header field", () => {
     const mutations: readonly [number, number, FormatError["code"]][] = [
       [0, 0, "HEADER_INVALID"],
-      [8, 1, "VERSION_UNSUPPORTED"],
+      [8, 2, "VERSION_UNSUPPORTED"],
       [10, 2, "VERSION_UNSUPPORTED"],
       [12, 63, "HEADER_INVALID"],
       [16, 1, "FEATURE_UNSUPPORTED"],
@@ -136,27 +138,27 @@ describe("version-0.1 header codec", () => {
     expectFormatError(() => parseHeader(partialRecord), "HEADER_INVALID");
 
     const outsideFile = encodeHeader(HEADER);
-    writeUint64LE(outsideFile, 24, 119);
+    writeUint64LE(outsideFile, 24, 135);
     expectFormatError(() => parseHeader(outsideFile), "HEADER_INVALID");
 
     const formerRecordLimit = {
       ...HEADER,
-      indexLength: 16 + 32 * 3_601,
+      indexLength: CHUNK_INDEX_HEADER_LENGTH + CHUNK_INDEX_RECORD_LENGTH * 3_601,
       declaredFileLength: 200_000
     };
     expect(parseHeader(encodeHeader(formerRecordLimit))).toEqual(formerRecordLimit);
 
     const outsideUint32 = {
       ...HEADER,
-      indexLength: 16 + 32 * 0x1_0000_0000,
-      declaredFileLength: 72 + 16 + 32 * 0x1_0000_0000
+      indexLength: CHUNK_INDEX_HEADER_LENGTH + CHUNK_INDEX_RECORD_LENGTH * 0x1_0000_0000,
+      declaredFileLength: 72 + CHUNK_INDEX_HEADER_LENGTH + CHUNK_INDEX_RECORD_LENGTH * 0x1_0000_0000
     };
     expectFormatError(() => encodeHeader(outsideUint32), "BUDGET_EXCEEDED");
   });
 
   it("honors lower-only active budgets", () => {
     expectFormatError(
-      () => parseHeader(encodeHeader(HEADER), { budgets: { maxFileBytes: 127 } }),
+      () => parseHeader(encodeHeader(HEADER), { budgets: { maxFileBytes: 135 } }),
       "BUDGET_EXCEEDED"
     );
     expectFormatError(

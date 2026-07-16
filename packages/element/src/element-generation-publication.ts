@@ -1,5 +1,5 @@
 import type {
-  BindingV01,
+  Binding,
   RuntimeReadiness,
   RuntimeReadinessResult,
   StaticReason
@@ -123,7 +123,7 @@ export type ElementSourceMetadata = Readonly<{
   initialState: string;
   stateNames: readonly string[];
   eventNames: readonly string[];
-  bindings: readonly Readonly<BindingV01>[];
+  bindings: readonly Readonly<Binding>[];
   canvas: Readonly<{
     width: number;
     height: number;

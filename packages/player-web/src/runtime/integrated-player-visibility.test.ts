@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createIntegratedPathTestAsset } from "./asset-test-fixture.js";
+import { createIntegratedPathTestAsset } from "./asset-test-support.js";
 import {
   Deferred,
   ManualTimers,

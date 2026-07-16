@@ -6,13 +6,10 @@ import {
   type FrameRendererBackendLimits,
   type FrameSourceLayout,
   type FrameTextureLayout,
-  type FrameTextureKind,
-  type LegacyOpaqueFrameRendererBackend,
-  type LegacyOpaqueFrameTextureLayout
+  type FrameTextureKind
 } from "./frame-renderer.js";
 import {
   checkedFrameRgbaBytes,
-  createLegacyOpaqueFrameLayout,
   deriveFrameSamplingLayout,
   freezeFrameLayout,
   validateFrameBackendLimits,
@@ -653,62 +650,6 @@ function cropSamplingAxis(
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, value));
-}
-
-/** @deprecated Use BrowserFrameBackend with explicit frame geometry. */
-export class LegacyBrowserOpaqueFrameBackend
-implements LegacyOpaqueFrameRendererBackend {
-  readonly #backend: BrowserFrameBackend;
-
-  public constructor(
-    canvas: HTMLCanvasElement,
-    options: Readonly<BrowserFrameBackendOptions> = {}
-  ) {
-    this.#backend = new BrowserFrameBackend(canvas, options);
-  }
-
-  public get limits(): Readonly<FrameRendererBackendLimits> {
-    return this.#backend.limits;
-  }
-
-  public allocate(
-    layout: LegacyOpaqueFrameTextureLayout,
-    streamingSlots: number
-  ): void {
-    this.#backend.allocate(
-      createLegacyOpaqueFrameLayout(layout),
-      streamingSlots
-    );
-  }
-
-  public upload(
-    kind: FrameTextureKind,
-    index: number,
-    pixels: Uint8Array
-  ): void {
-    this.#backend.upload(kind, index, pixels);
-  }
-
-  public uploadFrame(
-    kind: FrameTextureKind,
-    index: number,
-    frame: CopyableVideoFrame,
-    layout: Readonly<FrameSourceLayout>
-  ): void {
-    this.#backend.uploadFrame(kind, index, frame, layout);
-  }
-
-  public draw(kind: FrameTextureKind, index: number): void {
-    this.#backend.draw(kind, index);
-  }
-
-  public readPixels(): Uint8Array {
-    return this.#backend.readPixels();
-  }
-
-  public dispose(): void {
-    this.#backend.dispose();
-  }
 }
 
 function validateSourceLayout(

@@ -188,7 +188,7 @@ export function captureRuntimeAssetRequest(
 }
 
 /**
- * Snapshot the only response metadata M7 accepts and detach one body reader.
+ * Snapshot the accepted response metadata and detach one body reader.
  * The Response and Headers objects need not survive this call.
  */
 export async function snapshotRuntimeFetchResponse(

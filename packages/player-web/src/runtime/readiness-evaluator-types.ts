@@ -1,4 +1,4 @@
-import type { CompiledManifestV01 } from "@pixel-point/aval-format";
+import type { CompiledManifest } from "@pixel-point/aval-format";
 import type { ValidatedMotionGraph } from "@pixel-point/aval-graph";
 
 import type { ReadinessMetricsReport } from "./readiness-metrics.js";
@@ -82,7 +82,7 @@ export interface AllRoutesReadinessEvidence {
 }
 
 export interface AllRoutesReadinessInput {
-  readonly manifest: Readonly<CompiledManifestV01>;
+  readonly manifest: Readonly<CompiledManifest>;
   readonly graph: Readonly<ValidatedMotionGraph>;
   readonly evidence: Readonly<AllRoutesReadinessEvidence>;
 }

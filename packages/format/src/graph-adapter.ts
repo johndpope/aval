@@ -9,16 +9,16 @@ import {
 
 import { FormatError } from "./errors.js";
 import type {
-  CompiledManifestV01,
-  EdgeV01,
-  StateV01,
-  TransitionV01,
-  UnitV01
+  CompiledManifest,
+  Edge,
+  State,
+  Transition,
+  Unit
 } from "./model.js";
 
-/** Map a validated compiled manifest into the sole M3 graph representation. */
+/** Map a validated compiled manifest into the canonical motion graph. */
 export function adaptManifestToMotionGraph(
-  manifest: CompiledManifestV01
+  manifest: CompiledManifest
 ): ValidatedMotionGraph {
   try {
     const unitsById = new Map(manifest.units.map((unit) => [unit.id, unit]));
@@ -41,8 +41,8 @@ export function adaptManifestToMotionGraph(
 }
 
 function adaptState(
-  state: StateV01,
-  unitsById: ReadonlyMap<string, UnitV01>
+  state: State,
+  unitsById: ReadonlyMap<string, Unit>
 ): GraphStateDefinition {
   const body = unitsById.get(state.bodyUnit);
   if (body?.kind !== "body") {
@@ -88,8 +88,8 @@ function adaptState(
 }
 
 function adaptEdge(
-  edge: EdgeV01,
-  unitsById: ReadonlyMap<string, UnitV01>
+  edge: Edge,
+  unitsById: ReadonlyMap<string, Unit>
 ): GraphEdgeDefinition {
   const trigger =
     edge.trigger === undefined ? undefined : Object.freeze({ ...edge.trigger });
@@ -118,8 +118,8 @@ function adaptEdge(
 }
 
 function adaptTransition(
-  transition: TransitionV01,
-  unitsById: ReadonlyMap<string, UnitV01>
+  transition: Transition,
+  unitsById: ReadonlyMap<string, Unit>
 ): GraphTransitionDefinition {
   const unit = unitsById.get(transition.unit);
   if (transition.kind === "locked") {

@@ -24,30 +24,32 @@ describe("canonical writer/parser round trip", () => {
     });
   });
 
-  it("preserves every derived sample span and payload byte range", () => {
+  it("preserves every derived chunk span and payload byte range", () => {
     const input = twoRenditionWriterInput();
     const bytes = writeCanonicalAsset(input);
     const parsed = parseFrontIndex(bytes);
 
-    expect(parsed.records).toHaveLength(input.accessUnits.length);
+    expect(parsed.records).toHaveLength(input.chunks.length);
     for (let index = 0; index < parsed.records.length; index += 1) {
       const record = parsed.records[index]!;
       expect(Array.from(bytes.subarray(
-        record.payloadOffset,
-        record.payloadOffset + record.payloadLength
-      ))).toEqual(Array.from(input.accessUnits[index]!.bytes));
+        record.byteOffset,
+        record.byteOffset + record.byteLength
+      ))).toEqual(Array.from(input.chunks[index]!.bytes));
     }
-    const totalFrames = parsed.manifest.units.reduce(
-      (sum, unit) => sum + unit.frameCount,
-      0
-    );
     parsed.manifest.units.forEach((unit, unitIndex) => {
-      unit.samples.forEach((sample, renditionIndex) => {
+      unit.chunks.forEach((span, renditionIndex) => {
+        const previousRenditions = parsed.manifest.units.reduce(
+          (sum, candidate) => sum + candidate.chunks
+            .slice(0, renditionIndex)
+            .reduce((inner, candidateSpan) => inner + candidateSpan.chunkCount, 0),
+          0
+        );
         const prefix = parsed.manifest.units
           .slice(0, unitIndex)
-          .reduce((sum, candidate) => sum + candidate.frameCount, 0);
-        expect(sample.sampleStart).toBe(renditionIndex * totalFrames + prefix);
-        expect(sample.sampleCount).toBe(unit.frameCount);
+          .reduce((sum, candidate) => sum + candidate.chunks[renditionIndex]!.chunkCount, 0);
+        expect(span.chunkStart).toBe(previousRenditions + prefix);
+        expect(span.frameCount).toBe(unit.frameCount);
       });
     });
   });

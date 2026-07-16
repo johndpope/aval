@@ -7,7 +7,7 @@ import {
   MAX_PROCESS_STDERR_BYTES,
   type MediaProbe,
   type MediaProbeFrame,
-  type RationalV01
+  type Rational
 } from "../model.js";
 import { runBoundedProcess } from "../process-runner.js";
 
@@ -55,7 +55,7 @@ export async function probeMedia(
 export async function probePngSequence(
   pattern: string,
   firstFileNumber: number,
-  frameRate: RationalV01,
+  frameRate: Rational,
   executable = "ffprobe",
   signal?: AbortSignal,
   frameCount?: number,
@@ -111,7 +111,7 @@ export function createProbeMediaInvocation(
 export function createProbePngSequenceInvocation(
   pattern: string,
   firstFileNumber: number,
-  frameRate: RationalV01,
+  frameRate: Rational,
   frameCount?: number
 ): Readonly<ProbeInvocation> {
   if (!Number.isSafeInteger(firstFileNumber) || firstFileNumber < 0) {
@@ -491,7 +491,7 @@ function validateScanGeometry(
   }
 }
 
-export function parseRational(value: string, field: string): RationalV01 {
+export function parseRational(value: string, field: string): Rational {
   const match = /^(\d+)\/(\d+)$/u.exec(value);
   if (match === null) {
     throw new CompilerError("INPUT_INVALID", `${field} must be a rational p/q`);
@@ -540,8 +540,8 @@ function parseDecimalSeconds(value: string): {
 
 function hasExactCfrGrid(
   frames: readonly MediaProbeFrame[],
-  frameRate: RationalV01,
-  timeBase: RationalV01
+  frameRate: Rational,
+  timeBase: Rational
 ): boolean {
   const first = frames[0]!.timestampTicks;
   const frameScale =
@@ -563,7 +563,7 @@ function hasExactCfrGrid(
 
 function rationalTicksToMicros(
   ticks: bigint,
-  timeBase: RationalV01
+  timeBase: Rational
 ): number {
   const numerator =
     ticks * BigInt(timeBase.numerator) * 1_000_000n;
@@ -575,7 +575,7 @@ function rationalTicksToMicros(
   return Number(rounded);
 }
 
-function sameRational(left: RationalV01, right: RationalV01): boolean {
+function sameRational(left: Rational, right: Rational): boolean {
   return left.numerator === right.numerator &&
     left.denominator === right.denominator;
 }

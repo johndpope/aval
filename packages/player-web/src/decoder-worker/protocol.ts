@@ -1,6 +1,7 @@
 import type {
-  AvcCodecV01,
-  AvcQuantizationPolicy
+  Rational,
+  VideoBitDepth,
+  VideoCodec
 } from "@pixel-point/aval-format";
 
 /** Closed, structured-clone-safe protocol for the dedicated decoder worker. */
@@ -16,10 +17,33 @@ export const DECODER_WORKER_HARD_LIMITS = Object.freeze({
 });
 
 export type DecoderWorkerRequestOperation =
+  | "probe-config"
   | "configure"
   | "activate-generation"
   | "submit"
   | "abort-generation";
+
+export type DecoderWorkerAckOperation = Exclude<
+  DecoderWorkerRequestOperation,
+  "probe-config"
+>;
+
+/**
+ * Decoder configuration is intentionally the platform dictionary. Runtime
+ * validation closes it to the supported WebCodecs members and rejects codec
+ * descriptions because every AVAL 1.0 video asset carries elementary chunks.
+ */
+export type DecoderWorkerVideoConfig = Readonly<VideoDecoderConfig>;
+export type DecoderWorkerProbeConfig = DecoderWorkerVideoConfig;
+
+export interface DecoderWorkerVideoProfile {
+  readonly codecFamily: VideoCodec;
+  readonly bitDepth: VideoBitDepth;
+  readonly codedWidth: number;
+  readonly codedHeight: number;
+  readonly frameRate: Rational;
+  readonly requireBt709LimitedRange: true;
+}
 
 export interface DecoderWorkerVisibleRect {
   readonly x: number;
@@ -45,53 +69,37 @@ export interface DecoderWorkerOutputExpectation {
   readonly colorSpace: DecoderWorkerColorSpaceExpectation | null;
 }
 
-export interface DecoderWorkerAvcProfile {
-  readonly codedWidth: number;
-  readonly codedHeight: number;
-  readonly frameRate: {
-    readonly numerator: number;
-    readonly denominator: number;
-  };
-  readonly averageBitrate: number;
-  readonly peakBitrate: number;
-  readonly cpbBufferBits: number;
-  readonly requireBt709LimitedRange: true;
-  readonly quantizationPolicy: AvcQuantizationPolicy;
-}
-
-export interface DecoderWorkerAvcConfig {
-  readonly codec: AvcCodecV01;
-  readonly codedWidth: number;
-  readonly codedHeight: number;
-  readonly hardwareAcceleration: HardwareAcceleration;
-  readonly optimizeForLatency: true;
-  readonly description?: never;
-}
-
 export interface DecoderWorkerLimits {
   /** Maximum native decoder input queue depth. */
   readonly maxDecodeQueueSize: number;
-  /** Maximum accepted samples waiting to enter WebCodecs. */
+  /** Maximum accepted chunks waiting to enter WebCodecs. */
   readonly maxPendingSamples: number;
-  /** Combined submitted-output and transferred-frame credit ceiling. */
+  /** Pending, submitted, buffered, and transferred displayed-frame ceiling. */
   readonly maxOutstandingFrames: number;
-  /** Logical RGBA bytes leased to the main thread at once. */
+  /** Logical RGBA bytes owned by buffered and transferred frames. */
   readonly maxDecodedBytes: number;
 }
 
 /**
- * One owned access unit. Posting a submit command transfers `data`; callers
- * must not retain or mutate that ArrayBuffer afterward.
+ * One owned wire-1.0 encoded chunk in decoder submission order.
+ *
+ * `presentationIndices` maps every displayed output carried by this chunk to
+ * its authored frame inside the unit. Hidden VP9/AV1 chunks use an empty array
+ * and `displayedFrameCount: 0`. Posting transfers `data`; callers must not
+ * retain or mutate that ArrayBuffer afterward.
  */
 export interface DecoderWorkerSample {
-  readonly ordinal: number;
   readonly unitId: string;
   readonly unitInstance: number;
-  readonly unitFrame: number;
+  readonly decodeIndex: number;
+  readonly unitChunkCount: number;
   readonly unitFrameCount: number;
-  readonly type: EncodedVideoChunkType;
-  readonly timestamp: number;
+  readonly presentationOrdinalBase: number;
+  readonly presentationIndices: readonly number[];
+  readonly presentationTimestamp: number;
   readonly duration: number;
+  readonly randomAccess: boolean;
+  readonly displayedFrameCount: number;
   readonly data: ArrayBuffer;
 }
 
@@ -99,10 +107,17 @@ export interface DecoderWorkerConfigureCommand {
   readonly type: "configure";
   readonly protocolVersion: typeof DECODER_WORKER_PROTOCOL_VERSION;
   readonly requestId: number;
-  readonly config: DecoderWorkerAvcConfig;
-  readonly avcProfile: DecoderWorkerAvcProfile;
+  readonly config: DecoderWorkerVideoConfig;
+  readonly videoProfile: DecoderWorkerVideoProfile;
   readonly expectedOutput: DecoderWorkerOutputExpectation;
   readonly limits: DecoderWorkerLimits;
+}
+
+export interface DecoderWorkerProbeConfigCommand {
+  readonly type: "probe-config";
+  readonly protocolVersion: typeof DECODER_WORKER_PROTOCOL_VERSION;
+  readonly requestId: number;
+  readonly config: DecoderWorkerProbeConfig;
 }
 
 export interface DecoderWorkerActivateGenerationCommand {
@@ -146,6 +161,7 @@ export interface DecoderWorkerDisposeCommand {
 }
 
 export type DecoderWorkerCommand =
+  | DecoderWorkerProbeConfigCommand
   | DecoderWorkerConfigureCommand
   | DecoderWorkerActivateGenerationCommand
   | DecoderWorkerSubmitCommand
@@ -158,7 +174,14 @@ export interface DecoderWorkerAckEvent {
   readonly type: "ack";
   readonly protocolVersion: typeof DECODER_WORKER_PROTOCOL_VERSION;
   readonly requestId: number;
-  readonly operation: DecoderWorkerRequestOperation;
+  readonly operation: DecoderWorkerAckOperation;
+}
+
+export interface DecoderWorkerProbeResultEvent {
+  readonly type: "probe-result";
+  readonly protocolVersion: typeof DECODER_WORKER_PROTOCOL_VERSION;
+  readonly requestId: number;
+  readonly supported: boolean;
 }
 
 export interface DecoderWorkerFrameEvent {
@@ -170,6 +193,7 @@ export interface DecoderWorkerFrameEvent {
   readonly unitId: string;
   readonly unitInstance: number;
   readonly unitFrame: number;
+  readonly decodeIndex: number;
   readonly timestamp: number;
   readonly duration: number;
   /** Worker host-clock observation captured at VideoDecoder output callback entry. */
@@ -178,11 +202,17 @@ export interface DecoderWorkerFrameEvent {
   readonly frame: VideoFrame;
 }
 
+/**
+ * Stable telemetry shape. `submittedFrames` is the complete accepted display
+ * obligation: frames represented by pending chunks, decoder-owned callbacks,
+ * and worker-buffered presentation output. Pending chunk count is reported
+ * separately by `pendingSamples`.
+ */
 export interface DecoderWorkerMetrics {
   readonly configureCalls: number;
   readonly resetCalls: 0;
-  readonly flushCalls: 0;
-  readonly boundaryFlushCalls: 0;
+  readonly flushCalls: number;
+  readonly boundaryFlushCalls: number;
   readonly acceptedSamples: number;
   readonly submittedChunks: number;
   readonly outputFrames: number;
@@ -215,6 +245,7 @@ export type DecoderWorkerErrorCode =
   | "ALREADY_CONFIGURED"
   | "GENERATION_MISMATCH"
   | "BACKPRESSURE_LIMIT"
+  | "DECODER_PROBE_FAILED"
   | "DECODER_CONFIGURE_FAILED"
   | "DECODER_SUBMIT_FAILED"
   | "DECODER_OUTPUT_INVALID"
@@ -240,6 +271,7 @@ export interface DecoderWorkerDisposedEvent {
 
 export type DecoderWorkerEvent =
   | DecoderWorkerAckEvent
+  | DecoderWorkerProbeResultEvent
   | DecoderWorkerFrameEvent
   | DecoderWorkerSnapshotEvent
   | DecoderWorkerErrorEvent
@@ -275,10 +307,7 @@ export interface DecoderWorkerClientPort {
     type: "messageerror",
     listener: (event: MessageEvent<unknown>) => void
   ): void;
-  addEventListener(
-    type: "error",
-    listener: (event: ErrorEvent) => void
-  ): void;
+  addEventListener(type: "error", listener: (event: ErrorEvent) => void): void;
   removeEventListener(
     type: "message",
     listener: (event: MessageEvent<unknown>) => void
@@ -287,9 +316,6 @@ export interface DecoderWorkerClientPort {
     type: "messageerror",
     listener: (event: MessageEvent<unknown>) => void
   ): void;
-  removeEventListener(
-    type: "error",
-    listener: (event: ErrorEvent) => void
-  ): void;
+  removeEventListener(type: "error", listener: (event: ErrorEvent) => void): void;
   terminate?(): void;
 }

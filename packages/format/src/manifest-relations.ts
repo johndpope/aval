@@ -1,22 +1,22 @@
 import { compareAscii, invalid, quote } from "./manifest-validation.js";
 import type {
-  BindingV01,
-  EdgeV01,
+  Binding,
+  Edge,
   FormatBudgets,
-  ReadinessV01,
-  RenditionV01,
-  StateV01,
-  UnitV01
+  Readiness,
+  ProductionRendition,
+  State,
+  Unit
 } from "./model.js";
 
 export interface ManifestRelationInput {
   readonly initialState: string;
-  readonly renditions: readonly RenditionV01[];
-  readonly units: readonly UnitV01[];
-  readonly states: readonly StateV01[];
-  readonly edges: readonly EdgeV01[];
-  readonly bindings: readonly BindingV01[];
-  readonly readiness: ReadinessV01;
+  readonly renditions: readonly ProductionRendition[];
+  readonly units: readonly Unit[];
+  readonly states: readonly State[];
+  readonly edges: readonly Edge[];
+  readonly bindings: readonly Binding[];
+  readonly readiness: Readiness;
 }
 
 export function validateManifestRelations(input: ManifestRelationInput): void {
@@ -48,7 +48,7 @@ export function validateManifestRelations(input: ManifestRelationInput): void {
     }
   }
 
-  const reversibleEdges = new Map<string, { edge: EdgeV01; index: number }[]>();
+  const reversibleEdges = new Map<string, { edge: Edge; index: number }[]>();
   const eventNames = new Set<string>();
   for (let index = 0; index < input.edges.length; index += 1) {
     const edge = input.edges[index]!;
@@ -83,8 +83,8 @@ export function validateManifestRelations(input: ManifestRelationInput): void {
 }
 
 export function validateBlobCount(
-  units: readonly UnitV01[],
-  renditions: readonly RenditionV01[],
+  units: readonly Unit[],
+  renditions: readonly ProductionRendition[],
   budgets: FormatBudgets
 ): void {
   rejectBlobCount(units.length * renditions.length, budgets);
@@ -111,10 +111,10 @@ function rejectBlobCount(count: number, budgets: FormatBudgets): void {
 }
 
 function validateEdgeReferences(
-  edge: EdgeV01,
+  edge: Edge,
   index: number,
-  statesById: ReadonlyMap<string, StateV01>,
-  unitsById: ReadonlyMap<string, UnitV01>,
+  statesById: ReadonlyMap<string, State>,
+  unitsById: ReadonlyMap<string, Unit>,
   unitUseCount: Map<string, number>
 ): void {
   const path = `edges[${String(index)}]`;
@@ -174,8 +174,8 @@ function validateEdgeReferences(
 }
 
 function validateReversibleGroups(
-  groups: ReadonlyMap<string, readonly { edge: EdgeV01; index: number }[]>,
-  unitsById: ReadonlyMap<string, UnitV01>
+  groups: ReadonlyMap<string, readonly { edge: Edge; index: number }[]>,
+  unitsById: ReadonlyMap<string, Unit>
 ): void {
   for (const [unitId, group] of groups) {
     if (group.length !== 2) {
@@ -238,8 +238,8 @@ function validateReversibleGroups(
 }
 
 function validateResidencyForEdge(
-  unit: Extract<UnitV01, { readonly kind: "reversible" }>,
-  edge: EdgeV01,
+  unit: Extract<Unit, { readonly kind: "reversible" }>,
+  edge: Edge,
   index: number
 ): void {
   const path = `edges[${String(index)}]`;
@@ -261,7 +261,7 @@ function validateResidencyForEdge(
 }
 
 function validateUseCounts(
-  units: readonly UnitV01[],
+  units: readonly Unit[],
   counts: ReadonlyMap<string, number>
 ): void {
   for (const unit of units) {
@@ -277,11 +277,11 @@ function validateUseCounts(
 }
 
 function validateReadiness(
-  readiness: ReadinessV01,
+  readiness: Readiness,
   initialStateId: string,
-  statesById: ReadonlyMap<string, StateV01>,
-  edgesById: ReadonlyMap<string, EdgeV01>,
-  unitsById: ReadonlyMap<string, UnitV01>
+  statesById: ReadonlyMap<string, State>,
+  edgesById: ReadonlyMap<string, Edge>,
+  unitsById: ReadonlyMap<string, Unit>
 ): void {
   const immediate = [...edgesById.values()]
     .filter((edge) => edge.from === initialStateId)

@@ -2,11 +2,12 @@ import { lstat, mkdir, open, opendir, rm, rmdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 
 import { serializeCanonicalJson } from "@pixel-point/aval-format";
+import type { VideoCodec } from "@pixel-point/aval-format";
 
 import { throwIfAborted } from "../cancellation.js";
 import { CompilerError } from "../diagnostics.js";
 import {
-  describeAccessUnits,
+  describeChunks,
   readValidatedAsset,
   sha256AssetBytes
 } from "./asset-validation.js";
@@ -16,11 +17,11 @@ export interface UnpackReport {
   readonly source: string;
   readonly outputDirectory: string;
   readonly sha256: string;
-  readonly accessUnits: number;
+  readonly chunks: number;
   readonly files: readonly string[];
 }
 
-/** Validate first, then reconstruct every payload without overwriting a path. */
+/** Validate first, then reconstruct every elementary chunk and its timeline. */
 export async function unpackAssetFile(
   file: string,
   outputDirectory: string,
@@ -30,7 +31,7 @@ export async function unpackAssetFile(
   const { bytes, layout } = await readValidatedAsset(file, signal);
   throwIfAborted(signal);
   const target = resolve(outputDirectory);
-  const accessUnits = describeAccessUnits(bytes, layout.frontIndex, signal);
+  const chunks = describeChunks(bytes, layout.frontIndex, signal);
   const sourceSha256 = sha256AssetBytes(bytes, signal);
   const prepared = await prepareUnpackDirectory(target, signal);
   const written: string[] = [];
@@ -55,57 +56,47 @@ export async function unpackAssetFile(
       signal
     );
 
-    for (const blob of layout.frontIndex.unitBlobs) {
+    await writeTracked(
+      target,
+      "timeline.json",
+      serializeCanonicalJson({
+        codec: layout.frontIndex.manifest.codec,
+        bitstream: layout.frontIndex.manifest.bitstream,
+        frameRate: layout.frontIndex.manifest.frameRate,
+        chunks
+      }),
+      written,
+      signal
+    );
+
+    const extension = elementaryExtension(layout.frontIndex.manifest.codec);
+    for (const chunk of chunks) {
       throwIfAborted(signal);
-      const prefix = `${blob.rendition}--${blob.unit}`;
-      const rendition = layout.frontIndex.manifest.renditions.find(
-        ({ id }) => id === blob.rendition
-      );
-      if (rendition === undefined) {
-        throw new CompilerError("ASSET_INVALID", "Unpack rendition is missing");
-      }
+      const prefix = `${chunk.rendition}--${chunk.unit}`;
       await writeTracked(
         target,
-        `${prefix}.${rendition.profile.startsWith("avc-annexb-") ? "h264" : "bin"}`,
-        bytes.subarray(blob.offset, blob.offset + blob.length),
+        `${prefix}--${String(chunk.decodeIndex).padStart(4, "0")}.${extension}`,
+        bytes.subarray(
+          chunk.byteOffset,
+          chunk.byteOffset + chunk.byteLength
+        ),
         written,
         signal
       );
-      for (
-        let ordinal = blob.sampleStart;
-        ordinal < blob.sampleStart + blob.sampleCount;
-        ordinal += 1
-      ) {
-        throwIfAborted(signal);
-        const record = layout.frontIndex.records[ordinal];
-        if (record === undefined) {
-          throw new CompilerError("ASSET_INVALID", "Unpack record is missing");
-        }
-        const sample = bytes.subarray(
-          record.payloadOffset,
-          record.payloadOffset + record.payloadLength
-        );
-        await writeTracked(
-          target,
-          `${prefix}--${String(record.frameIndex).padStart(4, "0")}.au`,
-          sample,
-          written,
-          signal
-        );
-      }
     }
     throwIfAborted(signal);
     await writeTracked(
       target,
       "unpack-report.json",
       serializeCanonicalJson({
-        reportVersion: "0.1",
+        reportVersion: "1.0",
         source: {
           bytes: bytes.byteLength,
           path: file,
           sha256: sourceSha256
         },
-        accessUnits,
+        codec: layout.frontIndex.manifest.codec,
+        chunks,
         unitBlobs: layout.frontIndex.unitBlobs
       }),
       written,
@@ -134,9 +125,13 @@ export async function unpackAssetFile(
     source: file,
     outputDirectory: target,
     sha256: sourceSha256,
-    accessUnits: accessUnits.length,
+    chunks: chunks.length,
     files: Object.freeze([...written])
   });
+}
+
+function elementaryExtension(codec: VideoCodec): VideoCodec {
+  return codec;
 }
 
 async function prepareUnpackDirectory(

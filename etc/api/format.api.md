@@ -6,50 +6,210 @@
 
 import { ValidatedMotionGraph } from '@pixel-point/aval-graph';
 
-// @public (undocumented)
-export const ACCESS_UNIT_INDEX_HEADER_LENGTH = 16;
-
-// @public (undocumented)
-export const ACCESS_UNIT_INDEX_MAGIC: readonly [65, 86, 76, 73];
-
-// @public (undocumented)
-export const ACCESS_UNIT_RECORD_LENGTH = 32;
-
-// @public (undocumented)
-export interface AccessUnitInputV01 {
-    // (undocumented)
-    readonly bytes: Uint8Array;
-    // (undocumented)
-    readonly frameIndex: number;
-    // (undocumented)
-    readonly key: boolean;
-    // (undocumented)
-    readonly rendition: Id;
-    // (undocumented)
-    readonly unit: Id;
-}
-
-// @public (undocumented)
-export interface AccessUnitRecord {
-    // (undocumented)
-    readonly frameIndex: number;
-    // (undocumented)
-    readonly key: boolean;
-    // (undocumented)
-    readonly payloadLength: number;
-    // (undocumented)
-    readonly payloadOffset: number;
-    // (undocumented)
-    readonly renditionIndex: number;
-    // (undocumented)
-    readonly unitIndex: number;
-}
-
 // @public
-export function adaptManifestToMotionGraph(manifest: CompiledManifestV01): ValidatedMotionGraph;
+export function adaptManifestToMotionGraph(manifest: CompiledManifest): ValidatedMotionGraph;
 
 // @public
 export function adler32(bytes: Uint8Array): number;
+
+// @public (undocumented)
+export type AlphaLayout = {
+    readonly type: "opaque";
+    readonly colorRect: Rect;
+} | {
+    readonly type: "stacked";
+    readonly colorRect: Rect;
+    readonly alphaRect: Rect;
+};
+
+// @public (undocumented)
+export const AV1_OBU_FRAME = 6;
+
+// @public (undocumented)
+export const AV1_OBU_FRAME_HEADER = 3;
+
+// @public (undocumented)
+export const AV1_OBU_METADATA = 5;
+
+// @public (undocumented)
+export const AV1_OBU_PADDING = 15;
+
+// @public (undocumented)
+export const AV1_OBU_REDUNDANT_FRAME_HEADER = 7;
+
+// @public (undocumented)
+export const AV1_OBU_SEQUENCE_HEADER = 1;
+
+// @public (undocumented)
+export const AV1_OBU_TEMPORAL_DELIMITER = 2;
+
+// @public (undocumented)
+export const AV1_OBU_TILE_GROUP = 4;
+
+// @public (undocumented)
+export const AV1_OBU_TILE_LIST = 8;
+
+// @public
+export class Av1BitReader {
+    constructor(bytes: Uint8Array, path: string);
+    // (undocumented)
+    get bitOffset(): number;
+    // (undocumented)
+    get bitsRemaining(): number;
+    // (undocumented)
+    readBit(label: string): boolean;
+    // (undocumented)
+    readBits(width: number, label: string): number;
+    // (undocumented)
+    readTrailingBits(): void;
+}
+
+// @public (undocumented)
+export interface Av1ChunkInput {
+    // (undocumented)
+    readonly bytes: Uint8Array;
+    // (undocumented)
+    readonly key: boolean;
+    // (undocumented)
+    readonly timestamp: number;
+}
+
+// @public (undocumented)
+export interface Av1ChunkInspection {
+    // (undocumented)
+    readonly chunkType: "key" | "delta";
+    // (undocumented)
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly frames: readonly Av1FrameHeaderPrefix[];
+    // (undocumented)
+    readonly timestamp: number;
+}
+
+// @public (undocumented)
+export type Av1Codec = `av01.0.${string}.${"08" | "10"}.0.11${0 | 1 | 2 | 3}.01.01.01.0`;
+
+// @public (undocumented)
+export function av1CodecFromSequence(sequence: Readonly<Av1SequenceHeader>): Av1Codec;
+
+// @public (undocumented)
+export interface Av1FrameHeaderPrefix {
+    // (undocumented)
+    readonly displayedFrameCount: 0 | 1;
+    // (undocumented)
+    readonly frameType: Av1FrameType;
+    // (undocumented)
+    readonly key: boolean;
+    // (undocumented)
+    readonly randomAccess: boolean;
+    // (undocumented)
+    readonly showExistingFrame: boolean;
+    // (undocumented)
+    readonly showFrame: boolean;
+}
+
+// @public (undocumented)
+export type Av1FrameType = "key" | "inter" | "intra-only" | "switch" | "show-existing";
+
+// @public (undocumented)
+export interface Av1Leb128 {
+    // (undocumented)
+    readonly length: number;
+    // (undocumented)
+    readonly value: number;
+}
+
+// @public (undocumented)
+export interface Av1Obu {
+    // (undocumented)
+    readonly payload: Uint8Array;
+    // (undocumented)
+    readonly spatialId: number;
+    // (undocumented)
+    readonly temporalId: number;
+    // (undocumented)
+    readonly type: number;
+}
+
+// @public (undocumented)
+export interface Av1RenditionInspection {
+    // (undocumented)
+    readonly codec: Av1Codec;
+    // (undocumented)
+    readonly sequence: Av1SequenceHeader;
+    // (undocumented)
+    readonly units: readonly Av1UnitInspection[];
+}
+
+// @public (undocumented)
+export interface Av1RenditionInspectionInput {
+    // (undocumented)
+    readonly bitDepth: 8 | 10;
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly units: readonly Av1UnitInput[];
+    // (undocumented)
+    readonly width: number;
+}
+
+// @public (undocumented)
+export interface Av1SequenceHeader {
+    // (undocumented)
+    readonly bitDepth: 8 | 10;
+    // (undocumented)
+    readonly chromaSamplePosition: 0 | 1 | 2 | 3;
+    // (undocumented)
+    readonly colorPrimaries: 1;
+    // (undocumented)
+    readonly filmGrainParamsPresent: boolean;
+    // (undocumented)
+    readonly frameIdNumbersPresent: boolean;
+    // (undocumented)
+    readonly fullRange: false;
+    // (undocumented)
+    readonly level: number;
+    // (undocumented)
+    readonly matrixCoefficients: 1;
+    // (undocumented)
+    readonly maxHeight: number;
+    // (undocumented)
+    readonly maxWidth: number;
+    // (undocumented)
+    readonly monochrome: false;
+    // (undocumented)
+    readonly profile: 0;
+    // (undocumented)
+    readonly reducedStillPictureHeader: boolean;
+    // (undocumented)
+    readonly subsamplingX: 1;
+    // (undocumented)
+    readonly subsamplingY: 1;
+    // (undocumented)
+    readonly tier: "M" | "H";
+    // (undocumented)
+    readonly transferCharacteristics: 1;
+}
+
+// @public (undocumented)
+export interface Av1UnitInput {
+    // (undocumented)
+    readonly chunks: readonly Av1ChunkInput[];
+    // (undocumented)
+    readonly expectedDisplayedFrames: number;
+    // (undocumented)
+    readonly id: string;
+}
+
+// @public (undocumented)
+export interface Av1UnitInspection {
+    // (undocumented)
+    readonly chunks: readonly Av1ChunkInspection[];
+    // (undocumented)
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly id: string;
+}
 
 // @public
 export const AVC_DECODER_SURFACE_PADDING = 32;
@@ -366,18 +526,18 @@ export interface AvcVisibleRenditionGeometryInput {
 }
 
 // @public (undocumented)
-export type BindingSourceV01 = "activate" | "engagement.off" | "engagement.on" | "focus.in" | "focus.out" | "hidden" | "pointer.enter" | "pointer.leave" | "visible";
-
-// @public (undocumented)
-export interface BindingV01 {
+export interface Binding {
     // (undocumented)
     readonly event: Id;
     // (undocumented)
-    readonly source: BindingSourceV01;
+    readonly source: BindingSource;
 }
 
 // @public (undocumented)
-export interface BitrateV01 {
+export type BindingSource = "activate" | "engagement.off" | "engagement.on" | "focus.in" | "focus.out" | "hidden" | "pointer.enter" | "pointer.leave" | "visible";
+
+// @public (undocumented)
+export interface Bitrate {
     // (undocumented)
     readonly average: number;
     // (undocumented)
@@ -393,12 +553,74 @@ export interface ByteRange {
 }
 
 // @public (undocumented)
-export interface CanonicalAssetInputV01 {
+export interface CanonicalAssetInput {
     // (undocumented)
-    readonly accessUnits: readonly AccessUnitInputV01[];
+    readonly chunks: readonly EncodedChunkInput[];
     // (undocumented)
-    readonly manifest: CompiledManifestInputV01;
+    readonly manifest: CompiledManifestInput;
 }
+
+// @public (undocumented)
+export interface CanonicalChunkPlan {
+    // (undocumented)
+    recordAt(index: number): CanonicalChunkSlot;
+    // (undocumented)
+    readonly recordCount: number;
+    // (undocumented)
+    records(): IterableIterator<CanonicalChunkSlot>;
+    // (undocumented)
+    readonly renditionCount: number;
+    // (undocumented)
+    readonly spans: readonly CanonicalChunkSpan[];
+    // (undocumented)
+    readonly totalFrameCount: number;
+    // (undocumented)
+    readonly unitCount: number;
+    // (undocumented)
+    readonly unitSpans: readonly (readonly CanonicalChunkSpan[])[];
+}
+
+// @public (undocumented)
+export interface CanonicalChunkSlot {
+    // (undocumented)
+    readonly decodeIndex: number;
+    // (undocumented)
+    readonly ordinal: number;
+    // (undocumented)
+    readonly randomAccessRequired: boolean;
+    // (undocumented)
+    readonly renditionId: string;
+    // (undocumented)
+    readonly renditionIndex: number;
+    // (undocumented)
+    readonly unitId: string;
+    // (undocumented)
+    readonly unitIndex: number;
+}
+
+// @public (undocumented)
+export interface CanonicalChunkSpan {
+    // (undocumented)
+    readonly chunkCount: number;
+    // (undocumented)
+    readonly chunkStart: number;
+    // (undocumented)
+    readonly frameCount: number;
+    // (undocumented)
+    readonly renditionId: string;
+    // (undocumented)
+    readonly renditionIndex: number;
+    // (undocumented)
+    readonly unitId: string;
+    // (undocumented)
+    readonly unitIndex: number;
+}
+
+// @public
+export function canonicalizeH265AccessUnit(bytes: Uint8Array, path?: string): Uint8Array;
+
+// @public
+export function canonicalizeH265EncoderUnitStream(bytes: Uint8Array, expectedAccessUnitCount: number, path?: string): readonly H265AccessUnitInput[];
 
 // @public (undocumented)
 export interface CanonicalJsonObject {
@@ -422,7 +644,7 @@ export interface CanonicalJsonWriteLimits {
 }
 
 // @public (undocumented)
-export interface CanvasV01 {
+export interface Canvas {
     // (undocumented)
     readonly colorSpace: "srgb";
     // (undocumented)
@@ -436,43 +658,75 @@ export interface CanvasV01 {
 }
 
 // @public (undocumented)
-export type CompiledManifestInputV01 = Omit<CompiledManifestV01, "units"> & {
-    readonly units: readonly UnitInputV01[];
-};
+export const CHUNK_INDEX_HEADER_LENGTH = 16;
 
 // @public (undocumented)
-export interface CompiledManifestV01 {
+export const CHUNK_INDEX_MAGIC: readonly [65, 86, 76, 73];
+
+// @public (undocumented)
+export const CHUNK_INDEX_RECORD_LENGTH = 48;
+
+// @public (undocumented)
+export interface ChunkDigestInput {
     // (undocumented)
-    readonly bindings: readonly BindingV01[];
+    readonly rendition: Id;
     // (undocumented)
-    readonly canvas: CanvasV01;
+    readonly sha256: Sha256Hex;
+}
+
+// @public (undocumented)
+export interface CompiledManifest {
     // (undocumented)
-    readonly edges: readonly EdgeV01[];
+    readonly bindings: readonly Binding[];
     // (undocumented)
-    readonly formatVersion: "0.1";
+    readonly bitstream: VideoBitstream;
     // (undocumented)
-    readonly frameRate: RationalV01;
+    readonly canvas: Canvas;
+    // (undocumented)
+    readonly codec: VideoCodec;
+    // (undocumented)
+    readonly edges: readonly Edge[];
+    // (undocumented)
+    readonly formatVersion: "1.0";
+    // (undocumented)
+    readonly frameRate: Rational;
     // (undocumented)
     readonly generator: string;
     // (undocumented)
     readonly initialState: Id;
     // (undocumented)
-    readonly limits: DeclaredLimitsV01;
+    readonly layout: VideoLayout;
     // (undocumented)
-    readonly readiness: ReadinessV01;
+    readonly limits: DeclaredLimits;
     // (undocumented)
-    readonly renditions: readonly RenditionV01[];
+    readonly readiness: Readiness;
     // (undocumented)
-    readonly states: readonly StateV01[];
+    readonly renditions: readonly ProductionRendition[];
     // (undocumented)
-    readonly units: readonly UnitV01[];
+    readonly states: readonly State[];
+    // (undocumented)
+    readonly units: readonly Unit[];
 }
+
+// @public (undocumented)
+export type CompiledManifestInput = Omit<CompiledManifest, "units"> & {
+    readonly units: readonly UnitInput[];
+};
 
 // @public
 export function crc32(bytes: Uint8Array): number;
 
+// @public
+export function createCanonicalChunkPlan(renditions: readonly Pick<ProductionRendition, "id">[], units: readonly Pick<Unit, "id" | "frameCount" | "chunks">[], maximumRecords: number, maximumTotalFrames?: number): Readonly<CanonicalChunkPlan>;
+
 // @public (undocumented)
-export interface DeclaredLimitsV01 {
+export function createH265PictureOrderState(): H265PictureOrderState;
+
+// @public (undocumented)
+export function createH265VideoDecoderConfig(sps: ParsedH265Sps): H265VideoDecoderConfig;
+
+// @public (undocumented)
+export interface DeclaredLimits {
     // (undocumented)
     readonly decodedPixelBytes: number;
     // (undocumented)
@@ -497,14 +751,74 @@ export function deriveAvcRenditionGeometry(input: AvcRenditionGeometryInput): Av
 // @public
 export function deriveAvcRenditionGeometryFromVisible(input: AvcVisibleRenditionGeometryInput): AvcRenditionGeometry;
 
-// Warning: (ae-forgotten-export) The symbol "NonCutEdgeV01" needs to be exported by the entry point index.d.ts
-// Warning: (ae-forgotten-export) The symbol "CutEdgeV01" needs to be exported by the entry point index.d.ts
-//
-// @public (undocumented)
-export type EdgeV01 = NonCutEdgeV01 | CutEdgeV01;
+// @public
+export function deriveH265PictureOrderCount(nalType: number, temporalId: number, pictureOrderCountLsb: number, log2MaxPictureOrderCountLsb: number, state: H265PictureOrderState): number;
 
 // @public
-export function encodeReferenceFrame(input: ReferenceFrameInput): Uint8Array;
+export function deriveH265PresentationOrder(pictures: readonly H265DecodedPictureOrder[], maximumReorderPictures: number, path: string): readonly number[];
+
+// @public
+export function deriveVideoRenditionGeometry(input: VideoRenditionGeometryInput): Readonly<VideoRenditionGeometry>;
+
+// @public (undocumented)
+export function deriveVp9Codec(input: Readonly<DeriveVp9CodecInput>): Vp9Codec;
+
+// @public (undocumented)
+export interface DeriveVp9CodecInput {
+    // (undocumented)
+    readonly averageBitrate: number;
+    // (undocumented)
+    readonly codedFramesPerSecond: number;
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly width: number;
+}
+
+// Warning: (ae-forgotten-export) The symbol "NonCutEdge" needs to be exported by the entry point index.d.ts
+// Warning: (ae-forgotten-export) The symbol "CutEdge" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export type Edge = NonCutEdge | CutEdge;
+
+// @public (undocumented)
+export function encodeAv1Leb128(value: number): Uint8Array;
+
+// @public
+export interface EncodedChunkInput {
+    // (undocumented)
+    readonly bytes: Uint8Array;
+    // (undocumented)
+    readonly decodeIndex: number;
+    // (undocumented)
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly duration: number;
+    // (undocumented)
+    readonly presentationTimestamp: number;
+    // (undocumented)
+    readonly randomAccess: boolean;
+    // (undocumented)
+    readonly rendition: Id;
+    // (undocumented)
+    readonly unit: Id;
+}
+
+// @public
+export interface EncodedChunkRecord {
+    // (undocumented)
+    readonly byteLength: number;
+    // (undocumented)
+    readonly byteOffset: number;
+    // (undocumented)
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly duration: number;
+    // (undocumented)
+    readonly presentationTimestamp: number;
+    // (undocumented)
+    readonly randomAccess: boolean;
+}
 
 // @public (undocumented)
 export const FORMAT_ALIGNMENT = 8;
@@ -519,10 +833,10 @@ export const FORMAT_HEADER_LENGTH = 64;
 export const FORMAT_MAGIC: readonly [65, 86, 76, 70, 13, 10, 26, 10];
 
 // @public (undocumented)
-export const FORMAT_VERSION_MAJOR = 0;
+export const FORMAT_VERSION_MAJOR = 1;
 
 // @public (undocumented)
-export const FORMAT_VERSION_MINOR = 1;
+export const FORMAT_VERSION_MINOR = 0;
 
 // @public (undocumented)
 export interface FormatBudgets {
@@ -530,6 +844,10 @@ export interface FormatBudgets {
     readonly maxBindings: number;
     // (undocumented)
     readonly maxBlobRanges: number;
+    // (undocumented)
+    readonly maxChunkBytes: number;
+    // (undocumented)
+    readonly maxChunkRecords: number;
     // (undocumented)
     readonly maxEdges: number;
     // (undocumented)
@@ -553,10 +871,6 @@ export interface FormatBudgets {
     // (undocumented)
     readonly maxReversibleFrames: number;
     // (undocumented)
-    readonly maxSampleBytes: number;
-    // (undocumented)
-    readonly maxSampleRecords: number;
-    // (undocumented)
     readonly maxStates: number;
     // (undocumented)
     readonly maxTotalUnitFrames: number;
@@ -576,7 +890,7 @@ export class FormatError extends Error {
 }
 
 // @public (undocumented)
-export type FormatErrorCode = "INPUT_INVALID" | "BUDGET_EXCEEDED" | "INTEGER_UNSAFE" | "HEADER_INVALID" | "VERSION_UNSUPPORTED" | "FEATURE_UNSUPPORTED" | "JSON_INVALID" | "JSON_DUPLICATE_KEY" | "JSON_DANGEROUS_KEY" | "JSON_NONCANONICAL" | "MANIFEST_INVALID" | "GRAPH_INVALID" | "INDEX_INVALID" | "LAYOUT_INVALID" | "PROFILE_INVALID" | "REFERENCE_FRAME_INVALID" | "PNG_ENVELOPE_INVALID" | "PNG_DEFLATE_INVALID" | "PNG_SCANLINE_INVALID" | "WRITER_INVALID" | "WRITER_NONCONVERGENT";
+export type FormatErrorCode = "INPUT_INVALID" | "BUDGET_EXCEEDED" | "INTEGER_UNSAFE" | "HEADER_INVALID" | "VERSION_UNSUPPORTED" | "FEATURE_UNSUPPORTED" | "JSON_INVALID" | "JSON_DUPLICATE_KEY" | "JSON_DANGEROUS_KEY" | "JSON_NONCANONICAL" | "MANIFEST_INVALID" | "GRAPH_INVALID" | "INDEX_INVALID" | "LAYOUT_INVALID" | "PROFILE_INVALID" | "PNG_ENVELOPE_INVALID" | "PNG_DEFLATE_INVALID" | "PNG_SCANLINE_INVALID" | "WRITER_INVALID" | "WRITER_NONCONVERGENT";
 
 // @public (undocumented)
 export interface FormatErrorDetails {
@@ -597,13 +911,13 @@ export interface FormatHeader {
     // (undocumented)
     readonly indexOffset: number;
     // (undocumented)
-    readonly major: 0;
+    readonly major: 1;
     // (undocumented)
     readonly manifestLength: number;
     // (undocumented)
     readonly manifestOffset: 64;
     // (undocumented)
-    readonly minor: 1;
+    readonly minor: 0;
     // (undocumented)
     readonly requiredFeatureFlags: 0;
 }
@@ -615,10 +929,323 @@ export interface FormatOptions {
 }
 
 // @public (undocumented)
+export const H265_MAX_ACCESS_UNIT_BYTES: number;
+
+// @public (undocumented)
+export const H265_MAX_NAL_UNITS = 4096;
+
+// @public (undocumented)
+export const H265_NAL_AUD = 35;
+
+// @public (undocumented)
+export const H265_NAL_BLA_N_LP = 18;
+
+// @public (undocumented)
+export const H265_NAL_BLA_W_LP = 16;
+
+// @public (undocumented)
+export const H265_NAL_BLA_W_RADL = 17;
+
+// @public (undocumented)
+export const H265_NAL_CRA_NUT = 21;
+
+// @public (undocumented)
+export const H265_NAL_IDR_N_LP = 20;
+
+// @public (undocumented)
+export const H265_NAL_IDR_W_RADL = 19;
+
+// @public (undocumented)
+export const H265_NAL_PPS = 34;
+
+// @public (undocumented)
+export const H265_NAL_PREFIX_SEI = 39;
+
+// @public (undocumented)
+export const H265_NAL_SPS = 33;
+
+// @public (undocumented)
+export const H265_NAL_SUFFIX_SEI = 40;
+
+// @public (undocumented)
+export const H265_NAL_VPS = 32;
+
+// @public (undocumented)
+export interface H265AccessUnitInput {
+    // (undocumented)
+    readonly bytes: Uint8Array;
+    // (undocumented)
+    readonly key: boolean;
+}
+
+// @public (undocumented)
+export interface H265AccessUnitSummary {
+    // (undocumented)
+    readonly decodeIndex: number;
+    // (undocumented)
+    readonly key: boolean;
+    // (undocumented)
+    readonly nalUnitTypes: readonly number[];
+    // (undocumented)
+    readonly pictureOrderCount: number;
+    // (undocumented)
+    readonly presentationIndex: number;
+    // (undocumented)
+    readonly randomAccess: H265RandomAccessKind | undefined;
+    // (undocumented)
+    readonly referencedPictureOrderCounts: readonly number[];
+    // (undocumented)
+    readonly sliceType: "I" | "P" | "B";
+    // (undocumented)
+    readonly temporalId: number;
+}
+
+// @public (undocumented)
+export interface H265AnnexBNalUnit {
+    // (undocumented)
+    readonly layerId: 0;
+    // (undocumented)
+    readonly offset: number;
+    // (undocumented)
+    readonly payload: Uint8Array;
+    // (undocumented)
+    readonly prefixLength: 3 | 4;
+    // (undocumented)
+    readonly rbsp: Uint8Array;
+    // (undocumented)
+    readonly temporalId: number;
+    // (undocumented)
+    readonly type: number;
+}
+
+// @public (undocumented)
+export interface H265AnnexBOptions {
+    // (undocumented)
+    readonly allowEncoderMetadata?: boolean;
+    // (undocumented)
+    readonly maximumBytes?: number;
+    // (undocumented)
+    readonly maximumNalUnits?: number;
+}
+
+// @public
+export function h265CodecString(profileTierLevel: H265ProfileTierLevel): string;
+
+// @public (undocumented)
+export interface H265ColorSummary {
+    // (undocumented)
+    readonly colourPrimaries?: number;
+    // (undocumented)
+    readonly fullRange: boolean;
+    // (undocumented)
+    readonly matrixCoefficients?: number;
+    // (undocumented)
+    readonly transferCharacteristics?: number;
+}
+
+// @public (undocumented)
+export interface H265CropSummary {
+    // (undocumented)
+    readonly bottom: number;
+    // (undocumented)
+    readonly left: number;
+    // (undocumented)
+    readonly right: number;
+    // (undocumented)
+    readonly top: number;
+    // (undocumented)
+    readonly visibleHeight: number;
+    // (undocumented)
+    readonly visibleWidth: number;
+}
+
+// @public (undocumented)
+export interface H265DecodedPictureOrder {
+    // (undocumented)
+    readonly decodeIndex: number;
+    // (undocumented)
+    readonly pictureOrderCount: number;
+}
+
+// @public (undocumented)
+export interface H265FrameRate {
+    // (undocumented)
+    readonly denominator: number;
+    // (undocumented)
+    readonly numerator: number;
+}
+
+// @public (undocumented)
+export interface H265MainProfile {
+    // (undocumented)
+    readonly codedHeight: number;
+    // (undocumented)
+    readonly codedWidth: number;
+    // (undocumented)
+    readonly expectedVisibleRect?: readonly [
+    x: 0,
+    y: 0,
+    width: number,
+    height: number
+    ];
+    // (undocumented)
+    readonly frameRate: H265FrameRate;
+    // (undocumented)
+    readonly requireBt709LimitedRange: true;
+}
+
+// @public (undocumented)
+export interface H265ParameterSetSummary {
+    // (undocumented)
+    readonly bitDepth: 8;
+    // (undocumented)
+    readonly chromaFormat: "4:2:0";
+    // (undocumented)
+    readonly codec: string;
+    // (undocumented)
+    readonly codedHeight: number;
+    // (undocumented)
+    readonly codedWidth: number;
+    // (undocumented)
+    readonly color: H265ColorSummary;
+    // (undocumented)
+    readonly crop: H265CropSummary;
+    // (undocumented)
+    readonly maxDecPicBuffering: number;
+    // (undocumented)
+    readonly maxNumReorderPics: number;
+    // (undocumented)
+    readonly profileTierLevel: H265ProfileTierLevel;
+}
+
+// @public (undocumented)
+export interface H265PictureOrderState {
+    // (undocumented)
+    initialized: boolean;
+    // (undocumented)
+    previousTid0PictureOrderCountLsb: number;
+    // (undocumented)
+    previousTid0PictureOrderCountMsb: number;
+}
+
+// @public (undocumented)
+export interface H265ProfileTierLevel {
+    // (undocumented)
+    readonly constraintIndicatorFlags: readonly number[];
+    // (undocumented)
+    readonly levelIdc: number;
+    readonly profileCompatibilityFlags: number;
+    // (undocumented)
+    readonly profileIdc: number;
+    // (undocumented)
+    readonly profileSpace: 0 | 1 | 2 | 3;
+    // (undocumented)
+    readonly tierFlag: boolean;
+}
+
+// @public (undocumented)
+export type H265RandomAccessKind = "bla" | "idr" | "cra";
+
+// @public
+export class H265RbspBitReader {
+    constructor(bytes: Uint8Array, path: string, absoluteOffset: number);
+    // (undocumented)
+    get bitOffset(): number;
+    // (undocumented)
+    get bitsRemaining(): number;
+    moreRbspData(): boolean;
+    // (undocumented)
+    readBit(label: string): boolean;
+    // (undocumented)
+    readBits(width: number, label: string): number;
+    // (undocumented)
+    readSignedExpGolomb(label: string, minimum?: number, maximum?: number): number;
+    // (undocumented)
+    readTrailingBits(): void;
+    // (undocumented)
+    readUnsignedExpGolomb(label: string, maximum?: number): number;
+    // (undocumented)
+    skipBits(width: number, label: string): void;
+}
+
+// @public (undocumented)
+export interface H265RenditionInspection {
+    // (undocumented)
+    readonly decoderConfig: H265VideoDecoderConfig;
+    // (undocumented)
+    readonly parameterSet: H265ParameterSetSummary;
+    // (undocumented)
+    readonly units: readonly H265UnitInspection[];
+}
+
+// @public (undocumented)
+export interface H265RenditionInspectionInput {
+    // (undocumented)
+    readonly profile: H265MainProfile;
+    // (undocumented)
+    readonly units: readonly H265UnitInput[];
+}
+
+// @public (undocumented)
+export interface H265ShortTermReferencePicture {
+    // (undocumented)
+    readonly deltaPoc: number;
+    // (undocumented)
+    readonly usedByCurrentPicture: boolean;
+}
+
+// @public (undocumented)
+export interface H265ShortTermReferencePictureSet {
+    readonly pictures: readonly H265ShortTermReferencePicture[];
+}
+
+// @public (undocumented)
+export interface H265UnitInput {
+    // (undocumented)
+    readonly accessUnits: readonly H265AccessUnitInput[];
+    // (undocumented)
+    readonly id: string;
+}
+
+// @public (undocumented)
+export interface H265UnitInspection {
+    // (undocumented)
+    readonly accessUnits: readonly H265AccessUnitSummary[];
+    // (undocumented)
+    readonly decodeToPresentation: readonly number[];
+    // (undocumented)
+    readonly id: string;
+}
+
+// @public
+export interface H265VideoDecoderConfig {
+    // (undocumented)
+    readonly codec: string;
+    // (undocumented)
+    readonly codedHeight: number;
+    // (undocumented)
+    readonly codedWidth: number;
+    // (undocumented)
+    readonly colorSpace: {
+        readonly primaries: "bt709";
+        readonly transfer: "bt709";
+        readonly matrix: "bt709";
+        readonly fullRange: false;
+    };
+    // (undocumented)
+    readonly displayAspectHeight: number;
+    // (undocumented)
+    readonly displayAspectWidth: number;
+}
+
+// @public (undocumented)
 export type Id = string;
 
 // @public (undocumented)
 export const IDENTIFIER_PATTERN: Readonly<RegExp>;
+
+// @public
+export function inspectAv1Rendition(input: Readonly<Av1RenditionInspectionInput>): Readonly<Av1RenditionInspection>;
 
 // @public
 export function inspectAvcAnnexBEncoderCandidateRendition(input: AvcRenditionInspectionInput): AvcRenditionInspection;
@@ -626,17 +1253,53 @@ export function inspectAvcAnnexBEncoderCandidateRendition(input: AvcRenditionIns
 // @public
 export function inspectAvcAnnexBRendition(input: AvcRenditionInspectionInput): AvcRenditionInspection;
 
+// @public
+export function inspectH265AnnexBRendition(input: H265RenditionInspectionInput): H265RenditionInspection;
+
+// @public
+export function inspectVp9Rendition(input: Readonly<Vp9RenditionInspectionInput>): Readonly<Vp9RenditionInspection>;
+
+// @public (undocumented)
+export function isAv1Codec(value: unknown): value is Av1Codec;
+
 // @public (undocumented)
 export function isAvcCodec(codec: unknown): codec is AvcCodecV01;
 
 // @public (undocumented)
 export function isAvcLevelIdc(value: number): value is AvcLevelIdc;
 
+// @public (undocumented)
+export function isH265IdrNalType(type: number): boolean;
+
+// @public (undocumented)
+export function isH265RandomAccessNalType(type: number): boolean;
+
+// @public (undocumented)
+export function isH265VclNalType(type: number): boolean;
+
+// @public (undocumented)
+export function isVideoCodecString(value: unknown, family: VideoCodec, bitDepth: VideoBitDepth): value is string;
+
+// @public (undocumented)
+export function isVp9Codec(value: unknown): value is Vp9Codec;
+
 // @public
 export function maximumAvcDecodedRgbaBytes(codedWidth: number, codedHeight: number): number;
 
 // @public
 export function maximumAvcDecoderSurfaceDimension(dimension: number): number;
+
+// @public (undocumented)
+export const PACKED_ALPHA_GUTTER = 8;
+
+// @public
+export function parseAv1FrameHeaderPrefix(payload: Uint8Array, sequence: Readonly<Av1SequenceHeader>, path?: string): Readonly<Av1FrameHeaderPrefix>;
+
+// @public
+export function parseAv1LowOverheadObus(bytes: Uint8Array, path?: string): readonly Av1Obu[];
+
+// @public
+export function parseAv1SequenceHeader(payload: Uint8Array, path?: string): Readonly<Av1SequenceHeader>;
 
 // @public (undocumented)
 export function parseAvcCodec(codec: unknown): Readonly<AvcLevelLimits>;
@@ -650,24 +1313,153 @@ export interface ParsedFrontIndex {
     // (undocumented)
     readonly header: FormatHeader;
     // (undocumented)
-    readonly manifest: CompiledManifestV01;
+    readonly manifest: CompiledManifest;
     // (undocumented)
-    readonly records: readonly AccessUnitRecord[];
+    readonly records: readonly EncodedChunkRecord[];
     // (undocumented)
     readonly unitBlobs: readonly UnitBlobRange[];
+}
+
+// @public (undocumented)
+export interface ParsedH265Pps {
+    // (undocumented)
+    readonly dependentSliceSegmentsEnabled: boolean;
+    // (undocumented)
+    readonly entropyCodingSyncEnabled: boolean;
+    // (undocumented)
+    readonly id: number;
+    // (undocumented)
+    readonly numExtraSliceHeaderBits: number;
+    // (undocumented)
+    readonly outputFlagPresent: boolean;
+    // (undocumented)
+    readonly payloadSignature: string;
+    // (undocumented)
+    readonly spsId: number;
+    // (undocumented)
+    readonly tilesEnabled: boolean;
+}
+
+// @public (undocumented)
+export interface ParsedH265SliceHeader {
+    // (undocumented)
+    readonly noOutputOfPriorPictures: boolean;
+    // (undocumented)
+    readonly pictureOrderCountLsb: number;
+    // (undocumented)
+    readonly ppsId: number;
+    // (undocumented)
+    readonly randomAccess: H265RandomAccessKind | undefined;
+    // (undocumented)
+    readonly referencePictureSet: H265ShortTermReferencePictureSet;
+    // (undocumented)
+    readonly sliceType: "I" | "P" | "B";
+}
+
+// @public (undocumented)
+export interface ParsedH265Sps {
+    // (undocumented)
+    readonly bitDepthChroma: 8;
+    // (undocumented)
+    readonly bitDepthLuma: 8;
+    // (undocumented)
+    readonly chromaFormatIdc: 1;
+    // (undocumented)
+    readonly codedHeight: number;
+    // (undocumented)
+    readonly codedWidth: number;
+    // (undocumented)
+    readonly color: H265ColorSummary;
+    // (undocumented)
+    readonly crop: H265CropSummary;
+    // (undocumented)
+    readonly defaultDisplayWindowPresent: boolean;
+    // (undocumented)
+    readonly id: number;
+    // (undocumented)
+    readonly log2CtbSize: number;
+    // (undocumented)
+    readonly log2MaxPictureOrderCountLsb: number;
+    // (undocumented)
+    readonly longTermReferencePicturesPresent: boolean;
+    // (undocumented)
+    readonly maxDecPicBuffering: number;
+    // (undocumented)
+    readonly maxNumReorderPics: number;
+    // (undocumented)
+    readonly maxSubLayers: 1;
+    // (undocumented)
+    readonly payloadSignature: string;
+    // (undocumented)
+    readonly profileTierLevel: H265ProfileTierLevel;
+    // (undocumented)
+    readonly separateColourPlane: false;
+    // (undocumented)
+    readonly shortTermReferencePictureSets: readonly H265ShortTermReferencePictureSet[];
+    // (undocumented)
+    readonly squareSampleAspect: boolean;
+    // (undocumented)
+    readonly temporalIdNesting: true;
+    // (undocumented)
+    readonly temporalMvpEnabled: boolean;
+    // (undocumented)
+    readonly timing: {
+        readonly numUnitsInTick: number;
+        readonly timeScale: number;
+    } | undefined;
+    // (undocumented)
+    readonly videoParameterSetId: number;
+}
+
+// @public (undocumented)
+export interface ParsedH265Vps {
+    // (undocumented)
+    readonly id: number;
+    // (undocumented)
+    readonly maxSubLayers: 1;
+    // (undocumented)
+    readonly payloadSignature: string;
+    // (undocumented)
+    readonly profileTierLevel: H265ProfileTierLevel;
+}
+
+// @public (undocumented)
+export interface ParsedVideoCodecString {
+    // (undocumented)
+    readonly bitDepth?: VideoBitDepth;
+    // (undocumented)
+    readonly family: VideoCodec;
 }
 
 // @public
 export function parseFrontIndex(bytesFromFileStart: Uint8Array, options?: FormatOptions): ParsedFrontIndex;
 
+// @public (undocumented)
+export function parseH265Pps(nal: H265AnnexBNalUnit, path: string): ParsedH265Pps;
+
+// @public (undocumented)
+export function parseH265ShortTermReferencePictureSet(reader: H265RbspBitReader, setIndex: number, numberOfSpsSets: number, previousSets: readonly H265ShortTermReferencePictureSet[]): H265ShortTermReferencePictureSet;
+
+// @public (undocumented)
+export function parseH265SliceHeader(nal: H265AnnexBNalUnit, pps: ParsedH265Pps, sps: ParsedH265Sps, path: string): ParsedH265SliceHeader;
+
+// @public (undocumented)
+export function parseH265Sps(nal: H265AnnexBNalUnit, path: string): ParsedH265Sps;
+
+// @public (undocumented)
+export function parseH265Vps(nal: H265AnnexBNalUnit, path: string): ParsedH265Vps;
+
 // @public
 export function parseHeader(bytes: Uint8Array, options?: FormatOptions): Readonly<FormatHeader>;
 
 // @public
-export function parseReferenceFrameHeader(sample: Uint8Array, options?: FormatOptions): Readonly<ReferenceFrameHeader>;
+export function parseStrictJson(bytes: Uint8Array, options?: FormatOptions): CanonicalJsonValue;
 
 // @public
-export function parseStrictJson(bytes: Uint8Array, options?: FormatOptions): CanonicalJsonValue;
+export function parseVideoCodecString(value: string): Readonly<ParsedVideoCodecString> | undefined;
+
+// @public
+export function parseVp9FrameHeader(bytes: Uint8Array, path?: string): Readonly<Vp9FrameHeader>;
 
 // @public (undocumented)
 export interface PngDecodePlan {
@@ -713,7 +1505,7 @@ export interface PngRgbaDecodeResult {
 }
 
 // @public (undocumented)
-export interface PortV01 {
+export interface Port {
     // (undocumented)
     readonly entryFrame: 0;
     // (undocumented)
@@ -725,16 +1517,37 @@ export interface PortV01 {
 // @public
 export function prepareAvcEncoderRendition(input: AvcEncoderRenditionPreparationInput): AvcEncoderRenditionPreparation;
 
+// @public
+export interface ProductionRendition {
+    // (undocumented)
+    readonly alphaLayout: AlphaLayout;
+    // (undocumented)
+    readonly bitDepth: VideoBitDepth;
+    // (undocumented)
+    readonly bitrate: Bitrate;
+    // (undocumented)
+    readonly codec: string;
+    // (undocumented)
+    readonly codedHeight: number;
+    // (undocumented)
+    readonly codedWidth: number;
+    // (undocumented)
+    readonly id: Id;
+}
+
 // @public (undocumented)
-export interface RationalV01 {
+export interface Rational {
     // (undocumented)
     readonly denominator: number;
     // (undocumented)
     readonly numerator: number;
 }
 
+// @public
+export function readAv1Leb128(bytes: Uint8Array, offset: number, path?: string): Readonly<Av1Leb128>;
+
 // @public (undocumented)
-export interface ReadinessV01 {
+export interface Readiness {
     // (undocumented)
     readonly bootstrapUnits: readonly Id[];
     // (undocumented)
@@ -751,121 +1564,11 @@ width: number,
 height: number
 ];
 
-// @public (undocumented)
-export const REFERENCE_FRAME_HEADER_LENGTH = 24;
+// @public
+export function removeH265EmulationPrevention(ebsp: Uint8Array, path: string, absoluteOffset: number): Uint8Array;
 
 // @public (undocumented)
-export const REFERENCE_FRAME_MAGIC: readonly [65, 86, 82, 70];
-
-// @public (undocumented)
-export interface ReferenceFrameDescriptor extends ReferenceFrameHeader {
-    // (undocumented)
-    readonly rgbaRange: ByteRange;
-}
-
-// @public (undocumented)
-export interface ReferenceFrameHeader {
-    // (undocumented)
-    readonly frameIndex: number;
-    // (undocumented)
-    readonly height: number;
-    // (undocumented)
-    readonly rgbaLength: number;
-    // (undocumented)
-    readonly width: number;
-}
-
-// @public (undocumented)
-export interface ReferenceFrameInput {
-    // (undocumented)
-    readonly frameIndex: number;
-    // (undocumented)
-    readonly height: number;
-    // (undocumented)
-    readonly rgba: Uint8Array;
-    // (undocumented)
-    readonly width: number;
-}
-
-// @public (undocumented)
-export interface ReferenceFrameValidationInput {
-    // (undocumented)
-    readonly expectedFrameIndex: number;
-    // (undocumented)
-    readonly expectedHeight: number;
-    // (undocumented)
-    readonly expectedWidth: number;
-    // (undocumented)
-    readonly options?: FormatOptions | undefined;
-    // (undocumented)
-    readonly sample: Uint8Array;
-}
-
-// @public (undocumented)
-export type RenditionV01 = {
-    readonly id: Id;
-    readonly profile: "reference-rgba-v0";
-    readonly codec: "aval.reference-rgba";
-    readonly codedWidth: number;
-    readonly codedHeight: number;
-    readonly alphaLayout: {
-        readonly type: "straight-rgba-v0";
-    };
-    readonly capabilities: readonly [];
-} | {
-    readonly id: Id;
-    readonly profile: "avc-annexb-opaque-v0";
-    readonly codec: AvcCodecV01;
-    readonly codedWidth: number;
-    readonly codedHeight: number;
-    readonly alphaLayout: {
-        readonly type: "opaque-v0";
-        readonly colorRect: Rect;
-    };
-    readonly bitrate: BitrateV01;
-    readonly capabilities: readonly ["webcodecs", "webgl2"];
-} | {
-    readonly id: Id;
-    readonly profile: "avc-annexb-packed-alpha-v0";
-    readonly codec: AvcCodecV01;
-    readonly codedWidth: number;
-    readonly codedHeight: number;
-    readonly alphaLayout: {
-        readonly type: "stacked-v0";
-        readonly colorRect: Rect;
-        readonly alphaRect: Rect;
-    };
-    readonly bitrate: BitrateV01;
-    readonly capabilities: readonly ["webcodecs", "webgl2"];
-} | {
-    readonly id: Id;
-    readonly profile: "avc-annexb-opaque-v1";
-    readonly codec: AvcCodecV01;
-    readonly codedWidth: number;
-    readonly codedHeight: number;
-    readonly alphaLayout: {
-        readonly type: "opaque-v0";
-        readonly colorRect: Rect;
-    };
-    readonly bitrate: BitrateV01;
-    readonly capabilities: readonly ["webcodecs", "webgl2"];
-} | {
-    readonly id: Id;
-    readonly profile: "avc-annexb-packed-alpha-v1";
-    readonly codec: AvcCodecV01;
-    readonly codedWidth: number;
-    readonly codedHeight: number;
-    readonly alphaLayout: {
-        readonly type: "stacked-v0";
-        readonly colorRect: Rect;
-        readonly alphaRect: Rect;
-    };
-    readonly bitrate: BitrateV01;
-    readonly capabilities: readonly ["webcodecs", "webgl2"];
-};
-
-// @public (undocumented)
-export interface ResidencyEndpointV01 {
+export interface ResidencyEndpoint {
     // (undocumented)
     readonly frames: number;
     // (undocumented)
@@ -878,24 +1581,7 @@ export interface ResidencyEndpointV01 {
 export function resolveFormatBudgets(options?: FormatOptions): Readonly<FormatBudgets>;
 
 // @public (undocumented)
-export interface SampleDigestInputV01 {
-    // (undocumented)
-    readonly rendition: Id;
-    // (undocumented)
-    readonly sha256: Sha256Hex;
-}
-
-// @public (undocumented)
-export interface SampleSpanV01 {
-    // (undocumented)
-    readonly rendition: Id;
-    // (undocumented)
-    readonly sampleCount: number;
-    // (undocumented)
-    readonly sampleStart: number;
-    // (undocumented)
-    readonly sha256: Sha256Hex;
-}
+export function sameH265ProfileTierLevel(left: H265ProfileTierLevel, right: H265ProfileTierLevel): boolean;
 
 // @public
 export function serializeCanonicalJson(value: unknown, options?: FormatOptions): Uint8Array;
@@ -909,8 +1595,14 @@ export const SHA256_HEX_PATTERN: Readonly<RegExp>;
 // @public (undocumented)
 export type Sha256Hex = string;
 
+// @public
+export function splitH265AnnexBAccessUnit(bytes: Uint8Array, path?: string, options?: H265AnnexBOptions): readonly H265AnnexBNalUnit[];
+
+// @public
+export function splitVp9Superframe(bytes: Uint8Array, path?: string): readonly Uint8Array[];
+
 // @public (undocumented)
-export type StartV01 = {
+export type Start = {
     readonly type: "portal";
     readonly sourcePort: Id;
     readonly targetPort: Id;
@@ -926,7 +1618,7 @@ export type StartV01 = {
 };
 
 // @public (undocumented)
-export interface StateV01 {
+export interface State {
     // (undocumented)
     readonly bodyUnit: Id;
     // (undocumented)
@@ -936,7 +1628,7 @@ export interface StateV01 {
 }
 
 // @public (undocumented)
-export type TransitionV01 = {
+export type Transition = {
     readonly kind: "locked";
     readonly unit: Id;
 } | {
@@ -947,52 +1639,68 @@ export type TransitionV01 = {
 };
 
 // @public (undocumented)
-export type TriggerV01 = {
+export type Trigger = {
     readonly type: "event";
     readonly name: Id;
 } | {
     readonly type: "completion";
 };
 
+// Warning: (ae-forgotten-export) The symbol "UnitBase" needs to be exported by the entry point index.d.ts
+//
+// @public (undocumented)
+export type Unit = (UnitBase & {
+    readonly kind: "body";
+    readonly playback: "loop" | "finite";
+    readonly ports: readonly Port[];
+}) | (UnitBase & {
+    readonly kind: "bridge";
+}) | (UnitBase & {
+    readonly kind: "reversible";
+    readonly residency: {
+        readonly endpoints: readonly [ResidencyEndpoint, ResidencyEndpoint];
+    };
+}) | (UnitBase & {
+    readonly kind: "one-shot";
+});
+
 // @public (undocumented)
 export interface UnitBlobRange extends ByteRange {
     // (undocumented)
+    readonly chunkCount: number;
+    // (undocumented)
+    readonly chunkStart: number;
+    // (undocumented)
+    readonly frameCount: number;
+    // (undocumented)
     readonly rendition: Id;
-    // (undocumented)
-    readonly sampleCount: number;
-    // (undocumented)
-    readonly sampleStart: number;
     // (undocumented)
     readonly sha256: Sha256Hex;
     // (undocumented)
     readonly unit: Id;
 }
 
+// @public
+export interface UnitChunkSpan {
+    // (undocumented)
+    readonly chunkCount: number;
+    // (undocumented)
+    readonly chunkStart: number;
+    // (undocumented)
+    readonly frameCount: number;
+    // (undocumented)
+    readonly rendition: Id;
+    // (undocumented)
+    readonly sha256: Sha256Hex;
+}
+
 // Warning: (ae-forgotten-export) The symbol "UnitInputOf" needs to be exported by the entry point index.d.ts
 //
 // @public (undocumented)
-export type UnitInputV01 = UnitInputOf<"body"> | UnitInputOf<"bridge"> | UnitInputOf<"reversible"> | UnitInputOf<"one-shot">;
+export type UnitInput = UnitInputOf<"body"> | UnitInputOf<"bridge"> | UnitInputOf<"reversible"> | UnitInputOf<"one-shot">;
 
-// Warning: (ae-forgotten-export) The symbol "UnitBaseV01" needs to be exported by the entry point index.d.ts
-//
-// @public (undocumented)
-export type UnitV01 = (UnitBaseV01 & {
-    readonly kind: "body";
-    readonly playback: "loop" | "finite";
-    readonly ports: readonly PortV01[];
-}) | (UnitBaseV01 & {
-    readonly kind: "bridge";
-}) | (UnitBaseV01 & {
-    readonly kind: "reversible";
-    readonly residency: {
-        readonly endpoints: readonly [
-        ResidencyEndpointV01,
-        ResidencyEndpointV01
-        ];
-    };
-}) | (UnitBaseV01 & {
-    readonly kind: "one-shot";
-});
+// @public
+export function validateCanonicalChunkSpans(plan: Readonly<CanonicalChunkPlan>, units: readonly Pick<Unit, "chunks">[], code?: Extract<FormatErrorCode, "MANIFEST_INVALID" | "INDEX_INVALID">): void;
 
 // @public
 export function validateCompleteAsset(input: {
@@ -1012,11 +1720,200 @@ export interface ValidatedAssetLayout {
 // @public (undocumented)
 export function validatePngProfile(input: PngProfileValidationInput): PngDecodePlan;
 
-// @public
-export function validateReferenceFrame(input: ReferenceFrameValidationInput): Readonly<ReferenceFrameDescriptor>;
+// @public (undocumented)
+export type VideoBitDepth = 8 | 10;
+
+// @public (undocumented)
+export type VideoBitstream = "annex-b" | "frame" | "low-overhead";
+
+// @public (undocumented)
+export type VideoCodec = "h264" | "h265" | "vp9" | "av1";
+
+// @public (undocumented)
+export type VideoLayout = "opaque" | "packed-alpha";
+
+// @public (undocumented)
+export interface VideoRenditionGeometry {
+    // (undocumented)
+    readonly codedHeight: number;
+    // (undocumented)
+    readonly codedRgbaBytes: number;
+    // (undocumented)
+    readonly codedWidth: number;
+    // (undocumented)
+    readonly decodedRgbaBytes: number;
+    // (undocumented)
+    readonly decodedStorageRect: Rect;
+    // (undocumented)
+    readonly layout: VideoLayout;
+    // (undocumented)
+    readonly visibleAlphaRect?: Rect;
+    // (undocumented)
+    readonly visibleColorArea: number;
+    // (undocumented)
+    readonly visibleColorRect: Rect;
+}
+
+// @public (undocumented)
+export interface VideoRenditionGeometryInput {
+    // (undocumented)
+    readonly canvasHeight: number;
+    // (undocumented)
+    readonly canvasWidth: number;
+    // (undocumented)
+    readonly layout: VideoLayout;
+    // (undocumented)
+    readonly storage: VideoStoragePolicy;
+    // (undocumented)
+    readonly visibleHeight: number;
+    // (undocumented)
+    readonly visibleWidth: number;
+}
+
+// @public (undocumented)
+export interface VideoStoragePolicy {
+    readonly heightAlignment: number;
+    readonly widthAlignment: number;
+}
 
 // @public
-export function writeCanonicalAsset(input: CanonicalAssetInputV01, options?: FormatOptions): Uint8Array;
+export class Vp9BitReader {
+    constructor(bytes: Uint8Array, path: string);
+    // (undocumented)
+    get bitOffset(): number;
+    // (undocumented)
+    get bitsRemaining(): number;
+    // (undocumented)
+    readBit(label: string): boolean;
+    // (undocumented)
+    readBits(width: number, label: string): number;
+    // (undocumented)
+    readByte(label: string): number;
+}
+
+// @public (undocumented)
+export type Vp9Codec = `vp09.00.${Vp9Level}.08.01.01.01.01.00`;
+
+// @public (undocumented)
+export interface Vp9ColorConfig {
+    // (undocumented)
+    readonly bitDepth: 8;
+    // (undocumented)
+    readonly chromaSubsampling: 1;
+    // (undocumented)
+    readonly colorPrimaries: 1;
+    // (undocumented)
+    readonly fullRange: false;
+    // (undocumented)
+    readonly matrixCoefficients: 1;
+    // (undocumented)
+    readonly transferCharacteristics: 1;
+}
+
+// @public (undocumented)
+export interface Vp9FrameHeader {
+    // (undocumented)
+    readonly color?: Vp9ColorConfig;
+    // (undocumented)
+    readonly displayedFrameCount: 0 | 1;
+    // (undocumented)
+    readonly errorResilient: boolean;
+    // (undocumented)
+    readonly height?: number;
+    // (undocumented)
+    readonly key: boolean;
+    // (undocumented)
+    readonly profile: 0;
+    // (undocumented)
+    readonly renderHeight?: number;
+    // (undocumented)
+    readonly renderWidth?: number;
+    // (undocumented)
+    readonly showExistingFrame: boolean;
+    // (undocumented)
+    readonly showFrame: boolean;
+    // (undocumented)
+    readonly width?: number;
+}
+
+// @public (undocumented)
+export type Vp9Level = "10" | "11" | "20" | "21" | "30" | "31" | "40" | "41" | "50" | "51" | "52" | "60" | "61" | "62";
+
+// @public (undocumented)
+export interface Vp9PacketInput {
+    // (undocumented)
+    readonly bytes: Uint8Array;
+    // (undocumented)
+    readonly key: boolean;
+    // (undocumented)
+    readonly timestamp: number;
+}
+
+// @public (undocumented)
+export interface Vp9PacketInspection {
+    // (undocumented)
+    readonly chunkType: "key" | "delta";
+    // (undocumented)
+    readonly codedFrames: readonly Vp9FrameHeader[];
+    // (undocumented)
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly timestamp: number;
+}
+
+// @public (undocumented)
+export interface Vp9RenditionInspection {
+    // (undocumented)
+    readonly bitDepth: 8;
+    // (undocumented)
+    readonly codec: Vp9Codec;
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly units: readonly Vp9UnitInspection[];
+    // (undocumented)
+    readonly width: number;
+}
+
+// @public (undocumented)
+export interface Vp9RenditionInspectionInput {
+    // (undocumented)
+    readonly averageBitrate: number;
+    // (undocumented)
+    readonly frameRate: {
+        readonly numerator: number;
+        readonly denominator: number;
+    };
+    // (undocumented)
+    readonly height: number;
+    // (undocumented)
+    readonly units: readonly Vp9UnitInput[];
+    // (undocumented)
+    readonly width: number;
+}
+
+// @public (undocumented)
+export interface Vp9UnitInput {
+    // (undocumented)
+    readonly expectedDisplayedFrames: number;
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly packets: readonly Vp9PacketInput[];
+}
+
+// @public (undocumented)
+export interface Vp9UnitInspection {
+    // (undocumented)
+    readonly displayedFrameCount: number;
+    // (undocumented)
+    readonly id: string;
+    // (undocumented)
+    readonly packets: readonly Vp9PacketInspection[];
+}
+
+// @public
+export function writeCanonicalAsset(input: CanonicalAssetInput, options?: FormatOptions): Uint8Array;
 
 // (No @packageDocumentation comment for this package)
 

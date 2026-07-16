@@ -1,5 +1,5 @@
 import type {
-  BindingV01,
+  Binding,
   RuntimeReadiness,
   StaticReason
 } from "@pixel-point/aval-player-web";
@@ -40,7 +40,7 @@ export interface ElementDiagnosticState {
   readonly effectivelyVisible: boolean;
   readonly stateNames: readonly string[];
   readonly eventNames: readonly string[];
-  readonly inputBindings: readonly Readonly<BindingV01>[];
+  readonly inputBindings: readonly Readonly<Binding>[];
   readonly configuredMotion: AvalMotion;
   readonly hostReducedMotion: boolean | null;
   readonly autoplay: AvalAutoplay;
@@ -129,7 +129,8 @@ export function createElementDiagnostics(
     outstanding,
     runtime: Object.freeze({
       selectedRendition: runtime?.selectedRendition ?? null,
-      selectedProfile: runtime?.selectedProfile ?? null,
+      selectedCodec: runtime?.selectedCodec ?? null,
+      selectedBitDepth: runtime?.selectedBitDepth ?? null,
       transportMode: runtime?.transportMode ?? null,
       declaredFileBytes: runtime?.declaredFileBytes ?? 0,
       metadataBytes: runtime?.metadataBytes ?? 0,

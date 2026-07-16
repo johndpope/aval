@@ -1,8 +1,7 @@
 export type CompilerErrorCode =
   | "ALPHA_POLICY_REJECTED"
-  | "ALPHA_QUALITY_REJECTED"
   | "ASSET_INVALID"
-  | "AVC_PROFILE_INVALID"
+  | "H264_BITSTREAM_INVALID"
   | "CANCELLED"
   | "CLI_USAGE"
   | "CONTINUITY_FAILED"
@@ -12,7 +11,6 @@ export type CompilerErrorCode =
   | "FRAME_RANGE_INVALID"
   | "INPUT_INVALID"
   | "IO_FAILED"
-  | "OPAQUE_ONLY_M5"
   | "OUTPUT_LIMIT"
   | "PATH_OUTSIDE_ROOT"
   | "PROCESS_TIMEOUT"
@@ -37,7 +35,7 @@ export interface CompilerErrorDetails {
   readonly value?: number;
   readonly limit?: number;
   readonly policy?: "auto" | "opaque" | "packed";
-  readonly phase?: "classification" | "packing" | "quality";
+  readonly phase?: "classification" | "encode" | "pixel-pipeline";
   readonly committed?: boolean;
 }
 
@@ -61,7 +59,7 @@ export class CompilerError extends Error {
   public declare readonly value?: number;
   public declare readonly limit?: number;
   public declare readonly policy?: "auto" | "opaque" | "packed";
-  public declare readonly phase?: "classification" | "packing" | "quality";
+  public declare readonly phase?: "classification" | "encode" | "pixel-pipeline";
   public declare readonly committed?: boolean;
 
   public constructor(
@@ -127,7 +125,7 @@ export interface CompilerDiagnostic {
   readonly value?: number;
   readonly limit?: number;
   readonly policy?: "auto" | "opaque" | "packed";
-  readonly phase?: "classification" | "packing" | "quality";
+  readonly phase?: "classification" | "encode" | "pixel-pipeline";
   readonly committed?: boolean;
 }
 

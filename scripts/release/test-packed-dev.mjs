@@ -42,7 +42,7 @@ let browser;
 let viteServer;
 
 try {
-  await cp(resolve(root, "fixtures/starter/m8-idle-hover"), project, { recursive: true });
+  await cp(resolve(root, "fixtures/starter/v1-idle-hover"), project, { recursive: true });
   run(
     process.platform === "win32" ? "npm.cmd" : "npm",
     [

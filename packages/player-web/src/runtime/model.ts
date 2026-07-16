@@ -53,7 +53,7 @@ export const RUNTIME_READINESS_LADDER = Object.freeze({
 
 export const STATIC_REASONS = Object.freeze([
   "reduced-motion",
-  "no-avc-rendition",
+  "no-video-rendition",
   "worker-unavailable",
   "renderer-unavailable",
   "codec-unsupported",
@@ -70,7 +70,7 @@ export type StaticReason = (typeof STATIC_REASONS)[number];
 
 export type StaticReasonClassification = "transient" | "sticky";
 
-/** The only M7 reasons that may automatically attempt fresh animation readiness. */
+/** The only reasons that may automatically attempt fresh animation readiness. */
 export const TRANSIENT_STATIC_REASONS = Object.freeze([
   "visibility-suspended",
   "decoder-queued"
@@ -80,7 +80,7 @@ export const STATIC_REASON_CLASSIFICATIONS: Readonly<
   Record<StaticReason, StaticReasonClassification>
 > = Object.freeze({
   "reduced-motion": "sticky",
-  "no-avc-rendition": "sticky",
+  "no-video-rendition": "sticky",
   "worker-unavailable": "sticky",
   "renderer-unavailable": "sticky",
   "codec-unsupported": "sticky",
@@ -254,7 +254,7 @@ export interface RuntimeByteLeaseSnapshot {
   readonly released: boolean;
 }
 
-/** Opaque manager-issued byte ownership; hosts cannot construct a valid lease. */
+/** Manager-issued byte ownership; hosts cannot construct a valid lease. */
 export interface RuntimeByteLease {
   readonly [runtimeByteLeaseBrand]: true;
   snapshot(): Readonly<RuntimeByteLeaseSnapshot>;
@@ -598,7 +598,7 @@ export interface StaticReasonSummaryInput {
   /** False means failStatic: no successful static result may be summarized. */
   readonly staticReady: boolean;
   readonly deadlineExpired: boolean;
-  readonly hasAvcRendition: boolean;
+  readonly hasVideoRendition: boolean;
   readonly workerAvailable: boolean;
   readonly rendererAvailable: boolean;
   readonly candidateFailures: readonly Readonly<RuntimeFailure>[];
@@ -620,8 +620,8 @@ export function summarizeStaticReason(
   if (input.deadlineExpired) {
     return "preparation-timeout";
   }
-  if (!input.hasAvcRendition) {
-    return "no-avc-rendition";
+  if (!input.hasVideoRendition) {
+    return "no-video-rendition";
   }
   if (!input.workerAvailable) {
     return "worker-unavailable";

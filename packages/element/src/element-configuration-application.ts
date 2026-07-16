@@ -24,7 +24,11 @@ export class ElementConfigurationApplication {
   #identityInvalidated = false;
 
   public constructor(desired: ElementDesiredState) { this.#desired = desired; }
-  public markIdentityInvalidated(): void { this.#identityInvalidated = true; }
+  public markIdentityInvalidated(): boolean {
+    if (this.#identityInvalidated) return false;
+    this.#identityInvalidated = true;
+    return true;
+  }
 
   public inspect(
     read: Readonly<ElementConfigurationRead>

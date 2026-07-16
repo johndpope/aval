@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import * as certification from "../../packages/certification/src/index.js";
 import { loadCandidateFixtureAuthority } from "../../scripts/certification/candidate-fixtures.mjs";
 
-const fixtureSource = resolve("fixtures/conformance/m8/user-states-all-routes-alpha.avl");
+const fixtureSource = resolve("fixtures/conformance/v1/h264.avl");
 
 describe("candidate fixture authority stable reads", () => {
   it("rejects a symlink even when its target bytes match the manifest", async () => {
