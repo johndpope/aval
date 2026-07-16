@@ -133,21 +133,16 @@ npm run build
 npm run test:browser:reference
 ```
 
-<<<<<<< HEAD
 Browser animation is capability-probed. Unsupported WebCodecs/WebGL/AVC
 configurations leave the element's optional host-owned fallback slot visible.
 
 ## TODO
 
-- Add support for H.265, AV1, and VP9 codecs to work with the .avl container.  
 - React dedicated component and API.  
-- Safari support.  
 - More browser tests.  
 - Render some cool stuff in 3D for the demo instead of that AI-generated loop that I was not able to make look the way I wanted to actually showcase the uninterruptible animation.
 - Runtime bundle size optimization
 
-=======
->>>>>>> fa8dda2 (feat: support of h265, av1, vp9 codex inside avl container)
 ## Documentation
 
 - [Quick start](docs/quick-start.md)
