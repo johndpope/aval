@@ -14,6 +14,10 @@
 /// `"fallback"` literal on the static variant).
 library;
 
+/// Maximum retained bounded-trace records (`RUNTIME_TRACE_CAPACITY`,
+/// model.ts:387).
+const int runtimeTraceCapacity = 512;
+
 /// Stable authored identity. Equal pixels never merge different keys.
 class RuntimeFrameKey {
   const RuntimeFrameKey({

@@ -21,6 +21,33 @@ class DecoderWorkerWaitOptions {
   final int? timeoutMs;
 }
 
+/// Base for the decoder-worker error taxonomy, carrying the JS `Error.name`
+/// the path-scheduler's failure classification reads
+/// (`path-scheduler.ts:794`). Partial: only [DecoderWorkerWatchdogError] — the
+/// one the scheduler and its tests observe — is ported from
+/// `decoder-worker/client-support.ts:45-83`; the remaining error classes remain
+/// a later phase's responsibility.
+abstract class DecoderWorkerError implements Exception {
+  DecoderWorkerError(this.message);
+
+  final String message;
+
+  /// Mirrors JS `Error.name`.
+  String get name;
+
+  @override
+  String toString() => '$name: $message';
+}
+
+/// Raised when the decode client's frame watchdog fires
+/// (`client-support.ts:78`).
+class DecoderWorkerWatchdogError extends DecoderWorkerError {
+  DecoderWorkerWatchdogError(super.message);
+
+  @override
+  String get name => 'DecoderWorkerWatchdogError';
+}
+
 /// A decoded frame the client hands to the presentation ring.
 ///
 /// The concrete implementation (the TS `ManagedDecoderWorkerFrameImpl`) is

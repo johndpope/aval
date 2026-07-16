@@ -366,4 +366,55 @@ class PathSchedulerSnapshot extends RuntimeSchedulerSnapshot {
   final SourceBodyCursor? submittedSource;
   final SourceBodyCursor? displayedSource;
   final SourceBodyCursor? unresolvedMaximumSubmitted;
+
+  // Value equality (extension over the frozen surface): the ported
+  // `path-scheduler.test.ts` compares whole snapshots structurally
+  // (`toEqual(before)`), which the TS `Object.freeze`d plain object supports by
+  // deep comparison. `RuntimeMediaCursor`/`SourceBodyCursor` already define
+  // value equality, so a field-wise comparison here is exact.
+  @override
+  bool operator ==(Object other) =>
+      other is PathSchedulerSnapshot &&
+      other.generation == generation &&
+      other.activePath == activePath &&
+      other.sourceCursor == sourceCursor &&
+      other.submittedCursor == submittedCursor &&
+      other.decodedCursor == decodedCursor &&
+      other.displayedCursor == displayedCursor &&
+      other.ringSize == ringSize &&
+      other.ringCapacity == ringCapacity &&
+      other.smoothSession == smoothSession &&
+      other.status == status &&
+      other.pendingEdge == pendingEdge &&
+      other.expectedOutputs == expectedOutputs &&
+      other.residentFrames == residentFrames &&
+      other.discardedDependencyFrames == discardedDependencyFrames &&
+      other.staleFrames == staleFrames &&
+      other.nextDecodeOrdinal == nextDecodeOrdinal &&
+      other.submittedSource == submittedSource &&
+      other.displayedSource == displayedSource &&
+      other.unresolvedMaximumSubmitted == unresolvedMaximumSubmitted;
+
+  @override
+  int get hashCode => Object.hashAll(<Object?>[
+        generation,
+        activePath,
+        sourceCursor,
+        submittedCursor,
+        decodedCursor,
+        displayedCursor,
+        ringSize,
+        ringCapacity,
+        smoothSession,
+        status,
+        pendingEdge,
+        expectedOutputs,
+        residentFrames,
+        discardedDependencyFrames,
+        staleFrames,
+        nextDecodeOrdinal,
+        submittedSource,
+        displayedSource,
+        unresolvedMaximumSubmitted,
+      ]);
 }
