@@ -1,0 +1,17 @@
+name: aval_format
+description: >
+  Canonical parser, validator, and types for AVAL binary assets. Pure Dart
+  port of @pixel-point/aval-format with full behavioral parity.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  aval_graph:
+    path: ../aval_graph
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0

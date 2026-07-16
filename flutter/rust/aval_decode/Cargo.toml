@@ -1,0 +1,32 @@
+[package]
+name = "aval_decode"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "BSD-2-Clause"
+description = """
+AVAL AVC (H.264 Constrained Baseline) decode core for the Flutter port: wraps \
+the openh264 crate, converts decoded I420 to RGBA8888 with BT.709 limited-range \
+coefficients, ports the web player's frame-credit ledger, and exposes a C ABI \
+for Dart FFI. See flutter/ARCHITECTURE.md sections 2-4 and 6.
+"""
+publish = false
+
+# cdylib    -> native shared library for platform FFI (iOS/Android/macOS/Windows/Linux via dart:ffi)
+# staticlib -> static linking option for platforms that prefer it (e.g. iOS)
+# rlib      -> ordinary Rust library, so this crate can also be used/tested as a normal Rust dependency
+[lib]
+name = "aval_decode"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+# Pinned to the exact version whose declared MSRV (1.88) matches the toolchain available in
+# this environment (`rustc 1.88.0`). Newer 0.9.x releases pull in `wide`/`safe_arch` versions
+# that require rustc 1.89. Revisit this pin when the build toolchain is upgraded.
+openh264 = "=0.9.1"
+
+[dev-dependencies]
+# (none) - unit/integration tests use only std, plus the fixture file under tests/fixtures.
+
+[profile.release]
+panic = "unwind"    # keep unwind so the FFI boundary can catch_unwind rather than abort the host process

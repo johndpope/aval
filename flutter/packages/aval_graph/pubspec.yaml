@@ -1,0 +1,15 @@
+name: aval_graph
+description: >
+  Deterministic state graph for AVAL assets. Pure-Dart port of
+  @pixel-point/aval-graph with full behavioral parity.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies: {}
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0
