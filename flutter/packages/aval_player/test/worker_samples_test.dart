@@ -57,7 +57,7 @@ void main() {
     });
 
     test('creates one closed batch across complete unit boundaries', () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
 
       final batch = fixture.factory.createBatch(CreateWorkerSampleBatchInput(
         frames: [frame('body', 0), frame('body', 1), frame('intro', 0)],
@@ -87,7 +87,7 @@ void main() {
 
     test('continues a split occurrence and crosses into a new loop instance',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
 
       final first = fixture.factory.createBatch(CreateWorkerSampleBatchInput(
         frames: [frame('body', 0)],
@@ -112,7 +112,7 @@ void main() {
     test(
         'allocates one distinct exact-length buffer and preserves catalog bytes',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       final expected = [0, 1]
           .map((localFrame) => Uint8List.view(
               fixture.catalog.copySample('opaque', 'body', localFrame)))
@@ -144,7 +144,7 @@ void main() {
     test(
         'claims exact transfer bytes before copying and releases after transfer',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       final events = <String>[];
       var activeBytes = 0;
       var releases = 0;
@@ -192,7 +192,7 @@ void main() {
 
     test('rejects a transfer one byte over budget before any sample allocation',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       var copyCalls = 0;
       final expectedBytes =
           fixture.catalog.records.require('opaque', 'body', 0).range.length +
@@ -238,7 +238,7 @@ void main() {
     });
 
     test('releases a transfer claim when a later sample copy fails', () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       var activeClaims = 0;
       final factory = WorkerSampleFactory(WorkerSampleFactoryOptions(
         catalog: _CatalogView(
@@ -271,7 +271,7 @@ void main() {
 
     test('validates the complete batch before copying or advancing the timeline',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       var copyCalls = 0;
       final factory = WorkerSampleFactory(WorkerSampleFactoryOptions(
         catalog: _CatalogView(
@@ -316,7 +316,7 @@ void main() {
 
     test('does not advance the timeline when a later payload allocation fails',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       var copyCalls = 0;
       final factory = WorkerSampleFactory(WorkerSampleFactoryOptions(
         catalog: _CatalogView(
@@ -352,7 +352,7 @@ void main() {
     });
 
     test('enforces pending and outstanding credit before any payload copy', () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       var copyCalls = 0;
       final factory = WorkerSampleFactory(WorkerSampleFactoryOptions(
         catalog: _CatalogView(
@@ -404,7 +404,7 @@ void main() {
     });
 
     test('rejects hostile record lengths before copying sample bytes', () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       final firstRecord = fixture.catalog.records.require('opaque', 'body', 0);
       var copyCalls = 0;
       final hostile = _CatalogView(
@@ -461,7 +461,7 @@ void main() {
     test(
         'resets occurrence identity but not ordinal or time on generation change',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       final first = fixture.factory.createBatch(CreateWorkerSampleBatchInput(
         frames: [frame('body', 0), frame('body', 1)],
         pendingSamples: 0,
@@ -501,7 +501,7 @@ void main() {
 
     test('rejects a copied buffer whose runtime length differs from its record',
         () {
-      final fixture = createFixture();
+      final fixture = _makeFixture();
       final factory = WorkerSampleFactory(WorkerSampleFactoryOptions(
         catalog: _CatalogView(
           fixture.catalog,
@@ -537,7 +537,7 @@ class _Fixture {
   final WorkerSampleFactory factory;
 }
 
-_Fixture createFixture() {
+_Fixture _makeFixture() {
   final catalog = installRuntimeAssetCatalog(createOpaqueTestAsset());
   final timeline = DecodeTimeline(RationalFrameRate(
     numerator: catalog.manifest.frameRate.numerator,
