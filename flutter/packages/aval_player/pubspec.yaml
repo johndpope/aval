@@ -1,0 +1,20 @@
+name: aval_player
+description: >
+  Path scheduler and decode/render adapter interfaces for the AVAL player
+  runtime. Pure-Dart port of @pixel-point/aval-player-web's runtime scheduling
+  core, with full behavioral parity. No Flutter dependency.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  aval_graph:
+    path: ../aval_graph
+  aval_format:
+    path: ../aval_format
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^4.0.0
