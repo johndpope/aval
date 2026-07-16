@@ -9,10 +9,14 @@
 /// later phases.
 library aval_player;
 
+export 'src/asset_catalog.dart';
+export 'src/asset_catalog_index.dart';
+export 'src/borrowed_avc_inspection.dart';
 export 'src/decode_timeline.dart';
 export 'src/decoder_worker/client_support.dart';
 export 'src/decoder_worker/protocol.dart';
 export 'src/edge_lead.dart';
+export 'src/errors.dart';
 export 'src/model.dart';
 export 'src/path_scheduler.dart';
 export 'src/path_scheduler_cursor_ledger.dart';
@@ -31,4 +35,5 @@ export 'src/platform.dart';
 export 'src/presentation_ring.dart';
 export 'src/rational_time.dart';
 export 'src/submission_horizon.dart';
+export 'src/verified_blob_store.dart';
 export 'src/worker_samples.dart';

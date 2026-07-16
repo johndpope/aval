@@ -176,3 +176,63 @@ class RuntimeSchedulerSnapshot {
   final int ringCapacity;
   final bool smoothSession;
 }
+
+/// Transport mode of a catalog's byte residency (`RuntimeTransportMode`,
+/// model.ts:119). `range` = sparse digest-verified blobs; `full` = complete
+/// owned/persistent bytes.
+enum RuntimeTransportMode {
+  range('range'),
+  full('full');
+
+  const RuntimeTransportMode(this.wireValue);
+
+  final String wireValue;
+}
+
+/// Residency state of one unit blob (`RuntimeBlobResidencyState`, model.ts:149).
+enum RuntimeBlobResidencyState {
+  absent('absent'),
+  loading('loading'),
+  verified('verified');
+
+  const RuntimeBlobResidencyState(this.wireValue);
+
+  final String wireValue;
+}
+
+/// Aggregate unit-blob residency counts (`RuntimeBlobResidencySnapshot`).
+class RuntimeBlobResidencySnapshot {
+  const RuntimeBlobResidencySnapshot({
+    required this.total,
+    required this.absent,
+    required this.loading,
+    required this.verified,
+    required this.verifiedBytes,
+  });
+
+  final int total;
+  final int absent;
+  final int loading;
+  final int verified;
+  final int verifiedBytes;
+}
+
+/// Sanitized catalog observation: it deliberately carries no URL or ETag
+/// (`RuntimeAssetResidencySnapshot`, model.ts:161).
+class RuntimeAssetResidencySnapshot {
+  const RuntimeAssetResidencySnapshot({
+    required this.generation,
+    required this.mode,
+    required this.declaredFileBytes,
+    required this.metadataBytes,
+    required this.verifiedPayloadBytes,
+    required this.unitBlobs,
+  });
+
+  final int generation;
+  final RuntimeTransportMode mode;
+  final int declaredFileBytes;
+  final int metadataBytes;
+  final int verifiedPayloadBytes;
+  final RuntimeBlobResidencySnapshot unitBlobs;
+}

@@ -14,6 +14,20 @@ library;
 
 import 'dart:typed_data';
 
+import '../rational_time.dart' show maxSafeInteger;
+
+/// Absolute decoder-worker ceilings (`DECODER_WORKER_HARD_LIMITS`,
+/// decoder-worker/protocol.ts). Ported as static consts because the TS source
+/// is a frozen literal object; [maxSampleBytes]/[maxDecodedBytes] are
+/// `Number.MAX_SAFE_INTEGER`, i.e. [maxSafeInteger] here.
+abstract final class DecoderWorkerHardLimits {
+  static const int maxDecodeQueueSize = 12;
+  static const int maxPendingSamples = 24;
+  static const int maxOutstandingFrames = 12;
+  static const int maxSampleBytes = maxSafeInteger;
+  static const int maxDecodedBytes = maxSafeInteger;
+}
+
 /// Access-unit chunk classification (`EncodedVideoChunkType`).
 enum EncodedVideoChunkType {
   key('key'),
