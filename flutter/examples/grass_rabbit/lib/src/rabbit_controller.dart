@@ -119,11 +119,13 @@ class RabbitController extends ChangeNotifier {
       frameRateNumerator = manifest.frameRate.numerator;
       frameRateDenominator = manifest.frameRate.denominator;
 
-      // Coded surface dims come from the rendition (this asset is opaque AVC,
-      // 1280x720 — no packed-alpha pane to unpack; see README).
+      // openh264 yields the SPS-cropped visible picture (colorRect), not the
+      // macroblock-aligned coded surface (e.g. 640x360 vs 640x368). Configure
+      // against the visible size so geometry validation matches decoder output.
       final rendition = manifest.renditions.first;
+      final visible = rendition.alphaLayout.colorRect;
       await _decodeAllUnits(
-          bytes, manifest, parsed.records, rendition.codedWidth, rendition.codedHeight);
+          bytes, manifest, parsed.records, visible.width, visible.height);
 
       _graph = parsed.graph;
       engine.install(parsed.graph);
@@ -178,22 +180,33 @@ class RabbitController extends ChangeNotifier {
             record.byteOffset,
             record.byteOffset + record.byteLength,
           );
+          // presentationTimestamp is the unit-local display index (B-frame reorder).
+          final presentationIndex = record.presentationTimestamp;
           final frameId = session.submit(
-            ordinal: i,
-            timestamp: i, // strictly increasing; units are arbitrary here
-            duration: 1,
-            unitFrame: i,
+            decodeIndex: i,
+            unitChunkCount: unitRecords.length,
             unitFrameCount: unit.frameCount,
-            isKey: record.randomAccess,
+            presentationTimestamp: presentationIndex,
+            duration: record.duration == 0 ? 1 : record.duration,
+            randomAccess: record.randomAccess,
             data: annexB,
             unitId: unit.id,
+            presentationIndices: <int>[presentationIndex],
+            presentationOrdinalBase: 0,
+            displayedFrameCount: record.displayedFrameCount == 0
+                ? 1
+                : record.displayedFrameCount,
           );
           if (frameId == null) continue; // decoder priming (not expected here)
-          final copy = session.takeFrame<Uint8List>(
-            (view) => Uint8List.fromList(view.rgba),
+          final image = session.takeFrame<Future<ui.Image>>(
+            (view) => _rgbaToImage(
+              Uint8List.fromList(view.rgba),
+              view.width,
+              view.height,
+            ),
           );
-          if (copy == null) continue;
-          frames.add(await _rgbaToImage(copy, codedWidth, codedHeight));
+          if (image == null) continue;
+          frames.add(await image);
         }
       } finally {
         session.disposeSession();

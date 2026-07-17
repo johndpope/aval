@@ -1,293 +1,270 @@
-// Phase 1 integration checkpoint (ARCHITECTURE.md §7): prove the ported Dart
-// parser produces, for the real `examples/grass-rabbit/public/grass-rabbit.avl`
-// asset, exactly the structure the TypeScript build recorded in its
-// `.avl.build.json` ground-truth sidecar, and that the resulting graph installs
-// into `aval_graph`'s `MotionGraphEngine`.
+// Format-1.0 integration checkpoint: prove the ported Dart parser produces,
+// for the real `examples/grass-rabbit/public/grass-rabbit/h264.avl` asset, the
+// exact structure authored in `motion.json`, and that the resulting graph
+// installs into `aval_graph`'s `MotionGraphEngine`.
 //
-// Unlike the other tests in this directory, which build synthetic fixtures, this
-// one reads the shipped example asset end-to-end. The `.avl` and its
-// `.build.json` live outside the package (in `examples/`), so the fixtures are
-// located by walking up from the current directory to the repo root — which
-// works whether the suite is launched with `dart test` or `flutter test` from
-// the package directory (the documented run convention).
+// Unlike the other tests in this directory, which build synthetic fixtures,
+// this one reads the shipped example asset end-to-end. The `.avl` lives outside
+// the package (in `examples/`), so the asset is located by walking up from the
+// current directory to the repo root — which works whether the suite is
+// launched with `dart test` or `flutter test` from the package directory (the
+// documented run convention).
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:aval_format/aval_format.dart';
-import 'package:aval_format/src/manifest_json.dart' show compiledManifestToJson;
 import 'package:aval_graph/aval_graph.dart';
 import 'package:test/test.dart';
 
-/// Resolves a path expressed relative to the repository root by walking up from
-/// [Directory.current] until the grass-rabbit asset is found. Returns the repo
-/// root directory.
+/// Resolves a path relative to the repository root by walking up from
+/// [Directory.current] until the grass-rabbit 1.0 asset is found.
 Directory _repoRoot() {
   var dir = Directory.current.absolute;
   for (var i = 0; i < 12; i += 1) {
     final marker =
-        File('${dir.path}/examples/grass-rabbit/public/grass-rabbit.avl');
+        File('${dir.path}/examples/grass-rabbit/public/grass-rabbit/h264.avl');
     if (marker.existsSync()) return dir;
     final parent = dir.parent;
     if (parent.path == dir.path) break;
     dir = parent;
   }
   throw StateError(
-    'could not locate the aval repository root (examples/grass-rabbit/public/'
-    'grass-rabbit.avl) from ${Directory.current.path}',
+    'could not locate the aval repository root '
+    '(examples/grass-rabbit/public/grass-rabbit/h264.avl) '
+    'from ${Directory.current.path}',
   );
 }
 
 File _repoFile(String relative) => File('${_repoRoot().path}/$relative');
 
-/// Structural deep-equality over the plain JSON tree shapes produced by both
-/// `compiledManifestToJson` (Map/List/scalars) and `jsonDecode`.
-bool _deepEquals(Object? a, Object? b) {
-  if (a is Map && b is Map) {
-    if (a.length != b.length) return false;
-    for (final key in a.keys) {
-      if (!b.containsKey(key)) return false;
-      if (!_deepEquals(a[key], b[key])) return false;
-    }
-    return true;
-  }
-  if (a is List && b is List) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i += 1) {
-      if (!_deepEquals(a[i], b[i])) return false;
-    }
-    return true;
-  }
-  return a == b;
-}
-
-/// Returns a copy of a manifest-JSON map with every unit's sample spans reduced
-/// to the `{rendition, sha256}` shape that `build.json` records — the TS build's
-/// manifest sidecar omits the wire-only `sampleStart`/`sampleCount` fields.
-Map<String, Object?> _reduceSamplesToBuildJsonShape(Map<String, Object?> manifest) {
-  final copy = Map<String, Object?>.from(manifest);
-  final units = (manifest['units'] as List).cast<Map<String, Object?>>();
-  copy['units'] = units.map((unit) {
-    final unitCopy = Map<String, Object?>.from(unit);
-    final samples = (unit['samples'] as List).cast<Map<String, Object?>>();
-    unitCopy['samples'] = samples
-        .map((sample) => <String, Object?>{
-              'rendition': sample['rendition'],
-              'sha256': sample['sha256'],
-            })
-        .toList();
-    return unitCopy;
-  }).toList();
-  return copy;
-}
-
 void main() {
-  group('grass-rabbit end-to-end parse vs. TS build.json ground truth', () {
+  group('grass-rabbit h264.avl end-to-end parse vs. motion.json source', () {
     late Uint8List assetBytes;
-    late Map<String, Object?> buildJson;
     late Map<String, Object?> motionJson;
     late ParsedFrontIndex frontIndex;
 
     setUpAll(() {
-      assetBytes = _repoFile('examples/grass-rabbit/public/grass-rabbit.avl')
+      assetBytes = _repoFile('examples/grass-rabbit/public/grass-rabbit/h264.avl')
           .readAsBytesSync();
-      buildJson = jsonDecode(
-        _repoFile('examples/grass-rabbit/public/grass-rabbit.avl.build.json')
-            .readAsStringSync(),
-      ) as Map<String, Object?>;
       motionJson = jsonDecode(
         _repoFile('examples/grass-rabbit/motion.json').readAsStringSync(),
       ) as Map<String, Object?>;
       frontIndex = parseFrontIndex(assetBytes);
     });
 
-    Map<String, Object?> buildManifest() =>
-        (buildJson['buildDetails'] as Map)['manifest'] as Map<String, Object?>;
-    Map<String, Object?> buildAsset() =>
-        buildJson['asset'] as Map<String, Object?>;
-    Map<String, Object?> buildDetails() =>
-        buildJson['buildDetails'] as Map<String, Object?>;
-
-    test('parses the real asset header consistently with build.json', () {
+    test('parses the format-1.0 header consistently with the real asset', () {
       final header = frontIndex.header;
-      // Fixed version-0.1 container invariants.
-      expect(header.major, 0);
-      expect(header.minor, 1);
+      // Fixed version-1.0 container invariants.
+      expect(header.major, 1);
+      expect(header.minor, 0);
       expect(header.headerLength, 64);
       expect(header.requiredFeatureFlags, 0);
       expect(header.manifestOffset, 64);
-      // Declared file length is the ground truth's total byte count.
-      expect(header.declaredFileLength, buildAsset()['bytes']);
+      // Declared file length matches the actual asset bytes.
       expect(header.declaredFileLength, assetBytes.length);
-      // Layout is internally consistent: manifest -> index -> payload blobs.
-      expect(
-        header.indexOffset,
-        greaterThanOrEqualTo(header.manifestOffset + header.manifestLength),
-      );
+      expect(header.declaredFileLength, 450174);
+      // Layout: header + manifest + index + aligned blobs.
+      expect(header.manifestLength, 3472);
+      expect(header.indexOffset, 3536);
+      expect(header.indexLength, 14944);
+      // Index ends exactly where the first chunk payload begins.
       expect(
         header.indexOffset + header.indexLength,
-        frontIndex.records.first.payloadOffset,
-        reason: 'first access-unit blob begins immediately after the front index',
+        frontIndex.records.first.byteOffset,
+        reason: 'first chunk payload begins immediately after the front index',
       );
     });
 
-    test('parsed manifest matches every field build.json records', () {
-      final parsedJson = compiledManifestToJson(frontIndex.manifest);
-      final reduced = _reduceSamplesToBuildJsonShape(parsedJson);
-      // Whole-manifest deep-equal: units (ids, frame counts, kinds, playback,
-      // ports/portalFrames, sample digests), states, edges (triggers, starts,
-      // continuity), rendition list + geometry, canvas, frameRate, limits,
-      // readiness, bindings, initialState, generator, formatVersion.
-      expect(
-        _deepEquals(reduced, buildManifest()),
-        isTrue,
-        reason: 'reduced Dart manifest must equal build.json buildDetails.manifest',
-      );
+    test('manifest carries the format-1.0 top-level fields', () {
+      final manifest = frontIndex.manifest;
+      expect(manifest.formatVersion, '1.0');
+      expect(manifest.codec, 'h264');
+      expect(manifest.bitstream, 'annex-b');
+      expect(manifest.layout, 'opaque');
+      expect(manifest.initialState, 'idle');
+      expect(manifest.generator, 'aval-compiler/1.0');
+      expect(manifest.canvas.width, 1280);
+      expect(manifest.canvas.height, 720);
+      expect(manifest.canvas.fit, 'contain');
+      expect(manifest.canvas.pixelAspect, const [1, 1]);
+      expect(manifest.frameRate.numerator, 24);
+      expect(manifest.frameRate.denominator, 1);
     });
 
-    test('unit list: names, kinds, playback, and frame counts match build.json', () {
-      final buildUnits = (buildManifest()['units'] as List).cast<Map<String, Object?>>();
-      final parsedUnits = frontIndex.manifest.units;
-      expect(parsedUnits.length, buildUnits.length);
-      expect(parsedUnits.length, 5, reason: 'grass-rabbit has 5 units');
-
-      // Sample spans use a global cursor: each unit's sampleStart is the running
-      // total of all prior units' frame counts, and sampleCount == frameCount.
-      var runningSampleStart = 0;
-      for (var i = 0; i < parsedUnits.length; i += 1) {
-        final parsed = parsedUnits[i];
-        final expected = buildUnits[i];
-        expect(parsed.id, expected['id']);
-        expect(parsed.kind, expected['kind']);
-        expect(parsed.frameCount, expected['frameCount']);
-        // Compiled manifest carries exactly one full-span sample per unit.
-        expect(parsed.samples.length, 1);
-        expect(parsed.samples.single.sampleStart, runningSampleStart);
-        expect(parsed.samples.single.sampleCount, parsed.frameCount);
-        runningSampleStart += parsed.frameCount;
-        final expectedSample = (expected['samples'] as List).first as Map;
-        expect(parsed.samples.single.rendition, expectedSample['rendition']);
-        expect(parsed.samples.single.sha256, expectedSample['sha256']);
-        if (parsed is BodyUnitV01) {
-          expect(parsed.playback, expected['playback']);
-        }
-      }
+    test('manifest counts agree with motion.json', () {
+      final manifest = frontIndex.manifest;
+      expect(manifest.units.length, (motionJson['units'] as List).length);
+      expect(manifest.states.length, (motionJson['states'] as List).length);
+      expect(manifest.edges.length, (motionJson['edges'] as List).length);
+      expect(manifest.bindings.length, (motionJson['bindings'] as List).length);
+      expect(manifest.units.length, 5);
+      expect(manifest.states.length, 4);
+      expect(manifest.edges.length, 5);
+      expect(manifest.bindings.length, 2);
     });
 
-    test('state list matches build.json', () {
-      final buildStates = (buildManifest()['states'] as List).cast<Map<String, Object?>>();
-      final parsedStates = frontIndex.manifest.states;
-      expect(parsedStates.length, buildStates.length);
-      expect(parsedStates.length, 4, reason: 'grass-rabbit has 4 states');
-      for (var i = 0; i < parsedStates.length; i += 1) {
-        expect(parsedStates[i].id, buildStates[i]['id']);
-        expect(parsedStates[i].bodyUnit, buildStates[i]['bodyUnit']);
-        expect(parsedStates[i].initialUnit, buildStates[i]['initialUnit']);
-      }
-    });
-
-    test('edge list matches build.json', () {
-      final buildEdges = (buildManifest()['edges'] as List).cast<Map<String, Object?>>();
-      final parsedEdges = frontIndex.manifest.edges;
-      expect(parsedEdges.length, buildEdges.length);
-      expect(parsedEdges.length, 5, reason: 'grass-rabbit has 5 edges');
-      for (var i = 0; i < parsedEdges.length; i += 1) {
-        final parsed = parsedEdges[i];
-        final expected = buildEdges[i];
-        expect(parsed.id, expected['id']);
-        expect(parsed.from, expected['from']);
-        expect(parsed.to, expected['to']);
-        expect(parsed.continuity, expected['continuity']);
-        final expectedStart = expected['start'] as Map;
-        expect(parsed.start.type, expectedStart['type']);
-        expect(parsed.start.targetPort, expectedStart['targetPort']);
-        expect(parsed.start.maxWaitFrames, expectedStart['maxWaitFrames']);
-        final expectedTrigger = expected['trigger'] as Map?;
-        if (expectedTrigger == null) {
-          expect(parsed.trigger, isNull);
-        } else if (parsed.trigger is EventTriggerV01) {
-          expect(expectedTrigger['type'], 'event');
-          expect((parsed.trigger as EventTriggerV01).name, expectedTrigger['name']);
-        } else {
-          expect(expectedTrigger['type'], 'completion');
-        }
-      }
-    });
-
-    test('rendition list and geometry match build.json', () {
-      final parsed = frontIndex.manifest.renditions;
-      final buildRenditions = (buildManifest()['renditions'] as List).cast<Map<String, Object?>>();
-      expect(parsed.length, buildRenditions.length);
-      expect(parsed.length, 1);
-
-      final rendition = parsed.single as AvcOpaqueRenditionV01;
-      final expected = buildRenditions.single;
-      expect(rendition.id, expected['id']);
-      expect(rendition.profile, expected['profile']);
-      expect(rendition.codec, expected['codec']);
-      expect(rendition.codedWidth, expected['codedWidth']);
-      expect(rendition.codedHeight, expected['codedHeight']);
-      final expectedAlpha = expected['alphaLayout'] as Map;
-      expect(rendition.colorRect.toList(), expectedAlpha['colorRect']);
-      final expectedBitrate = expected['bitrate'] as Map;
-      expect(rendition.bitrate.average, expectedBitrate['average']);
-      expect(rendition.bitrate.peak, expectedBitrate['peak']);
-
-      // Cross-check against the compiler-derived geometry block.
-      final geometry = (buildDetails()['renditions'] as List)
-          .cast<Map<String, Object?>>()
-          .single['geometry'] as Map;
-      expect(rendition.codedWidth, geometry['codedWidth']);
-      expect(rendition.codedHeight, geometry['codedHeight']);
-      expect(rendition.profile, geometry['profile']);
-      expect(rendition.colorRect.toList(), geometry['visibleColorRect']);
-    });
-
-    test('access-unit index counts and offsets match build.json', () {
-      final records = frontIndex.records;
-      // Total access-unit count.
-      expect(records.length, buildDetails()['accessUnits']);
-      expect(records.length, 311);
-      final buildRendition =
-          (buildDetails()['renditions'] as List).cast<Map<String, Object?>>().single;
-      expect(records.length, buildRendition['accessUnits']);
-
-      // Encoded payload byte total matches the ground truth.
-      final totalPayload = records.fold<int>(0, (sum, r) => sum + r.payloadLength);
-      expect(totalPayload, buildDetails()['encodedPayloadBytes']);
-
-      // Per-unit record counts equal each unit's frame count; records are
-      // grouped and ordered by unit then contiguous frame index; the first
-      // record of each unit carries the structural key bit; access units are
-      // contiguous within a unit blob, and unit blobs are placed at
-      // `formatAlignment`-aligned offsets (padding may sit between blobs).
+    test('unit list: ids, kinds, playback, frame counts, and chunk spans', () {
       final units = frontIndex.manifest.units;
+      // The compiler reorders units alphabetically by id in the manifest:
+      // hover-in, hover-loop, hover-out, idle-loop, intro.
+      expect(units.map((u) => u.id).toList(), const [
+        'hover-in',
+        'hover-loop',
+        'hover-out',
+        'idle-loop',
+        'intro',
+      ]);
+      // Each unit has exactly one chunk span (closed-GOP per unit).
+      for (final unit in units) {
+        expect(unit.chunks.length, 1, reason: '${unit.id} should have one span');
+        final span = unit.chunks.single;
+        expect(span.rendition, 'video.1x');
+        expect(span.chunkCount, unit.frameCount,
+            reason: '${unit.id} chunkCount should equal frameCount');
+        expect(span.frameCount, unit.frameCount,
+            reason: '${unit.id} span.frameCount should equal unit.frameCount');
+      }
+
+      // Frame counts match motion.json source ranges (end - start).
+      final motionUnits = {
+        for (final u in (motionJson['units'] as List))
+          (u as Map)['id'] as String: u,
+      };
+      final frameCountById = {
+        'intro': 30,
+        'idle-loop': 70,
+        'hover-in': 67,
+        'hover-loop': 96,
+        'hover-out': 48,
+      };
+      for (final unit in units) {
+        expect(unit.frameCount, frameCountById[unit.id],
+            reason: '${unit.id} frame count');
+        final src = motionUnits[unit.id]!;
+        expect(unit.kind, src['kind']);
+        if (unit is BodyUnit) {
+          expect(unit.playback, src['playback']);
+          expect(unit.ports.length, (src['ports'] as List).length);
+        }
+      }
+
+      // Chunk spans are laid out in manifest order with a running cursor
+      // (each unit's chunkStart = sum of prior units' frameCount).
+      var running = 0;
+      for (final unit in units) {
+        expect(unit.chunks.single.chunkStart, running,
+            reason: '${unit.id} chunkStart should be running cursor');
+        running += unit.frameCount;
+      }
+      expect(running, 311, reason: 'total chunk count across all units');
+    });
+
+    test('state list matches motion.json (canonical order is alphabetical)', () {
+      final states = frontIndex.manifest.states;
+      expect(states.map((s) => s.id).toList(), const [
+        'entering',
+        'exiting',
+        'hover',
+        'idle',
+      ]);
+      final motionStates = {
+        for (final s in (motionJson['states'] as List))
+          (s as Map)['id'] as String: s,
+      };
+      for (final state in states) {
+        final src = motionStates[state.id]!;
+        expect(state.bodyUnit, src['bodyUnit']);
+        expect(state.initialUnit, src['initialUnit']);
+      }
+      // idle is the initial state and bootstraps via the intro one-shot.
+      final idle = states.firstWhere((s) => s.id == 'idle');
+      expect(idle.initialUnit, 'intro');
+      // Other states have no initialUnit.
+      for (final state in states.where((s) => s.id != 'idle')) {
+        expect(state.initialUnit, isNull,
+            reason: '${state.id} should not declare an initialUnit');
+      }
+    });
+
+    test('edge list matches motion.json topology and triggers', () {
+      final edges = frontIndex.manifest.edges;
+      expect(edges.length, 5);
+      final motionEdgesById = {
+        for (final e in (motionJson['edges'] as List))
+          (e as Map)['id'] as String: e,
+      };
+      for (final edge in edges) {
+        final src = motionEdgesById[edge.id]!;
+        expect(edge.from, src['from']);
+        expect(edge.to, src['to']);
+        expect(edge.continuity, src['continuity']);
+        final srcStart = src['start'] as Map;
+        expect(edge.start.type, srcStart['type']);
+      }
+      // Portal edges carry event triggers; finish edges carry completion or
+      // event triggers per motion.json.
+      final eventNames = edges
+          .map((e) => e.trigger)
+          .whereType<EventTrigger>()
+          .map((t) => t.name)
+          .toSet();
+      expect(eventNames, {'hover.enter', 'hover.leave'});
+      // Edges with start.type=portal must be event-triggered; start.type=finish
+      // may be event or completion.
+      for (final edge in edges) {
+        final trig = edge.trigger;
+        if (edge.start.type == 'portal') {
+          expect(trig, isA<EventTrigger>(),
+              reason: '${edge.id} portal start must be event-triggered');
+        }
+      }
+    });
+
+    test('single rendition with AVC 1.0 geometry', () {
+      final renditions = frontIndex.manifest.renditions;
+      expect(renditions.length, 1);
+      final rendition = renditions.single;
+      expect(rendition.id, 'video.1x');
+      expect(rendition.codec, 'avc1.64001E');
+      expect(rendition.bitDepth, 8);
+      expect(rendition.codedWidth, 640);
+      expect(rendition.codedHeight, 368);
+      expect(rendition.alphaLayout, isA<OpaqueAlphaLayout>());
+      expect(rendition.bitrate.average, rendition.bitrate.peak,
+          reason: 'CBR asset has average == peak');
+      expect(rendition.bitrate.average, greaterThan(0));
+    });
+
+    test('encoded-chunk index: 311 records, contiguous within aligned blobs', () {
+      final records = frontIndex.records;
+      expect(records.length, 311);
+      final units = frontIndex.manifest.units;
+
+      // Walk records grouped by unit. Each unit's records live in a single
+      // formatAlignment-aligned blob; within a blob they are contiguous.
       var cursor = 0;
-      var previousBlobEnd = records.first.payloadOffset;
-      for (var unitIndex = 0; unitIndex < units.length; unitIndex += 1) {
-        final unit = units[unitIndex];
-        final blobStart = records[cursor].payloadOffset;
-        expect(
-          blobStart,
-          greaterThanOrEqualTo(previousBlobEnd),
-          reason: 'unit blobs are laid out in order',
-        );
-        expect(blobStart % formatAlignment, 0, reason: 'unit blobs are aligned');
+      var previousBlobEnd =
+          frontIndex.header.indexOffset + frontIndex.header.indexLength;
+      for (final unit in units) {
+        final span = unit.chunks.single;
+        final blobStart = records[cursor].byteOffset;
+        expect(blobStart % formatAlignment, 0,
+            reason: '${unit.id} blob must be formatAlignment-aligned');
+        expect(blobStart, greaterThanOrEqualTo(previousBlobEnd),
+            reason: '${unit.id} blob must not overlap the previous');
         var expectedOffset = blobStart;
-        for (var frame = 0; frame < unit.frameCount; frame += 1) {
+        for (var i = 0; i < span.chunkCount; i += 1) {
           final record = records[cursor];
-          expect(record.unitIndex, unitIndex);
-          expect(record.renditionIndex, 0);
-          expect(record.frameIndex, frame);
-          if (frame == 0) {
-            expect(record.key, isTrue, reason: 'first frame of a unit is a key access unit');
+          expect(record.byteOffset, expectedOffset,
+              reason: '${unit.id} chunk $i must be contiguous within blob');
+          expect(record.displayedFrameCount, 1,
+              reason: '${unit.id} chunk $i covers one displayed frame');
+          if (i == 0) {
+            expect(record.randomAccess, isTrue,
+                reason: '${unit.id} first chunk must be random access (IDR)');
           }
-          expect(
-            record.payloadOffset,
-            expectedOffset,
-            reason: 'access units are contiguous within a unit blob',
-          );
-          expectedOffset += record.payloadLength;
+          expectedOffset += record.byteLength;
           cursor += 1;
         }
         previousBlobEnd = expectedOffset;
@@ -299,34 +276,25 @@ void main() {
 
     test('validateCompleteAsset accepts the real asset end-to-end', () {
       final validated = validateCompleteAsset(bytes: assetBytes);
-      expect(validated.fileRange.length, buildAsset()['bytes']);
+      expect(validated.fileRange.offset, 0);
+      expect(validated.fileRange.length, assetBytes.length);
       expect(validated.frontIndex.records.length, 311);
-      // The independently reparsed front index should match the supplied one.
+      // Supplying the already-parsed front index must agree.
       expect(
         () => validateCompleteAsset(bytes: assetBytes, frontIndex: frontIndex),
         returnsNormally,
       );
     });
 
-    test('parsed graph installs into MotionGraphEngine with expected states/events', () {
-      // The graph produced by the format-side adapter feeds aval_graph directly.
+    test('parsed graph installs into MotionGraphEngine with expected topology', () {
       final graph = frontIndex.graph;
 
-      // Counts agree with motion.json (the authored source) and the architecture
-      // doc: 5 units, 4 states, 5 edges.
-      expect((motionJson['units'] as List).length, 5);
-      expect((motionJson['states'] as List).length, 4);
-      expect((motionJson['edges'] as List).length, 5);
-      expect(frontIndex.manifest.units.length, 5);
-      expect(graph.definition.states.length, 4);
-      expect(graph.definition.edges.length, 5);
-
-      // State names, in manifest (canonical) order.
+      // State names in manifest (canonical alphabetical) order.
       final stateNames = graph.definition.states.map((s) => s.id).toList();
-      expect(stateNames, ['entering', 'exiting', 'hover', 'idle']);
+      expect(stateNames, const ['entering', 'exiting', 'hover', 'idle']);
       expect(graph.definition.initialState, 'idle');
 
-      // Event names come from the authored bindings/edges: hover.enter / leave.
+      // Event names come from authored bindings: hover.enter / hover.leave.
       final eventNames = graph.definition.edges
           .map((e) => e.trigger)
           .whereType<GraphEdgeTriggerEvent>()
@@ -348,7 +316,8 @@ void main() {
       expect(result.snapshot.readiness, MotionGraphReadiness.preparing);
       expect(result.snapshot.requestedState, 'idle');
       expect(result.snapshot.visualState, 'idle');
-      expect(result.snapshot.presentation, const GraphPresentationStatic(state: 'idle'));
+      expect(result.snapshot.presentation,
+          const GraphPresentationStatic(state: 'idle'));
     });
   });
 }

@@ -56,8 +56,9 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use openh264::decoder::Decoder;
+use openh264::decoder::{Decoder, DecoderConfig, Flush};
 use openh264::formats::YUVSource;
+use openh264::OpenH264API;
 
 use crate::error::AvalDecodeError;
 use crate::ledger::FrameCreditLedger;
@@ -312,7 +313,13 @@ impl DecoderSession {
         }
         Self::validate_config(&config)?;
 
-        let decoder = match Decoder::new() {
+        // Default openh264 flush-after-decode OOMs (`dsOutOfMemory`) on High-profile
+        // streams with B-frames (mansion-woman, etc.): forced flush corrupts the DPB.
+        // NoFlush matches DecodeFrameNoDelay usage and leaves reordering to the codec.
+        let decoder = match Decoder::with_api_config(
+            OpenH264API::from_source(),
+            DecoderConfig::new().flush_after_decode(Flush::NoFlush),
+        ) {
             Ok(decoder) => decoder,
             Err(error) => {
                 return Err(self.fail(AvalDecodeError::DecodeFailed(format!(

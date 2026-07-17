@@ -31,6 +31,7 @@ const int statusDecodedByteBudgetExceeded = 5;
 const int statusDecoderOutputInvalid = 6;
 const int statusFrameReleaseInvalid = 7;
 const int statusPanicked = 8;
+const int statusUnsupported = 9;
 
 String statusName(int status) => switch (status) {
       statusOk => 'ok',
@@ -42,6 +43,7 @@ String statusName(int status) => switch (status) {
       statusDecoderOutputInvalid => 'decoder output invalid',
       statusFrameReleaseInvalid => 'frame release invalid',
       statusPanicked => 'panicked at FFI boundary',
+      statusUnsupported => 'unsupported codec configuration',
       _ => 'unknown status $status',
     };
 
@@ -52,6 +54,12 @@ String statusName(int status) => switch (status) {
 
 /// Mirrors `AvalDecodeConfig`.
 final class AvalDecodeConfig extends ffi.Struct {
+  /// Codec family (`0=h264, 1=h265, 2=vp9, 3=av1`). Only `0` configures.
+  @ffi.Uint32()
+  external int codec;
+  /// Luma bit depth (must be `8` for H.264).
+  @ffi.Uint32()
+  external int bitDepth;
   @ffi.Uint32()
   external int codedWidth;
   @ffi.Uint32()
@@ -62,28 +70,35 @@ final class AvalDecodeConfig extends ffi.Struct {
   external int maxDecodedBytes;
 }
 
-/// Mirrors `AvalDecodeSample`.
-final class AvalDecodeSample extends ffi.Struct {
-  @ffi.Uint64()
-  external int ordinal;
-  @ffi.Uint64()
-  external int timestamp;
-  @ffi.Uint64()
-  external int duration;
+/// Mirrors `AvalDecodeChunk` (format-1.0 wire `DecoderWorkerSample`).
+final class AvalDecodeChunk extends ffi.Struct {
   @ffi.Uint64()
   external int unitInstance;
   @ffi.Uint64()
-  external int unitFrame;
+  external int decodeIndex;
+  @ffi.Uint64()
+  external int unitChunkCount;
   @ffi.Uint64()
   external int unitFrameCount;
+  @ffi.Uint64()
+  external int presentationOrdinalBase;
+  @ffi.Uint64()
+  external int presentationTimestamp;
+  @ffi.Uint64()
+  external int duration;
+  @ffi.Uint64()
+  external int displayedFrameCount;
   @ffi.Uint8()
-  external int isKey;
+  external int randomAccess;
   external ffi.Pointer<ffi.Uint8> data;
   @ffi.IntPtr()
   external int dataLen;
   external ffi.Pointer<ffi.Uint8> unitId;
   @ffi.IntPtr()
   external int unitIdLen;
+  external ffi.Pointer<ffi.Uint64> presentationIndices;
+  @ffi.IntPtr()
+  external int presentationIndicesLen;
 }
 
 /// Mirrors `AvalSubmitResult`.
@@ -115,6 +130,8 @@ final class AvalDecodeFrame extends ffi.Struct {
   external int unitInstance;
   @ffi.Uint64()
   external int unitFrame;
+  @ffi.Uint64()
+  external int decodeIndex;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,9 +147,9 @@ typedef _ConfigureDart = int Function(
 typedef _GenNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint64);
 typedef _GenDart = int Function(ffi.Pointer<ffi.Void>, int);
 typedef _SubmitNative = ffi.Int32 Function(ffi.Pointer<ffi.Void>, ffi.Uint64,
-    ffi.Pointer<AvalDecodeSample>, ffi.Pointer<AvalSubmitResult>);
+    ffi.Pointer<AvalDecodeChunk>, ffi.Pointer<AvalSubmitResult>);
 typedef _SubmitDart = int Function(ffi.Pointer<ffi.Void>, int,
-    ffi.Pointer<AvalDecodeSample>, ffi.Pointer<AvalSubmitResult>);
+    ffi.Pointer<AvalDecodeChunk>, ffi.Pointer<AvalSubmitResult>);
 typedef _TakeNative = ffi.Int32 Function(
     ffi.Pointer<ffi.Void>, ffi.Pointer<AvalDecodeFrame>);
 typedef _TakeDart = int Function(
@@ -162,8 +179,8 @@ class AvalDecodeBindings {
             'aval_decode_configure'),
         activateGeneration = lib.lookupFunction<_GenNative, _GenDart>(
             'aval_decode_activate_generation'),
-        submitAccessUnit = lib.lookupFunction<_SubmitNative, _SubmitDart>(
-            'aval_decode_submit_access_unit'),
+        submitChunk = lib.lookupFunction<_SubmitNative, _SubmitDart>(
+            'aval_decode_submit_chunk'),
         takeFrame =
             lib.lookupFunction<_TakeNative, _TakeDart>('aval_decode_take_frame'),
         releaseFrame = lib.lookupFunction<_ReleaseNative, _ReleaseDart>(
@@ -181,8 +198,8 @@ class AvalDecodeBindings {
   final int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<AvalDecodeConfig>)
       configure;
   final int Function(ffi.Pointer<ffi.Void>, int) activateGeneration;
-  final int Function(ffi.Pointer<ffi.Void>, int, ffi.Pointer<AvalDecodeSample>,
-      ffi.Pointer<AvalSubmitResult>) submitAccessUnit;
+  final int Function(ffi.Pointer<ffi.Void>, int, ffi.Pointer<AvalDecodeChunk>,
+      ffi.Pointer<AvalSubmitResult>) submitChunk;
   final int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<AvalDecodeFrame>)
       takeFrame;
   final int Function(ffi.Pointer<ffi.Void>, int) releaseFrame;
@@ -222,12 +239,16 @@ class AvalDecoderSession implements ffi.Finalizable {
   void configure({
     required int codedWidth,
     required int codedHeight,
+    int codec = 0, // H.264
+    int bitDepth = 8,
     int maxOutstandingFrames = 4,
     int? maxDecodedBytes,
   }) {
     final cfg = calloc<AvalDecodeConfig>();
     try {
       cfg.ref
+        ..codec = codec
+        ..bitDepth = bitDepth
         ..codedWidth = codedWidth
         ..codedHeight = codedHeight
         ..maxOutstandingFrames = maxOutstandingFrames
@@ -242,46 +263,71 @@ class AvalDecoderSession implements ffi.Finalizable {
   void activateGeneration(int generation) => _check(
       'activateGeneration', _bindings.activateGeneration(_handle, generation));
 
-  /// Submits one Annex-B access unit. Returns the produced frame id, or null
-  /// while the decoder is priming.
+  /// Submits one format-1.0 encoded chunk. For H.264, [displayedFrameCount] is
+  /// typically 1 and [presentationIndices] is a single index.
+  ///
+  /// Returns the produced frame id, or null while the decoder is priming.
   int? submit({
-    required int ordinal,
-    required int timestamp,
-    required int duration,
-    required int unitFrame,
+    required int decodeIndex,
+    required int unitChunkCount,
     required int unitFrameCount,
-    required bool isKey,
+    required int presentationTimestamp,
+    required int duration,
+    required bool randomAccess,
     required List<int> data,
     required String unitId,
+    required List<int> presentationIndices,
+    int unitInstance = 0,
+    int presentationOrdinalBase = 0,
+    int displayedFrameCount = 1,
     int generation = 1,
   }) {
-    final sample = calloc<AvalDecodeSample>();
+    if (presentationIndices.length != displayedFrameCount) {
+      throw ArgumentError(
+          'presentationIndices.length (${presentationIndices.length}) '
+          'must equal displayedFrameCount ($displayedFrameCount)');
+    }
+    final chunk = calloc<AvalDecodeChunk>();
     final dataPtr = calloc<ffi.Uint8>(data.length);
     final unitIdBytes = unitId.codeUnits;
     final unitIdPtr = calloc<ffi.Uint8>(unitIdBytes.length);
+    final indicesPtr = displayedFrameCount > 0
+        ? calloc<ffi.Uint64>(displayedFrameCount)
+        : ffi.nullptr;
     final result = calloc<AvalSubmitResult>();
     try {
       dataPtr.asTypedList(data.length).setAll(0, data);
       unitIdPtr.asTypedList(unitIdBytes.length).setAll(0, unitIdBytes);
-      sample.ref
-        ..ordinal = ordinal
-        ..timestamp = timestamp
-        ..duration = duration
-        ..unitInstance = 0
-        ..unitFrame = unitFrame
+      if (displayedFrameCount > 0) {
+        final indices = indicesPtr.asTypedList(displayedFrameCount);
+        for (var i = 0; i < displayedFrameCount; i++) {
+          indices[i] = presentationIndices[i];
+        }
+      }
+      chunk.ref
+        ..unitInstance = unitInstance
+        ..decodeIndex = decodeIndex
+        ..unitChunkCount = unitChunkCount
         ..unitFrameCount = unitFrameCount
-        ..isKey = isKey ? 1 : 0
+        ..presentationOrdinalBase = presentationOrdinalBase
+        ..presentationTimestamp = presentationTimestamp
+        ..duration = duration
+        ..displayedFrameCount = displayedFrameCount
+        ..randomAccess = randomAccess ? 1 : 0
         ..data = dataPtr
         ..dataLen = data.length
         ..unitId = unitIdPtr
-        ..unitIdLen = unitIdBytes.length;
-      _check('submit',
-          _bindings.submitAccessUnit(_handle, generation, sample, result));
+        ..unitIdLen = unitIdBytes.length
+        ..presentationIndices = indicesPtr
+        ..presentationIndicesLen = displayedFrameCount;
+      _check(
+          'submit', _bindings.submitChunk(_handle, generation, chunk, result));
       return result.ref.producedFrame != 0 ? result.ref.frameId : null;
     } finally {
-      calloc.free(sample);
+      calloc.free(chunk);
       calloc.free(dataPtr);
       calloc.free(unitIdPtr);
+      if (indicesPtr != ffi.nullptr) calloc.free(indicesPtr);
       calloc.free(result);
     }
   }
@@ -302,6 +348,7 @@ class AvalDecoderSession implements ffi.Finalizable {
         height: f.height,
         ordinal: f.ordinal,
         unitFrame: f.unitFrame,
+        decodeIndex: f.decodeIndex,
       );
       try {
         return use(view);
@@ -331,6 +378,7 @@ class DecodedFrameView {
     required this.height,
     required this.ordinal,
     required this.unitFrame,
+    required this.decodeIndex,
   });
 
   final List<int> rgba;
@@ -338,4 +386,5 @@ class DecodedFrameView {
   final int height;
   final int ordinal;
   final int unitFrame;
+  final int decodeIndex;
 }

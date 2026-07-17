@@ -506,7 +506,7 @@ List<EncodedChunkInput> _normalizeChunkInputs(
     if (input['randomAccess'] is! bool) _invalid('$path.randomAccess must be boolean');
     final bytes = input['bytes'];
     if (bytes is! Uint8List) _invalid('$path.bytes must be a Uint8Array');
-    if (bytes.length < 1) _invalid('$path.bytes must not be empty');
+    if (bytes.isEmpty) _invalid('$path.bytes must not be empty');
     if (bytes.length > maxBytes) _budget('$path.bytes');
     final displayedFrameCount =
         nonNegativeInteger(input['displayedFrameCount'], '$path.displayedFrameCount');

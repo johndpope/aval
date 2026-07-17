@@ -10,22 +10,22 @@ import 'package:aval_format/src/model.dart' show FormatHeader, FormatOptions;
 import 'package:test/test.dart';
 
 final FormatHeader kHeader = FormatHeader(
-  declaredFileLength: 128,
+  declaredFileLength: 136,
   manifestLength: 8,
   indexOffset: 72,
-  indexLength: 48,
+  indexLength: 64,
 );
 
 const String goldenHex = '41564c460d0a1a0a'
-    '00000100'
+    '01000000'
     '40000000'
     '00000000'
     '00000000'
-    '8000000000000000'
+    '8800000000000000'
     '4000000000000000'
     '0800000000000000'
     '4800000000000000'
-    '3000000000000000';
+    '4000000000000000';
 
 String hex(Uint8List bytes) =>
     bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
@@ -41,7 +41,7 @@ FormatError _expectFormatError(dynamic Function() operation, FormatErrorCode cod
 }
 
 void main() {
-  group('version-0.1 header codec', () {
+  group('version-1.0 header codec', () {
     test('emits the exact canonical 64-byte little-endian header', () {
       final bytes = encodeHeader(kHeader);
       expect(bytes.length, 64);
@@ -85,7 +85,7 @@ void main() {
     test('rejects every noncanonical fixed header field', () {
       final mutations = <(int, int, FormatErrorCode)>[
         (0, 0, FormatErrorCode.headerInvalid),
-        (8, 1, FormatErrorCode.versionUnsupported),
+        (8, 2, FormatErrorCode.versionUnsupported),
         (10, 2, FormatErrorCode.versionUnsupported),
         (12, 63, FormatErrorCode.headerInvalid),
         (16, 1, FormatErrorCode.featureUnsupported),
@@ -133,29 +133,29 @@ void main() {
       _expectFormatError(() => parseHeader(partialRecord), FormatErrorCode.headerInvalid);
 
       final outsideFile = encodeHeader(kHeader);
-      writeUint64LE(outsideFile, 24, 119);
+      writeUint64LE(outsideFile, 24, 135);
       _expectFormatError(() => parseHeader(outsideFile), FormatErrorCode.headerInvalid);
 
       final formerRecordLimit = FormatHeader(
         declaredFileLength: 200000,
         manifestLength: kHeader.manifestLength,
         indexOffset: kHeader.indexOffset,
-        indexLength: 16 + 32 * 3601,
+        indexLength: chunkIndexHeaderLength + chunkIndexRecordLength * 3601,
       );
       expect(parseHeader(encodeHeader(formerRecordLimit)).indexLength, formerRecordLimit.indexLength);
 
       final outsideUint32 = FormatHeader(
-        declaredFileLength: 72 + 16 + 32 * 0x100000000,
+        declaredFileLength: 72 + chunkIndexHeaderLength + chunkIndexRecordLength * 0x100000000,
         manifestLength: kHeader.manifestLength,
         indexOffset: kHeader.indexOffset,
-        indexLength: 16 + 32 * 0x100000000,
+        indexLength: chunkIndexHeaderLength + chunkIndexRecordLength * 0x100000000,
       );
       _expectFormatError(() => encodeHeader(outsideUint32), FormatErrorCode.budgetExceeded);
     });
 
     test('honors lower-only active budgets', () {
       _expectFormatError(
-        () => parseHeader(encodeHeader(kHeader), const FormatOptions(budgets: {'maxFileBytes': 127})),
+        () => parseHeader(encodeHeader(kHeader), const FormatOptions(budgets: {'maxFileBytes': 135})),
         FormatErrorCode.budgetExceeded,
       );
       _expectFormatError(
