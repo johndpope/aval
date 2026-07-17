@@ -6,10 +6,11 @@
 //! `dart:ffi`. See `flutter/ARCHITECTURE.md` sections 2, 3.3, 4, and 6.
 //!
 //! Module map (mirrors the TypeScript sources it ports):
-//! - [`ledger`]  <- `frame-credit-ledger.ts`  (backpressure / decoded-byte budget)
-//! - [`sample_sequence`] <- `sample-sequence.ts` + the ordinal/contiguity slice of
-//!   `core-validation.ts::validateSample`
-//! - [`decoder`] <- `core.ts` + `protocol.ts` (configure / submit_access_unit /
+//! - [`ledger`]  <- `frame-credit-ledger.ts`  (backpressure / decoded-byte budget;
+//!   unchanged across the format-1.0 sync `67c4c0e`)
+//! - [`sample_sequence`] <- `sample-sequence.ts` (reworked unit/chunk continuity) +
+//!   the structural slice of `core-validation.ts::validateSampleShape`
+//! - [`decoder`] <- `core.ts` + `protocol.ts` (configure / submit_chunk /
 //!   take_frame / release_frame / snapshot / dispose)
 //! - [`yuv`]     <- the new I420 -> RGBA8888 (BT.709 limited-range) conversion
 //!   step (ARCHITECTURE.md 3.3, risk register #13)
@@ -23,10 +24,10 @@ pub mod ledger;
 pub mod sample_sequence;
 pub mod yuv;
 
-pub use decoder::{DecoderSession, SessionConfig, SubmitOutcome};
+pub use decoder::{DecoderSession, SessionConfig, SubmitOutcome, VideoCodec};
 pub use error::{AvalDecodeError, AvalDecodeStatus};
 pub use ledger::FrameCreditLedger;
-pub use sample_sequence::{AccessUnitSample, DecoderSampleSequence};
+pub use sample_sequence::{DecodeChunk, DecoderSampleSequence};
 
 /// JavaScript `Number.MAX_SAFE_INTEGER` (2^53 - 1).
 ///

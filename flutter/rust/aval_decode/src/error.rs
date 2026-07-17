@@ -43,6 +43,10 @@ pub enum AvalDecodeStatus {
     /// A Rust panic was caught at the FFI boundary; the session is left in a defined-but-unusable
     /// state and should be destroyed.
     Panicked = 8,
+    /// The declared codec configuration is not decodable by this crate. openh264/H.264 is the only
+    /// native decoder; H.265/VP9/AV1 are declared-but-rejected at configure time (see
+    /// [`AvalDecodeError::Unsupported`] and the `DecoderAdapter` seam in ARCHITECTURE.md §2).
+    Unsupported = 9,
 }
 
 impl AvalDecodeStatus {
@@ -64,6 +68,7 @@ impl fmt::Display for AvalDecodeStatus {
             Self::DecoderOutputInvalid => "decoder output invalid (frame id space exhausted)",
             Self::FrameReleaseInvalid => "frame release invalid (unknown or already-released frame id)",
             Self::Panicked => "internal panic caught at FFI boundary",
+            Self::Unsupported => "unsupported codec configuration (openh264/H.264 only)",
         };
         f.write_str(s)
     }
@@ -78,6 +83,10 @@ pub enum AvalDecodeError {
     DecodedByteBudgetExceeded,
     DecoderOutputInvalid,
     FrameReleaseInvalid,
+    /// A declared but non-decodable codec configuration. Emitted at configure
+    /// time for any `codecFamily` other than H.264 (openh264 is the only native
+    /// decoder). Fatal in the TS sense — the session cannot proceed.
+    Unsupported(&'static str),
 }
 
 impl AvalDecodeError {
@@ -89,6 +98,7 @@ impl AvalDecodeError {
             Self::DecodedByteBudgetExceeded => AvalDecodeStatus::DecodedByteBudgetExceeded,
             Self::DecoderOutputInvalid => AvalDecodeStatus::DecoderOutputInvalid,
             Self::FrameReleaseInvalid => AvalDecodeStatus::FrameReleaseInvalid,
+            Self::Unsupported(_) => AvalDecodeStatus::Unsupported,
         }
     }
 
@@ -101,7 +111,10 @@ impl AvalDecodeError {
     pub const fn is_fatal(&self) -> bool {
         matches!(
             self,
-            Self::DecodedByteBudgetExceeded | Self::DecoderOutputInvalid | Self::FrameReleaseInvalid
+            Self::DecodedByteBudgetExceeded
+                | Self::DecoderOutputInvalid
+                | Self::FrameReleaseInvalid
+                | Self::Unsupported(_)
         )
     }
 }
@@ -119,6 +132,7 @@ impl fmt::Display for AvalDecodeError {
                 f,
                 "released frame id is not owned by this decoder session, or is not a positive id"
             ),
+            Self::Unsupported(msg) => write!(f, "unsupported codec configuration: {msg}"),
         }
     }
 }
