@@ -6,9 +6,9 @@ library;
 
 export 'src/constants.dart'
     show
-        accessUnitIndexHeaderLength,
-        accessUnitIndexMagic,
-        accessUnitRecordLength,
+        chunkIndexHeaderLength,
+        chunkIndexMagic,
+        chunkIndexRecordLength,
         formatAlignment,
         formatDefaultBudgets,
         formatHeaderLength,
@@ -16,11 +16,10 @@ export 'src/constants.dart'
         formatVersionMajor,
         formatVersionMinor,
         identifierPattern,
-        referenceFrameHeaderLength,
-        referenceFrameMagic,
         sha256HexPattern,
         resolveFormatBudgets;
-export 'src/errors.dart' show FormatError, FormatErrorCode, FormatErrorDetails, isFormatError;
+export 'src/errors.dart'
+    show FormatError, FormatErrorCode, FormatErrorDetails, isFormatError;
 export 'src/canonical_json.dart'
     show
         parseStrictJson,
@@ -28,19 +27,36 @@ export 'src/canonical_json.dart'
         serializeCanonicalJsonWithLimits,
         CanonicalJsonWriteLimits,
         compareUtf8Strings;
-export 'src/avc/index.dart';
+export 'src/h264/index.dart';
 export 'src/graph_adapter.dart' show adaptManifestToMotionGraph;
 export 'src/header.dart' show parseHeader;
+export 'src/chunk_plan.dart'
+    show
+        createCanonicalChunkPlan,
+        validateCanonicalChunkSpans,
+        CanonicalChunkPlan,
+        CanonicalChunkSlot,
+        CanonicalChunkSpan;
+export 'src/video/codec_string.dart'
+    show
+        isVideoCodecString,
+        parseVideoCodecString,
+        videoBitstreamByCodec,
+        videoCodecs,
+        ParsedVideoCodecString;
+export 'src/video/geometry.dart'
+    show deriveVideoRenditionGeometry, packedAlphaGutter;
+export 'src/compile_bundle_report.dart';
+export 'src/video/model.dart'
+    show VideoRenditionGeometry, VideoRenditionGeometryInput, VideoStoragePolicy;
+export 'src/h265/index.dart';
+export 'src/vp9/index.dart';
+export 'src/av1/index.dart';
 export 'src/png/crc32.dart' show adler32, crc32;
-export 'src/png/decode.dart' show decodePngRgba, decodePngRgbaFromInflated, PngRgbaDecodeResult;
-export 'src/png/profile.dart' show validatePngProfile, PngDecodePlan, PngProfileValidationInput;
+export 'src/png/decode.dart'
+    show decodePngRgba, decodePngRgbaFromInflated, PngRgbaDecodeResult;
+export 'src/png/profile.dart'
+    show validatePngProfile, PngDecodePlan, PngProfileValidationInput;
 export 'src/model.dart';
 export 'src/parser.dart' show parseFrontIndex, validateCompleteAsset;
-export 'src/reference_frame.dart'
-    show
-        encodeReferenceFrame,
-        parseReferenceFrameHeader,
-        validateReferenceFrame,
-        ReferenceFrameInput,
-        ReferenceFrameValidationInput;
 export 'src/writer.dart' show writeCanonicalAsset;

@@ -23,7 +23,7 @@ import 'canonical_json.dart'
     show CanonicalJsonWriteLimits, serializeCanonicalJsonWithLimits;
 import 'constants.dart' show identifierPattern, sha256HexPattern;
 import 'model.dart' show VideoBitDepth, VideoCodec;
-import 'package:aval_format/src/video/codec-string.dart'
+import 'package:aval_format/src/video/codec_string.dart'
     show isVideoCodecString, videoCodecs;
 
 // --- Local pattern constants (mirroring the TS module-level regexes). ---
