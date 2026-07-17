@@ -1,0 +1,30 @@
+name: aval_flutter
+description: >
+  Drop-in Flutter widget for AVAL interactive video — the Flutter equivalent
+  of the web player's <aval-video> custom element. Wraps the aval_format
+  container parser, the aval_graph MotionGraphEngine, per-platform frame
+  decoding (aval_decode Rust FFI on native, WebCodecs on web), and a GPU
+  fragment-shader compositor behind a single AvalView widget.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  aval_format:
+    path: ../aval_format
+  aval_graph:
+    path: ../aval_graph
+  ffi: ^2.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  shaders:
+    - shaders/frame.frag

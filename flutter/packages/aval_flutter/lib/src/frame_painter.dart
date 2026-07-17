@@ -1,10 +1,10 @@
-/// GPU-accelerated frame compositor for the decoded `aval_decode` picture.
+/// Frame compositors for the decoded AVAL picture.
 ///
-/// Replaces the CPU `Canvas.drawImageRect` path with a `dart:ui`
-/// `FragmentProgram` (Impeller/SkSL) shader, per the recommendation in
-/// `flutter/ARCHITECTURE.md` §3.2: the fit/UV-remap math that the web
-/// player runs in a WebGL2 fragment shader now runs in a real GPU shader
-/// here too, instead of on the CPU.
+/// [GpuFramePainter] runs the fit/UV-remap math in a `dart:ui`
+/// `FragmentProgram` (Impeller/SkSL) shader, per `flutter/ARCHITECTURE.md`
+/// §3.2 — the same work the web player does in a WebGL2 fragment shader.
+/// [CpuFramePainter] is the `Canvas.drawImageRect` fallback used until the
+/// program has loaded (or if it fails to).
 library;
 
 import 'dart:ui' as ui;
@@ -15,8 +15,8 @@ import 'package:flutter/rendering.dart';
 /// Loads and caches the compiled `shaders/frame.frag` program once per
 /// isolate. `FragmentProgram.fromAsset` itself already memoizes by asset
 /// key, but caching the [Future] here avoids redundant concurrent loads.
-Future<ui.FragmentProgram> loadFramePaintProgram() =>
-    _programFuture ??= ui.FragmentProgram.fromAsset('shaders/frame.frag');
+Future<ui.FragmentProgram> loadFramePaintProgram() => _programFuture ??=
+    ui.FragmentProgram.fromAsset('packages/aval_flutter/shaders/frame.frag');
 
 Future<ui.FragmentProgram>? _programFuture;
 
@@ -84,4 +84,37 @@ class GpuFramePainter extends CustomPainter {
       oldDelegate.image != image ||
       oldDelegate.fit != fit ||
       oldDelegate.program != program;
+}
+
+/// CPU-path fallback compositor used while the fragment program loads.
+class CpuFramePainter extends CustomPainter {
+  CpuFramePainter({required this.image, this.fit = BoxFit.contain})
+      : super(repaint: image);
+
+  final ValueListenable<ui.Image?> image;
+  final BoxFit fit;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final img = image.value;
+    if (img == null) return;
+    final src =
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
+    final fitted = applyBoxFit(fit, src.size, size);
+    final inputSubrect = Alignment.center.inscribe(fitted.source, src);
+    final dstRect = Alignment.center.inscribe(
+      fitted.destination,
+      Offset.zero & size,
+    );
+    canvas.drawImageRect(
+      img,
+      inputSubrect,
+      dstRect,
+      Paint()..filterQuality = FilterQuality.high,
+    );
+  }
+
+  @override
+  bool shouldRepaint(CpuFramePainter oldDelegate) =>
+      oldDelegate.image != image || oldDelegate.fit != fit;
 }

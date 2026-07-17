@@ -96,14 +96,6 @@
 			name = Flutter;
 			sourceTree = "<group>";
 		};
-		ADEC0DE1A000000100000005 /* Native */ = {
-			isa = PBXGroup;
-			children = (
-				ADEC0DE1A000000100000004 /* libaval_decode.a */,
-			);
-			name = Native;
-			sourceTree = "<group>";
-		};
 		97C146E51CF9000F007C117D = {
 			isa = PBXGroup;
 			children = (
@@ -139,6 +131,14 @@
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
 			path = Runner;
+			sourceTree = "<group>";
+		};
+		ADEC0DE1A000000100000005 /* Native */ = {
+			isa = PBXGroup;
+			children = (
+				ADEC0DE1A000000100000004 /* libaval_decode.a */,
+			);
+			name = Native;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -390,9 +390,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = G8J3654U43;
+				DEVELOPMENT_TEAM = KL43C67G5Z;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/Native",
@@ -402,15 +406,11 @@
 					"-laval_decode",
 					"-lc++",
 					"-framework",
-					"VideoToolbox",
+					VideoToolbox,
 					"-framework",
-					"CoreMedia",
+					CoreMedia,
 					"-framework",
-					"CoreVideo",
-				);
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
+					CoreVideo,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.grassRabbit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -585,9 +585,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = G8J3654U43;
+				DEVELOPMENT_TEAM = KL43C67G5Z;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/Native",
@@ -597,15 +601,11 @@
 					"-laval_decode",
 					"-lc++",
 					"-framework",
-					"VideoToolbox",
+					VideoToolbox,
 					"-framework",
-					"CoreMedia",
+					CoreMedia,
 					"-framework",
-					"CoreVideo",
-				);
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
+					CoreVideo,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.grassRabbit;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -623,9 +623,13 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CURRENT_PROJECT_VERSION = "$(FLUTTER_BUILD_NUMBER)";
-				DEVELOPMENT_TEAM = G8J3654U43;
+				DEVELOPMENT_TEAM = KL43C67G5Z;
 				ENABLE_BITCODE = NO;
 				INFOPLIST_FILE = Runner/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/Native",
@@ -635,15 +639,11 @@
 					"-laval_decode",
 					"-lc++",
 					"-framework",
-					"VideoToolbox",
+					VideoToolbox,
 					"-framework",
-					"CoreMedia",
+					CoreMedia,
 					"-framework",
-					"CoreVideo",
-				);
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
+					CoreVideo,
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.grassRabbit;
 				PRODUCT_NAME = "$(TARGET_NAME)";

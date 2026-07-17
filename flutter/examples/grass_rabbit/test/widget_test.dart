@@ -1,31 +1,39 @@
 // Smoke tests for the grass-rabbit example.
 //
-// The `graph reacts to hover` test is the important, deterministic one: it
-// exercises the same parse + MotionGraphEngine wiring the UI uses (no FFI, no
-// widgets) and proves the graph transitions idle -> entering -> hover on a
-// hover.enter event, at the authored portal boundary.
+// The graph tests are the important, deterministic ones: they exercise the
+// same parse + MotionGraphEngine wiring AvalView uses (no FFI, no widgets)
+// against the format-1.0 mansion-woman asset the app ships, and prove the
+// graph transitions idle -> hi -> idle from a bound input event.
 
 import 'dart:io';
 
+import 'package:aval_flutter/aval_flutter.dart';
 import 'package:aval_format/aval_format.dart';
 import 'package:aval_graph/aval_graph.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:grass_rabbit/main.dart';
-import 'package:grass_rabbit/src/rabbit_controller.dart';
+
+const _assetPath = 'assets/mansion-woman.avl/h264.avl';
 
 void main() {
-  test('parse grass-rabbit.avl: header + manifest + access-unit index', () {
-    final bytes = File('assets/grass-rabbit.avl').readAsBytesSync();
+  test('parse mansion-woman.avl: header + manifest + access-unit index', () {
+    final bytes = File(_assetPath).readAsBytesSync();
     final parsed = parseFrontIndex(bytes);
     expect(parsed.manifest.canvas.width, 1280);
     expect(parsed.manifest.canvas.height, 720);
     expect(parsed.manifest.frameRate.numerator, 24);
     expect(parsed.records, isNotEmpty);
-    expect(parsed.manifest.units.map((u) => u.id), contains('idle-loop'));
+    expect(parsed.manifest.units.map((u) => u.id),
+        containsAll(['idle-loop', 'hi', 'great']));
+    // Input bindings drive the AvalView gesture mapping.
+    expect(
+      {for (final b in parsed.manifest.bindings) b.source: b.event},
+      {'activate': 'great', 'engagement.on': 'hi'},
+    );
   });
 
-  test('graph reacts to hover: idle -> entering -> hover', () {
-    final bytes = File('assets/grass-rabbit.avl').readAsBytesSync();
+  test('graph reacts to engagement: idle -> hi -> idle', () {
+    final bytes = File(_assetPath).readAsBytesSync();
     final parsed = parseFrontIndex(bytes);
 
     final engine = MotionGraphEngine()
@@ -43,69 +51,65 @@ void main() {
       ordinal += BigInt.one;
     }
 
-    // Drain the intro one-shot (30 frames) so we settle into idle.
     for (var i = 0; i < 60; i++) {
       tick();
     }
     expect(visual(), 'idle');
 
-    // Hover in: requested state flips immediately; visual commits at the portal.
-    engine.send('hover.enter');
-    expect(engine.snapshot().requestedState, 'entering');
+    // engagement.on -> "hi": requested state flips immediately; visual
+    // commits at the portal.
+    engine.send('hi');
+    expect(engine.snapshot().requestedState, 'hi');
 
-    var reachedEntering = false;
-    var reachedHover = false;
-    for (var i = 0; i < 1000 && !reachedHover; i++) {
+    var reachedHi = false;
+    for (var i = 0; i < 1000 && !reachedHi; i++) {
       tick();
-      if (visual() == 'entering') reachedEntering = true;
-      if (visual() == 'hover') reachedHover = true;
+      if (visual() == 'hi') reachedHi = true;
     }
-    expect(reachedEntering, isTrue, reason: 'never entered "entering"');
-    expect(reachedHover, isTrue, reason: 'never reached "hover"');
+    expect(reachedHi, isTrue, reason: 'never reached "hi"');
+
+    // "hi" is a finite 240-frame unit whose completion edge returns to idle.
+    var backToIdle = false;
+    for (var i = 0; i < 1000 && !backToIdle; i++) {
+      tick();
+      if (visual() == 'idle') backToIdle = true;
+    }
+    expect(backToIdle, isTrue, reason: 'never completed back to "idle"');
   });
 
-  test('displayed unit follows the graph: idle-loop -> hover-in -> hover-loop',
-      () {
-    // The unit-for-state mapping used to drive the video.
-    expect(RabbitController.unitForState['idle'], 'idle-loop');
-    expect(RabbitController.unitForState['entering'], 'hover-in');
-    expect(RabbitController.unitForState['hover'], 'hover-loop');
-    expect(RabbitController.unitForState['exiting'], 'hover-out');
-    expect(RabbitController.loopUnitIds, containsAll(['idle-loop', 'hover-loop']));
-
-    final bytes = File('assets/grass-rabbit.avl').readAsBytesSync();
+  test('displayed unit follows the graph: idle-loop -> hi -> idle-loop', () {
+    final bytes = File(_assetPath).readAsBytesSync();
     final parsed = parseFrontIndex(bytes);
 
-    final controller = RabbitController();
-    controller.engine
-      ..install(parsed.graph)
-      ..beginAnimated();
+    // Graph + bindings only — no video bytes, no decoder.
+    final controller = AvalPlayerController()
+      ..installGraph(parsed.graph, bindings: parsed.manifest.bindings);
 
-    var ordinal = BigInt.zero;
-    void tick() {
-      controller.engine
-          .tick(MotionGraphTickOptions(contentOrdinal: ordinal));
-      ordinal += BigInt.one;
-    }
+    // State→unit mapping and loop kinds are derived from the manifest graph.
+    expect(controller.isLoopUnit('idle-loop'), isTrue);
+    expect(controller.isLoopUnit('hi'), isFalse);
+    expect(controller.isLoopUnit('great'), isFalse);
 
-    // Intro plays first, then settles into idle-loop.
-    expect(controller.currentUnitId(), 'intro');
     for (var i = 0; i < 60; i++) {
-      tick();
+      controller.tickGraph();
     }
     expect(controller.currentUnitId(), 'idle-loop');
 
-    controller.engine.send('hover.enter');
-    var sawHoverIn = false;
-    var sawHoverLoop = false;
-    for (var i = 0; i < 1000 && !sawHoverLoop; i++) {
-      tick();
-      final unit = controller.currentUnitId();
-      if (unit == 'hover-in') sawHoverIn = true;
-      if (unit == 'hover-loop') sawHoverLoop = true;
+    // The engagement.on binding resolves to the "hi" event.
+    controller.sendSource('engagement.on');
+    var sawHi = false;
+    for (var i = 0; i < 1000 && !sawHi; i++) {
+      controller.tickGraph();
+      if (controller.currentUnitId() == 'hi') sawHi = true;
     }
-    expect(sawHoverIn, isTrue, reason: 'video never switched to hover-in');
-    expect(sawHoverLoop, isTrue, reason: 'video never switched to hover-loop');
+    expect(sawHi, isTrue, reason: 'video never switched to hi');
+
+    var backToIdle = false;
+    for (var i = 0; i < 1000 && !backToIdle; i++) {
+      controller.tickGraph();
+      if (controller.currentUnitId() == 'idle-loop') backToIdle = true;
+    }
+    expect(backToIdle, isTrue, reason: 'video never returned to idle-loop');
 
     controller.dispose();
   });

@@ -1,20 +1,16 @@
-// AVAL Flutter port — grass-rabbit desktop example.
+// AVAL Flutter port — grass-rabbit example.
 //
-// Proves the Phase 3 Dart<->Rust FFI round-trip: the idle-loop unit is decoded
-// through the aval_decode Rust core (plain dart:ffi) and displayed as a looping
-// animation, while the aval_graph MotionGraphEngine reacts to mouse hover and
-// drives the state label (idle/entering/hover/exiting).
+// A thin consumer of the aval_flutter package's AvalView widget (the Flutter
+// equivalent of the web player's <aval-video> element): the mansion-woman
+// asset is decoded per-platform (Rust FFI natively, WebCodecs on web) and
+// driven by the aval_graph MotionGraphEngine; this app only supplies chrome
+// (maximize/zoom, state badge, hints) and side-band unit audio.
 
-import 'dart:async';
-import 'dart:ui' as ui;
-
+import 'package:aval_flutter/aval_flutter.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
-import 'src/gpu_frame_painter.dart';
-import 'src/rabbit_controller.dart';
 import 'src/unit_audio.dart';
 
 void main() {
@@ -43,27 +39,14 @@ class RabbitPage extends StatefulWidget {
   State<RabbitPage> createState() => _RabbitPageState();
 }
 
-class _RabbitPageState extends State<RabbitPage>
-    with SingleTickerProviderStateMixin {
-  final RabbitController _controller = RabbitController();
+class _RabbitPageState extends State<RabbitPage> {
+  final AvalPlayerController _controller = AvalPlayerController();
   final UnitAudioPlayer _audio = UnitAudioPlayer();
-  late final Ticker _ticker;
 
-  /// The frame currently on screen; the painter repaints when it changes.
-  final ValueNotifier<ui.Image?> _displayImage = ValueNotifier<ui.Image?>(null);
-
-  /// The compiled GPU frame-compositor shader (ARCHITECTURE.md §3.2). Null
-  /// until loaded, during which `_buildVideoSurface` falls back to the CPU
-  /// painter so first paint is never blocked on shader compilation.
-  ui.FragmentProgram? _frameProgram;
-
-  /// Rebuild signal for the state label (visual/requested state changed).
-  final ValueNotifier<int> _stateEpoch = ValueNotifier<int>(0);
-
-  Duration? _lastTick;
-  double _accumulatedMicros = 0;
-  int _stepCount = 0;
-  bool _hovering = false;
+  /// One AvalView instance shared by the compact and maximized layouts: the
+  /// GlobalKey reparents (rather than recreates) its state on toggle, so the
+  /// presentation clock and audio don't restart.
+  final GlobalKey _avalViewKey = GlobalKey();
 
   /// When true, video fills the window/screen (contain + pinch-zoom). The app
   /// starts maximized so the whole scene is the immediate presentation.
@@ -72,41 +55,17 @@ class _RabbitPageState extends State<RabbitPage>
   /// Pinch/pan transform while maximized.
   final TransformationController _zoomController = TransformationController();
 
-  /// The unit currently being played and its unit-local frame counter.
-  String _currentUnit = '';
-  int _unitLocalFrame = 0;
-
-  /// After a unit switch, hold the previous paint until the new unit is ready,
-  /// then show its first frame once before advancing.
-  bool _awaitingFirstFrame = false;
-
   @override
   void initState() {
     super.initState();
     // App starts maximized (see [_maximized]); apply immersive chrome to match.
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-    _ticker = createTicker(_onTick);
-    loadFramePaintProgram().then((program) {
-      if (!mounted) return;
-      setState(() => _frameProgram = program);
-    });
-    _controller.load().then((_) {
-      if (!mounted) return;
-      setState(() {});
-      if (_controller.loaded) {
-        // Show the first unit's first frame immediately, then let the ticker
-        // drive playback.
-        _currentUnit = _controller.currentUnitId();
-        _displayImage.value = _controller.imageFor(_currentUnit, 0);
-        _syncAudio(_currentUnit);
-        _ticker.start();
-      }
-    });
+    _controller.addListener(_onControllerChanged);
+    _controller.loadAsset('assets/mansion-woman.avl/h264.avl');
   }
 
-  void _syncAudio(String unitId) {
-    // Fire-and-forget; just_audio handles overlap by replacing the source.
-    _audio.playUnit(unitId, loop: _controller.isLoopUnit(unitId));
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
   }
 
   void _setMaximized(bool value) {
@@ -128,68 +87,13 @@ class _RabbitPageState extends State<RabbitPage>
     _zoomController.value = Matrix4.identity();
   }
 
-  void _onTick(Duration elapsed) {
-    if (!_controller.loaded || _controller.totalFrames == 0) return;
-    final last = _lastTick;
-    _lastTick = elapsed;
-    if (last == null) return;
-
-    // Gate the display/graph clock to the manifest frame rate rather than the
-    // display refresh rate.
-    final frameMicros =
-        1e6 * _controller.frameRateDenominator / _controller.frameRateNumerator;
-    _accumulatedMicros += (elapsed - last).inMicroseconds;
-    while (_accumulatedMicros >= frameMicros) {
-      _accumulatedMicros -= frameMicros;
-      _stepCount++;
-      // Graph: advance one authored frame so completion/portal boundaries fire.
-      _controller.tickGraph();
-      // Video: follow the graph. When the graph's unit changes, restart the
-      // unit-local frame counter (approximation of Phase 7-8 scheduling).
-      final unit = _controller.currentUnitId();
-      if (unit != _currentUnit) {
-        _currentUnit = unit;
-        _unitLocalFrame = 0;
-        _awaitingFirstFrame = true;
-        _syncAudio(unit);
-        // High-res units are decoded on demand; keep painting the previous
-        // frame until the new unit has frames (no black flash).
-        unawaited(_controller.ensureUnitDecoded(unit));
-      } else if (_controller.isUnitReady(unit) && !_awaitingFirstFrame) {
-        _unitLocalFrame++;
-      }
-      // Only advance the painted frame when the unit is ready; otherwise hold
-      // whatever is currently on screen (last frame of previous unit).
-      final next = _controller.imageFor(unit, _unitLocalFrame);
-      if (next != null) {
-        _displayImage.value = next;
-        _awaitingFirstFrame = false;
-      }
-    }
-    // Cheap: bump the label epoch every step; the label widget only rebuilds
-    // when the rendered string actually changes.
-    _stateEpoch.value = _stepCount;
-  }
-
-  void _setHover(bool hovering) {
-    if (_hovering == hovering) return;
-    _hovering = hovering;
-    if (hovering) {
-      // engagement.on → "hi" event (mansion-woman binding).
-      _controller.onEngagementOn();
-    }
-    // engagement.off has no binding; hi→idle is completion-triggered.
-  }
-
   @override
   void dispose() {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _zoomController.dispose();
-    _ticker.dispose();
-    _displayImage.dispose();
-    _stateEpoch.dispose();
-    _audio.dispose();
+    _controller.removeListener(_onControllerChanged);
     _controller.dispose();
+    _audio.dispose();
     super.dispose();
   }
 
@@ -206,7 +110,7 @@ class _RabbitPageState extends State<RabbitPage>
       return Center(
         child: _ErrorView(
           error: _controller.error!,
-          libPath: avalDecodeLibPath,
+          decoder: _controller.decoderDescription,
         ),
       );
     }
@@ -222,7 +126,8 @@ class _RabbitPageState extends State<RabbitPage>
           return SingleChildScrollView(
             padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
             child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight - 48),
+              constraints:
+                  BoxConstraints(minHeight: constraints.maxHeight - 48),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -230,9 +135,11 @@ class _RabbitPageState extends State<RabbitPage>
                       style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 4),
                   Text(
-                    '${_controller.totalFrames} frames · ${_controller.unitFrames.length} units · '
+                    '${_controller.totalFrames} frames · '
+                    '${_controller.unitFrames.length} units · '
                     '${_controller.canvasWidth}×${_controller.canvasHeight} · '
-                    '${_controller.frameRateNumerator}fps · FFI decode',
+                    '${_controller.frameRateNumerator}fps · '
+                    '${_controller.decoderDescription}',
                     textAlign: TextAlign.center,
                     style: Theme.of(context)
                         .textTheme
@@ -245,7 +152,7 @@ class _RabbitPageState extends State<RabbitPage>
                     child: _buildVideo(maxWidth: 720),
                   ),
                   const SizedBox(height: 16),
-                  _StateBadge(controller: _controller, epoch: _stateEpoch),
+                  _StateBadge(controller: _controller),
                   const SizedBox(height: 12),
                   Text(
                     defaultTargetPlatform == TargetPlatform.iOS ||
@@ -322,8 +229,22 @@ class _RabbitPageState extends State<RabbitPage>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                _StateBadge(controller: _controller, epoch: _stateEpoch),
+                _StateBadge(controller: _controller),
                 const SizedBox(height: 8),
+                Text(
+                  defaultTargetPlatform == TargetPlatform.iOS ||
+                          defaultTargetPlatform == TargetPlatform.android
+                      ? 'Long-press → "hi" · Tap → "great"'
+                      : 'Hover → "hi" · Tap → "great"',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white70,
+                        shadows: const [
+                          Shadow(blurRadius: 6, color: Colors.black87),
+                        ],
+                      ),
+                ),
+                const SizedBox(height: 4),
                 Text(
                   'Pinch to zoom · Double-tap to reset',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
@@ -381,43 +302,22 @@ class _RabbitPageState extends State<RabbitPage>
     BoxFit fit = BoxFit.contain,
     VoidCallback? onDoubleTap,
   }) {
-    return MouseRegion(
-      onEnter: (_) => _setHover(true),
-      onExit: (_) => _setHover(false),
-      child: GestureDetector(
-        onTap: () {
-          if (_controller.loaded) _controller.onActivate();
-        },
-        // Mobile has no hover: long-press stands in for engagement.on → "hi".
-        onLongPress: () {
-          if (_controller.loaded) _controller.onEngagementOn();
-        },
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(borderRadius),
+        border: showBorder ? Border.all(color: Colors.white12) : null,
+        color: Colors.black,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: AvalView(
+        key: _avalViewKey,
+        controller: _controller,
+        fit: fit,
         onDoubleTap: onDoubleTap,
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(borderRadius),
-            border: showBorder ? Border.all(color: Colors.white12) : null,
-            color: Colors.black,
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: RepaintBoundary(
-            child: CustomPaint(
-              painter: _frameProgram != null
-                  ? GpuFramePainter(
-                      image: _displayImage,
-                      program: _frameProgram!,
-                      fit: fit,
-                    )
-                  : _FramePainter(image: _displayImage, fit: fit),
-              // Video repaints every frame, so the layer must never be
-              // raster-cached. Without this, InteractiveViewer's parent
-              // Transform (pan/zoom) triggers the raster cache to reuse a
-              // frozen snapshot of the video while dragging.
-              willChange: true,
-              child: const SizedBox.expand(),
-            ),
-          ),
-        ),
+        // Side-band audio: the compiled .avl is video-only; AAC clips live
+        // beside it as Flutter assets and follow unit switches.
+        onUnitChanged: (unitId, looping) =>
+            _audio.playUnit(unitId, loop: looping),
       ),
     );
   }
@@ -448,54 +348,17 @@ class _MaximizeButton extends StatelessWidget {
   }
 }
 
-/// Paints the current decoded frame. [fit] is [BoxFit.contain] in compact mode
-/// and [BoxFit.cover] when maximized so the frame fills the screen.
-class _FramePainter extends CustomPainter {
-  _FramePainter({required this.image, this.fit = BoxFit.contain})
-      : super(repaint: image);
-
-  final ValueListenable<ui.Image?> image;
-  final BoxFit fit;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final img = image.value;
-    if (img == null) return;
-    final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
-    final fitted = applyBoxFit(fit, src.size, size);
-    final inputSubrect = Alignment.center.inscribe(
-      fitted.source,
-      src,
-    );
-    final dstRect = Alignment.center.inscribe(
-      fitted.destination,
-      Offset.zero & size,
-    );
-    canvas.drawImageRect(
-      img,
-      inputSubrect,
-      dstRect,
-      Paint()..filterQuality = FilterQuality.high,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_FramePainter oldDelegate) =>
-      oldDelegate.image != image || oldDelegate.fit != fit;
-}
-
 /// Shows the graph's visual state, plus the requested state while a transition
 /// is pending — the label proves the MotionGraphEngine reacts to hover.
 class _StateBadge extends StatelessWidget {
-  const _StateBadge({required this.controller, required this.epoch});
+  const _StateBadge({required this.controller});
 
-  final RabbitController controller;
-  final ValueListenable<int> epoch;
+  final AvalPlayerController controller;
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<int>(
-      valueListenable: epoch,
+      valueListenable: controller.ticks,
       builder: (context, value, child) {
         final visual = controller.visualState;
         final requested = controller.requestedState;
@@ -519,7 +382,8 @@ class _StateBadge extends StatelessWidget {
                   style: const TextStyle(
                       fontWeight: FontWeight.w700, fontSize: 16)),
               if (pending) ...[
-                const Text('  →  ', style: TextStyle(color: Colors.amberAccent)),
+                const Text('  →  ',
+                    style: TextStyle(color: Colors.amberAccent)),
                 Text(requested,
                     style: const TextStyle(
                         color: Colors.amberAccent, fontSize: 16)),
@@ -537,22 +401,22 @@ class _LoadingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Column(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        CircularProgressIndicator(),
-        SizedBox(height: 16),
-        Text('Decoding idle-loop via aval_decode (FFI)…'),
+        const CircularProgressIndicator(),
+        const SizedBox(height: 16),
+        Text('Decoding idle-loop via $unitDecoderDescription…'),
       ],
     );
   }
 }
 
 class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.error, required this.libPath});
+  const _ErrorView({required this.error, required this.decoder});
 
   final Object error;
-  final String libPath;
+  final String decoder;
 
   @override
   Widget build(BuildContext context) {
@@ -570,7 +434,7 @@ class _ErrorView extends StatelessWidget {
               textAlign: TextAlign.center,
               style: const TextStyle(color: Colors.white70)),
           const SizedBox(height: 16),
-          SelectableText('AVAL_DECODE_LIB = $libPath',
+          SelectableText('decoder: $decoder',
               style: const TextStyle(color: Colors.white38, fontSize: 12)),
         ],
       ),

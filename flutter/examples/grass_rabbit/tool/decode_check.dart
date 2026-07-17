@@ -8,7 +8,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:aval_format/aval_format.dart';
-import 'package:grass_rabbit/src/aval_ffi.dart';
+import 'package:aval_flutter/src/ffi/aval_ffi.dart';
 
 void main() {
   final libPath = Platform.environment['AVAL_DECODE_LIB'] ??
