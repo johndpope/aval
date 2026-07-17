@@ -1,6 +1,6 @@
 /// State, edge, binding, and readiness schema validation.
 ///
-/// Dart port of `packages/format/src/manifest-graph-schema.ts`.
+/// Dart port of `packages/format/src/manifest-graph-schema.ts` (1.0).
 library;
 
 import 'manifest_constraints.dart';
@@ -19,42 +19,42 @@ const Set<String> _bindingSources = {
   'visible',
 };
 
-List<StateV01> cloneStates(Object? value, FormatBudgets budgets, String path) {
+List<State> cloneStates(Object? value, FormatBudgets budgets, String path) {
   final inputs = boundedArray(value, path, 1, budgets.maxStates);
-  final states = <StateV01>[
+  final states = <State>[
     for (var index = 0; index < inputs.length; index += 1)
       _cloneState(inputs[index], '$path[$index]'),
   ];
-  requireIdOrder<StateV01>(states, (s) => s.id, path);
+  requireIdOrder<State>(states, (s) => s.id, path);
   return states;
 }
 
-StateV01 _cloneState(Object? entry, String statePath) {
+State _cloneState(Object? entry, String statePath) {
   final input = record(entry, statePath);
   exactKeys(input, ['id', 'bodyUnit'], statePath, ['initialUnit']);
   final id = identifier(input['id'], '$statePath.id');
   final bodyUnit = identifier(input['bodyUnit'], '$statePath.bodyUnit');
   if (!owns(input, 'initialUnit')) {
-    return StateV01(id: id, bodyUnit: bodyUnit);
+    return State(id: id, bodyUnit: bodyUnit);
   }
-  return StateV01(
+  return State(
     id: id,
     bodyUnit: bodyUnit,
     initialUnit: identifier(input['initialUnit'], '$statePath.initialUnit'),
   );
 }
 
-List<EdgeV01> cloneEdges(Object? value, FormatBudgets budgets, String path) {
+List<Edge> cloneEdges(Object? value, FormatBudgets budgets, String path) {
   final inputs = boundedArray(value, path, 0, budgets.maxEdges);
-  final edges = <EdgeV01>[
+  final edges = <Edge>[
     for (var index = 0; index < inputs.length; index += 1)
       _cloneEdge(inputs[index], '$path[$index]'),
   ];
-  requireIdOrder<EdgeV01>(edges, (e) => e.id, path);
+  requireIdOrder<Edge>(edges, (e) => e.id, path);
   return edges;
 }
 
-EdgeV01 _cloneEdge(Object? value, String path) {
+Edge _cloneEdge(Object? value, String path) {
   final input = record(value, path);
   final startProbe = record(input['start'], '$path.start');
   final cut = startProbe['type'] == 'cut';
@@ -84,20 +84,21 @@ EdgeV01 _cloneEdge(Object? value, String path) {
       minRunwayFrames,
       maxRunwayFrames,
     );
-    return CutEdgeV01(
+    return CutEdge(
       id: id,
       from: from,
       to: to,
       trigger: trigger,
-      start: start as CutStartV01,
+      start: start as CutStart,
       targetRunwayFrames: targetRunwayFrames,
     );
   }
 
-  final continuity = oneOf(input['continuity'], ['exact-authored', 'exact-reverse'], '$path.continuity');
+  final continuity =
+      oneOf(input['continuity'], ['exact-authored', 'exact-reverse'], '$path.continuity');
   final transition =
       owns(input, 'transition') ? _cloneTransition(input['transition'], '$path.transition') : null;
-  return NonCutEdgeV01(
+  return NonCutEdge(
     id: id,
     from: from,
     to: to,
@@ -108,24 +109,24 @@ EdgeV01 _cloneEdge(Object? value, String path) {
   );
 }
 
-TriggerV01 _cloneTrigger(Object? value, String path) {
+Trigger _cloneTrigger(Object? value, String path) {
   final input = record(value, path);
   if (input['type'] == 'completion') {
     exactKeys(input, ['type'], path);
-    return const CompletionTriggerV01();
+    return const CompletionTrigger();
   }
   if (input['type'] == 'event') {
     exactKeys(input, ['type', 'name'], path);
-    return EventTriggerV01(identifier(input['name'], '$path.name'));
+    return EventTrigger(identifier(input['name'], '$path.name'));
   }
   invalid('$path.type', 'must be event or completion');
 }
 
-StartV01 _cloneStart(Object? value, String path) {
+Start _cloneStart(Object? value, String path) {
   final input = record(value, path);
   if (input['type'] == 'portal') {
     exactKeys(input, ['type', 'sourcePort', 'targetPort', 'maxWaitFrames'], path);
-    return PortalStartV01(
+    return PortalStart(
       sourcePort: identifier(input['sourcePort'], '$path.sourcePort'),
       targetPort: identifier(input['targetPort'], '$path.targetPort'),
       maxWaitFrames: nonNegativeInteger(input['maxWaitFrames'], '$path.maxWaitFrames'),
@@ -133,7 +134,7 @@ StartV01 _cloneStart(Object? value, String path) {
   }
   if (input['type'] == 'finish') {
     exactKeys(input, ['type', 'targetPort', 'maxWaitFrames'], path);
-    return FinishStartV01(
+    return FinishStart(
       targetPort: identifier(input['targetPort'], '$path.targetPort'),
       maxWaitFrames: nonNegativeInteger(input['maxWaitFrames'], '$path.maxWaitFrames'),
     );
@@ -141,25 +142,25 @@ StartV01 _cloneStart(Object? value, String path) {
   if (input['type'] == 'cut') {
     exactKeys(input, ['type', 'targetPort', 'maxWaitFrames'], path);
     literal(input['maxWaitFrames'], 1, '$path.maxWaitFrames');
-    return CutStartV01(targetPort: identifier(input['targetPort'], '$path.targetPort'));
+    return CutStart(targetPort: identifier(input['targetPort'], '$path.targetPort'));
   }
   invalid('$path.type', 'must be portal, finish, or cut');
 }
 
-TransitionV01 _cloneTransition(Object? value, String path) {
+Transition _cloneTransition(Object? value, String path) {
   final input = record(value, path);
   if (input['kind'] == 'locked') {
     exactKeys(input, ['kind', 'unit'], path);
-    return LockedTransitionV01(unit: identifier(input['unit'], '$path.unit'));
+    return LockedTransition(unit: identifier(input['unit'], '$path.unit'));
   }
   if (input['kind'] == 'reversible') {
     exactKeys(input, ['kind', 'unit', 'direction'], path, ['reverseOf']);
     final unit = identifier(input['unit'], '$path.unit');
     final direction = oneOf(input['direction'], ['forward', 'reverse'], '$path.direction');
     if (!owns(input, 'reverseOf')) {
-      return ReversibleTransitionV01(unit: unit, direction: direction);
+      return ReversibleTransition(unit: unit, direction: direction);
     }
-    return ReversibleTransitionV01(
+    return ReversibleTransition(
       unit: unit,
       direction: direction,
       reverseOf: identifier(input['reverseOf'], '$path.reverseOf'),
@@ -168,9 +169,9 @@ TransitionV01 _cloneTransition(Object? value, String path) {
   invalid('$path.kind', 'must be locked or reversible');
 }
 
-List<BindingV01> cloneBindings(Object? value, FormatBudgets budgets, String path) {
+List<Binding> cloneBindings(Object? value, FormatBudgets budgets, String path) {
   final inputs = boundedArray(value, path, 0, budgets.maxBindings);
-  final bindings = <BindingV01>[
+  final bindings = <Binding>[
     for (var index = 0; index < inputs.length; index += 1)
       _cloneBinding(inputs[index], '$path[$index]'),
   ];
@@ -190,17 +191,17 @@ List<BindingV01> cloneBindings(Object? value, FormatBudgets budgets, String path
   return bindings;
 }
 
-BindingV01 _cloneBinding(Object? entry, String bindingPath) {
+Binding _cloneBinding(Object? entry, String bindingPath) {
   final input = record(entry, bindingPath);
   exactKeys(input, ['source', 'event'], bindingPath);
   final source = input['source'];
   if (source is! String || !_bindingSources.contains(source)) {
     invalid('$bindingPath.source', 'is not a supported binding source');
   }
-  return BindingV01(source: source, event: identifier(input['event'], '$bindingPath.event'));
+  return Binding(source: source, event: identifier(input['event'], '$bindingPath.event'));
 }
 
-ReadinessV01 cloneReadiness(Object? value, FormatBudgets budgets, String path) {
+Readiness cloneReadiness(Object? value, FormatBudgets budgets, String path) {
   final input = record(value, path);
   exactKeys(input, ['policy', 'bootstrapUnits', 'immediateEdges'], path);
   literal(input['policy'], 'all-routes', '$path.policy');
@@ -208,7 +209,7 @@ ReadinessV01 cloneReadiness(Object? value, FormatBudgets budgets, String path) {
       _cloneIdArray(input['bootstrapUnits'], budgets.maxUnits, '$path.bootstrapUnits');
   final immediateEdges =
       _cloneIdArray(input['immediateEdges'], budgets.maxEdges, '$path.immediateEdges');
-  return ReadinessV01(bootstrapUnits: bootstrapUnits, immediateEdges: immediateEdges);
+  return Readiness(bootstrapUnits: bootstrapUnits, immediateEdges: immediateEdges);
 }
 
 List<String> _cloneIdArray(Object? value, int maximum, String path) {

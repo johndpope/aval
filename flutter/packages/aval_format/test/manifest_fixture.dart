@@ -1,23 +1,28 @@
-// Dart port of packages/format/test/manifest-fixture.ts.
+// Dart port of packages/format/test/manifest-fixture.ts (1.0).
 //
-// Builds untyped Map/List manifest trees (matching how the TS fixture
-// builds plain JSON-shaped object literals) suitable as input to
-// `validateCompiledManifestV01`.
+// Builds untyped Map/List manifest trees (matching how the TS fixture builds
+// plain JSON-shaped object literals) suitable as input to
+// `validateCompiledManifest`.
 library;
 
 final String _digest = '0'.padRight(64, '0');
 
 String _numbered(String prefix, int index) => '$prefix-${index.toString().padLeft(2, '0')}';
 
-Map<String, Object?> _sample(int sampleStart, int sampleCount) =>
-    {'rendition': 'reference', 'sampleStart': sampleStart, 'sampleCount': sampleCount, 'sha256': _digest};
+Map<String, Object?> _chunk(int chunkStart, int chunkCount) => {
+      'rendition': 'video',
+      'chunkStart': chunkStart,
+      'chunkCount': chunkCount,
+      'frameCount': chunkCount,
+      'sha256': _digest,
+    };
 
 Map<String, Object?> _body(
   String id,
   String playback,
   int frameCount,
   List<int> portalFrames,
-  int sampleStart,
+  int chunkStart,
 ) =>
     {
       'id': id,
@@ -27,20 +32,23 @@ Map<String, Object?> _body(
       'ports': [
         {'id': 'default', 'entryFrame': 0, 'portalFrames': portalFrames},
       ],
-      'samples': [_sample(sampleStart, frameCount)],
+      'chunks': [_chunk(chunkStart, frameCount)],
     };
 
-Map<String, Object?> _basicUnit(String id, String kind, int frameCount, int sampleStart) => {
+Map<String, Object?> _basicUnit(String id, String kind, int frameCount, int chunkStart) => {
       'id': id,
       'kind': kind,
       'frameCount': frameCount,
-      'samples': [_sample(sampleStart, frameCount)],
+      'chunks': [_chunk(chunkStart, frameCount)],
     };
 
-/// A fresh compact manifest covering every graph-bearing 0.1 unit kind.
+/// A fresh compact manifest covering every graph-bearing 1.0 unit kind.
 Map<String, Object?> validManifest() => {
-      'formatVersion': '0.1',
+      'formatVersion': '1.0',
       'generator': 'aval-tests',
+      'codec': 'h264',
+      'bitstream': 'annex-b',
+      'layout': 'opaque',
       'canvas': {
         'width': 2,
         'height': 2,
@@ -51,13 +59,16 @@ Map<String, Object?> validManifest() => {
       'frameRate': {'numerator': 30, 'denominator': 1},
       'renditions': [
         {
-          'id': 'reference',
-          'profile': 'reference-rgba-v0',
-          'codec': 'aval.reference-rgba',
-          'codedWidth': 2,
-          'codedHeight': 2,
-          'alphaLayout': {'type': 'straight-rgba-v0'},
-          'capabilities': <String>[],
+          'id': 'video',
+          'codec': 'avc1.640020',
+          'bitDepth': 8,
+          'codedWidth': 16,
+          'codedHeight': 16,
+          'alphaLayout': {
+            'type': 'opaque',
+            'colorRect': [0, 0, 2, 2],
+          },
+          'bitrate': {'average': 1000, 'peak': 2000},
         },
       ],
       'units': [
@@ -76,7 +87,7 @@ Map<String, Object?> validManifest() => {
               {'state': 'a-c', 'port': 'default', 'frames': 6},
             ],
           },
-          'samples': [_sample(12, 6)],
+          'chunks': [_chunk(12, 6)],
         },
       ],
       'initialState': 'a-a',
@@ -163,9 +174,9 @@ Map<String, Object?> validManifest() => {
       'limits': {
         'maxCompiledBytes': 32 * 1024,
         'maxRuntimeBytes': 64 * 1024,
-        'decodedPixelBytes': 16,
+        'decodedPixelBytes': 1024,
         'persistentCacheBytes': 0,
-        'runtimeWorkingSetBytes': 16,
+        'runtimeWorkingSetBytes': 1024,
       },
     };
 
@@ -180,7 +191,7 @@ Map<String, Object?> limitManifest() {
       'ports': [
         {'id': 'default', 'entryFrame': 0, 'portalFrames': [0]},
       ],
-      'samples': <Map<String, Object?>>[],
+      'chunks': <Map<String, Object?>>[],
     };
   });
   final bridgeUnits = List<Map<String, Object?>>.generate(64, (index) {
@@ -188,20 +199,21 @@ Map<String, Object?> limitManifest() {
       'id': _numbered('bridge', index),
       'kind': 'bridge',
       'frameCount': index < 36 ? 14 : 13,
-      'samples': <Map<String, Object?>>[],
+      'chunks': <Map<String, Object?>>[],
     };
   });
   final units = [...bodyUnits, ...bridgeUnits];
-  var sampleStart = 0;
+  var chunkStart = 0;
   for (final unit in units) {
     final frameCount = unit['frameCount'] as int;
-    (unit['samples'] as List<Map<String, Object?>>).add({
-      'rendition': 'reference',
-      'sampleStart': sampleStart,
-      'sampleCount': frameCount,
+    (unit['chunks'] as List<Map<String, Object?>>).add({
+      'rendition': 'video',
+      'chunkStart': chunkStart,
+      'chunkCount': frameCount,
+      'frameCount': frameCount,
       'sha256': _digest,
     });
-    sampleStart += frameCount;
+    chunkStart += frameCount;
   }
 
   final states = List<Map<String, Object?>>.generate(32, (index) {
@@ -226,8 +238,11 @@ Map<String, Object?> limitManifest() {
   });
 
   return {
-    'formatVersion': '0.1',
+    'formatVersion': '1.0',
     'generator': 'aval-limit-tests',
+    'codec': 'h264',
+    'bitstream': 'annex-b',
+    'layout': 'opaque',
     'canvas': {
       'width': 2,
       'height': 2,
@@ -238,13 +253,16 @@ Map<String, Object?> limitManifest() {
     'frameRate': {'numerator': 60, 'denominator': 1},
     'renditions': [
       {
-        'id': 'reference',
-        'profile': 'reference-rgba-v0',
-        'codec': 'aval.reference-rgba',
-        'codedWidth': 2,
-        'codedHeight': 2,
-        'alphaLayout': {'type': 'straight-rgba-v0'},
-        'capabilities': <String>[],
+        'id': 'video',
+        'codec': 'avc1.640020',
+        'bitDepth': 8,
+        'codedWidth': 16,
+        'codedHeight': 16,
+        'alphaLayout': {
+          'type': 'opaque',
+          'colorRect': [0, 0, 2, 2],
+        },
+        'bitrate': {'average': 1000, 'peak': 2000},
       },
     ],
     'units': units,
@@ -260,9 +278,9 @@ Map<String, Object?> limitManifest() {
     'limits': {
       'maxCompiledBytes': 32 * 1024 * 1024,
       'maxRuntimeBytes': 64 * 1024 * 1024,
-      'decodedPixelBytes': 16,
+      'decodedPixelBytes': 1024,
       'persistentCacheBytes': 0,
-      'runtimeWorkingSetBytes': 16,
+      'runtimeWorkingSetBytes': 1024,
     },
   };
 }

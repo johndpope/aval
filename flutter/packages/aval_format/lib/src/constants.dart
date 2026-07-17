@@ -1,4 +1,4 @@
-/// Wire constants and budget resolution for the version-0.1 AVAL format.
+/// Wire constants and budget resolution for the version-1.0 AVAL format.
 ///
 /// Dart port of `packages/format/src/constants.ts`.
 library;
@@ -7,16 +7,14 @@ import 'errors.dart';
 import 'model.dart' show FormatBudgets, FormatOptions;
 
 const List<int> formatMagic = [0x41, 0x56, 0x4c, 0x46, 0x0d, 0x0a, 0x1a, 0x0a];
-const List<int> accessUnitIndexMagic = [0x41, 0x56, 0x4c, 0x49];
-const List<int> referenceFrameMagic = [0x41, 0x56, 0x52, 0x46];
+const List<int> chunkIndexMagic = [0x41, 0x56, 0x4c, 0x49];
 
-const int formatVersionMajor = 0;
-const int formatVersionMinor = 1;
+const int formatVersionMajor = 1;
+const int formatVersionMinor = 0;
 const int formatHeaderLength = 64;
 const int formatAlignment = 8;
-const int accessUnitIndexHeaderLength = 16;
-const int accessUnitRecordLength = 32;
-const int referenceFrameHeaderLength = 24;
+const int chunkIndexHeaderLength = 16;
+const int chunkIndexRecordLength = 48;
 const int _uint32Max = 0xffffffff;
 
 final RegExp identifierPattern = RegExp(r'^[a-z][a-z0-9._-]{0,63}$');
@@ -28,7 +26,7 @@ final FormatBudgets formatDefaultBudgets = FormatBudgets(
   maxFileBytes: _maxSafeInteger,
   maxManifestBytes: 1024 * 1024,
   maxIndexBytes: _maxSafeInteger,
-  maxSampleBytes: _uint32Max,
+  maxChunkBytes: _uint32Max,
   maxPngBytes: _maxSafeInteger,
   maxJsonDepth: 64,
   maxJsonNodes: 20000,
@@ -40,7 +38,7 @@ final FormatBudgets formatDefaultBudgets = FormatBudgets(
   maxBindings: 32,
   maxBlobRanges: 128,
   maxTotalUnitFrames: _uint32Max,
-  maxSampleRecords: _uint32Max,
+  maxChunkRecords: _uint32Max,
   maxPortsPerBody: 16,
   maxReversibleFrames: _uint32Max,
 );
@@ -49,7 +47,7 @@ const List<String> _budgetKeys = [
   'maxFileBytes',
   'maxManifestBytes',
   'maxIndexBytes',
-  'maxSampleBytes',
+  'maxChunkBytes',
   'maxPngBytes',
   'maxJsonDepth',
   'maxJsonNodes',
@@ -61,7 +59,7 @@ const List<String> _budgetKeys = [
   'maxBindings',
   'maxBlobRanges',
   'maxTotalUnitFrames',
-  'maxSampleRecords',
+  'maxChunkRecords',
   'maxPortsPerBody',
   'maxReversibleFrames',
 ];

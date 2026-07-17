@@ -1,19 +1,18 @@
-/// Parses and completely validates version-0.1 aval assets.
+/// Parses and completely validates version-1.0 aval assets.
 ///
 /// Dart port of `packages/format/src/parser.ts`.
 library;
 
 import 'dart:typed_data';
 
-import 'access_unit_index.dart' show parseAccessUnitIndex;
+import 'access_unit_index.dart' show parseEncodedChunkIndex;
 import 'canonical_json.dart' show parseCanonicalJson, serializeCanonicalJson;
 import 'checked_integer.dart' show checkedAdd, requireByteRange;
 import 'graph_adapter.dart' show adaptManifestToMotionGraph;
 import 'header.dart' show parseHeader;
 import 'layout.dart' show deriveCanonicalAssetLayout, validateZeroPadding;
 import 'manifest_json.dart' show compiledManifestToJson;
-import 'manifest_schema.dart' show validateCompiledManifestV01;
-import 'reference_frame.dart' show ReferenceFrameValidationInput, validateReferenceFrame;
+import 'manifest_schema.dart' show validateCompiledManifest;
 import 'errors.dart';
 import 'model.dart';
 
@@ -27,6 +26,15 @@ const List<String> _headerFields = [
   'manifestLength',
   'indexOffset',
   'indexLength',
+];
+
+const List<String> _recordFields = [
+  'byteOffset',
+  'byteLength',
+  'presentationTimestamp',
+  'duration',
+  'randomAccess',
+  'displayedFrameCount',
 ];
 
 Never _rethrowAtFileOffset(Object error, int baseOffset) {
@@ -63,6 +71,15 @@ Map<String, Object?> _headerFieldMap(FormatHeader header) => {
       'indexLength': header.indexLength,
     };
 
+Map<String, Object?> _recordFieldMap(EncodedChunkRecord record) => {
+      'byteOffset': record.byteOffset,
+      'byteLength': record.byteLength,
+      'presentationTimestamp': record.presentationTimestamp,
+      'duration': record.duration,
+      'randomAccess': record.randomAccess,
+      'displayedFrameCount': record.displayedFrameCount,
+    };
+
 void _assertMatchingFrontIndex(
   ParsedFrontIndex supplied,
   ParsedFrontIndex reparsed, [
@@ -83,9 +100,11 @@ void _assertMatchingFrontIndex(
   Uint8List reparsedManifestBytes;
   try {
     final suppliedManifest =
-        validateCompiledManifestV01(compiledManifestToJson(supplied.manifest), options);
-    suppliedManifestBytes = serializeCanonicalJson(compiledManifestToJson(suppliedManifest), options);
-    reparsedManifestBytes = serializeCanonicalJson(compiledManifestToJson(reparsed.manifest), options);
+        validateCompiledManifest(compiledManifestToJson(supplied.manifest), options);
+    suppliedManifestBytes =
+        serializeCanonicalJson(compiledManifestToJson(suppliedManifest), options);
+    reparsedManifestBytes =
+        serializeCanonicalJson(compiledManifestToJson(reparsed.manifest), options);
   } on FormatError {
     throw FormatError(
       FormatErrorCode.layoutInvalid,
@@ -106,23 +125,27 @@ void _assertMatchingFrontIndex(
     );
   }
   for (var index = 0; index < reparsed.records.length; index += 1) {
-    final suppliedRecord = supplied.records[index];
-    final reparsedRecord = reparsed.records[index];
-    if (suppliedRecord.payloadOffset != reparsedRecord.payloadOffset ||
-        suppliedRecord.payloadLength != reparsedRecord.payloadLength ||
-        suppliedRecord.unitIndex != reparsedRecord.unitIndex ||
-        suppliedRecord.renditionIndex != reparsedRecord.renditionIndex ||
-        suppliedRecord.key != reparsedRecord.key ||
-        suppliedRecord.frameIndex != reparsedRecord.frameIndex) {
+    final suppliedRecord =
+        index < supplied.records.length ? _recordFieldMap(supplied.records[index]) : null;
+    final reparsedRecord = _recordFieldMap(reparsed.records[index]);
+    if (suppliedRecord == null) {
       throw FormatError(
         FormatErrorCode.layoutInvalid,
-        'supplied front index record $index field does not match the asset',
+        'supplied front index record set is incomplete',
       );
+    }
+    for (final field in _recordFields) {
+      if (suppliedRecord[field] != reparsedRecord[field]) {
+        throw FormatError(
+          FormatErrorCode.layoutInvalid,
+          'supplied front index record $index field $field does not match the asset',
+        );
+      }
     }
   }
 }
 
-CompiledManifestV01 _parseManifest(Uint8List bytes, FormatHeader header, [FormatOptions? options]) {
+CompiledManifest _parseManifest(Uint8List bytes, FormatHeader header, [FormatOptions? options]) {
   final end = requireByteRange(
     bytes,
     header.manifestOffset,
@@ -136,12 +159,11 @@ CompiledManifestV01 _parseManifest(Uint8List bytes, FormatHeader header, [Format
   } catch (error) {
     _rethrowAtFileOffset(error, header.manifestOffset);
   }
-  return validateCompiledManifestV01(parsed, options);
+  return validateCompiledManifest(parsed, options);
 }
 
-/// Parses exactly the bounded metadata prefix needed to route and
-/// range-load an asset. Payload bytes, when present in the input view, are
-/// ignored.
+/// Parses exactly the bounded metadata prefix needed to route and range-load
+/// an asset. Payload bytes, when present in the input view, are ignored.
 ParsedFrontIndex parseFrontIndex(Uint8List bytesFromFileStart, [FormatOptions? options]) {
   try {
     final header = parseHeader(bytesFromFileStart, options);
@@ -170,9 +192,9 @@ ParsedFrontIndex parseFrontIndex(Uint8List bytesFromFileStart, [FormatOptions? o
       ByteRange(offset: manifestEnd, length: header.indexOffset - manifestEnd),
     ]);
 
-    List<AccessUnitRecord> records;
+    List<EncodedChunkRecord> records;
     try {
-      records = parseAccessUnitIndex(
+      records = parseEncodedChunkIndex(
         Uint8List.sublistView(bytesFromFileStart, header.indexOffset, frontIndexEnd),
         manifest,
         options,
@@ -198,30 +220,7 @@ ParsedFrontIndex parseFrontIndex(Uint8List bytesFromFileStart, [FormatOptions? o
   }
 }
 
-void _validatePayloadProfiles(Uint8List bytes, ParsedFrontIndex frontIndex, [FormatOptions? options]) {
-  for (final record in frontIndex.records) {
-    final rendition = record.renditionIndex < frontIndex.manifest.renditions.length
-        ? frontIndex.manifest.renditions[record.renditionIndex]
-        : null;
-    if (rendition is! ReferenceRgbaRenditionV01) continue;
-    final sampleEnd =
-        checkedAdd(record.payloadOffset, record.payloadLength, bytes.length, 'reference sample end');
-    try {
-      validateReferenceFrame(ReferenceFrameValidationInput(
-        sample: Uint8List.sublistView(bytes, record.payloadOffset, sampleEnd),
-        expectedWidth: rendition.codedWidth,
-        expectedHeight: rendition.codedHeight,
-        expectedFrameIndex: record.frameIndex,
-        options: options,
-      ));
-    } catch (error) {
-      _rethrowAtFileOffset(error, record.payloadOffset);
-    }
-  }
-}
-
-/// Reparses and completely validates one exact, caller-owned asset byte
-/// array.
+/// Reparses and completely validates one exact, caller-owned asset byte array.
 ValidatedAssetLayout validateCompleteAsset({
   required Uint8List bytes,
   ParsedFrontIndex? frontIndex,
@@ -246,9 +245,9 @@ ValidatedAssetLayout validateCompleteAsset({
       _assertMatchingFrontIndex(frontIndex, reparsed, options);
     }
 
-    final layout = deriveCanonicalAssetLayout(reparsed.header, reparsed.manifest, reparsed.records, options);
+    final layout = deriveCanonicalAssetLayout(
+        reparsed.header, reparsed.manifest, reparsed.records, options);
     validateZeroPadding(bytes, layout.paddingRanges);
-    _validatePayloadProfiles(bytes, reparsed, options);
 
     return ValidatedAssetLayout(frontIndex: reparsed, fileRange: layout.fileRange);
   } on FormatError {

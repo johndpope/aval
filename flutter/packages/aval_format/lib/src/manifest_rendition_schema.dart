@@ -1,26 +1,26 @@
-/// Canvas, frame-rate, and rendition schema validation.
+/// Canvas, frame-rate, and per-codec rendition schema validation.
 ///
-/// Dart port of `packages/format/src/manifest-rendition-schema.ts`.
+/// Dart port of `packages/format/src/manifest-rendition-schema.ts` (1.0). The
+/// per-codec model validates the WebCodecs codec string against the asset's
+/// codec family/bit depth via `video/codec_string.dart` and enforces the
+/// shared opaque/packed-alpha pane geometry from `video/geometry.dart`.
 library;
 
-import 'avc/codec.dart' show AvcCodecV01, AvcLevelLimits, avcLevelLimits, isAvcCodec;
-import 'avc/rendition_geometry.dart' show AvcRenditionGeometryInput, deriveAvcRenditionGeometryAtPath;
-import 'errors.dart';
 import 'manifest_validation.dart';
 import 'model.dart';
+import 'video/codec_string.dart' show isVideoCodecString;
+import 'video/geometry.dart' show packedAlphaGutter;
 
 const int _maxPixelAspectTerm = 10000;
 const int _maxFrameRate = 60;
 const int _maxFrameRateDenominator = 1001;
-const int _pngDimensionMax = 0xffffffff;
-const int _referenceDimensionMax = 0xffff;
-const int _referenceSampleHeaderBytes = 24;
+const int _dimensionMax = 0xffffffff;
 
-CanvasV01 cloneCanvas(Object? value, String path) {
+Canvas cloneCanvas(Object? value, String path) {
   final input = record(value, path);
   exactKeys(input, ['width', 'height', 'fit', 'pixelAspect', 'colorSpace'], path);
-  final width = positiveInteger(input['width'], '$path.width', _pngDimensionMax);
-  final height = positiveInteger(input['height'], '$path.height', _pngDimensionMax);
+  final width = positiveInteger(input['width'], '$path.width', _dimensionMax);
+  final height = positiveInteger(input['height'], '$path.height', _dimensionMax);
   final fit = oneOf(input['fit'], ['contain', 'cover', 'fill', 'none'], '$path.fit');
   final pixelAspectInput = tuple(input['pixelAspect'], 2, '$path.pixelAspect');
   final pixelAspect = [
@@ -28,10 +28,10 @@ CanvasV01 cloneCanvas(Object? value, String path) {
     positiveInteger(pixelAspectInput[1], '$path.pixelAspect[1]', _maxPixelAspectTerm),
   ];
   literal(input['colorSpace'], 'srgb', '$path.colorSpace');
-  return CanvasV01(width: width, height: height, fit: fit, pixelAspect: pixelAspect);
+  return Canvas(width: width, height: height, fit: fit, pixelAspect: pixelAspect);
 }
 
-RationalV01 cloneFrameRate(Object? value, String path) {
+Rational cloneFrameRate(Object? value, String path) {
   final input = record(value, path);
   exactKeys(input, ['numerator', 'denominator'], path);
   final numerator = positiveInteger(input['numerator'], '$path.numerator');
@@ -40,224 +40,145 @@ RationalV01 cloneFrameRate(Object? value, String path) {
   if (numerator > denominator * _maxFrameRate) {
     invalid('$path.numerator', 'must not exceed $_maxFrameRate frames per second');
   }
-  return RationalV01(numerator: numerator, denominator: denominator);
+  return Rational(numerator: numerator, denominator: denominator);
 }
 
-List<RenditionV01> cloneRenditions(
+/// Preserve authored quality order while requiring unique rendition IDs.
+List<ProductionRendition> cloneRenditions(
   Object? value,
-  CanvasV01 canvas,
-  RationalV01 frameRate,
+  Canvas canvas,
+  VideoCodec codecFamily,
+  VideoLayout layout,
   FormatBudgets budgets,
   String path,
 ) {
   final inputs = boundedArray(value, path, 1, budgets.maxRenditions);
-  final renditions = <RenditionV01>[
-    for (var index = 0; index < inputs.length; index += 1)
-      _cloneRendition(inputs[index], canvas, '$path[$index]'),
-  ];
-  requireIdOrder<RenditionV01>(renditions, (r) => r.id, path);
-
-  String? productionProfile;
-  for (var index = 0; index < renditions.length; index += 1) {
-    final rendition = renditions[index];
-    if (rendition.profile == 'reference-rgba-v0') continue;
-    if (rendition.codedWidth % 16 != 0 || rendition.codedHeight % 16 != 0) {
-      invalid('$path[$index]', 'AVC coded dimensions must be multiples of 16');
+  final seen = <String>{};
+  final renditions = <ProductionRendition>[];
+  for (var index = 0; index < inputs.length; index += 1) {
+    final rendition =
+        _cloneRendition(inputs[index], canvas, codecFamily, layout, '$path[$index]');
+    if (seen.contains(rendition.id)) {
+      invalid('$path[$index].id', 'duplicates an earlier rendition ID');
     }
-    final level = _avcLevelLimitsForManifest(rendition.codec);
-    final widthInMacroblocks = rendition.codedWidth ~/ 16;
-    final heightInMacroblocks = rendition.codedHeight ~/ 16;
-    if (widthInMacroblocks > level.maximumMacroblockDimension ||
-        heightInMacroblocks > level.maximumMacroblockDimension) {
-      invalid(
-        '$path[$index]',
-        'coded width or height exceeds the declared AVC level dimension limit',
-      );
-    }
-    final macroblocksPerFrame = widthInMacroblocks * heightInMacroblocks;
-    if (macroblocksPerFrame > level.maximumMacroblocksPerFrame) {
-      invalid(
-        '$path[$index]',
-        'coded dimensions exceed the declared AVC level macroblocks-per-frame limit',
-      );
-    }
-    if (BigInt.from(macroblocksPerFrame) * BigInt.from(frameRate.numerator) >
-        BigInt.from(level.maximumMacroblocksPerSecond) * BigInt.from(frameRate.denominator)) {
-      invalid(
-        '$path[$index]',
-        'coded dimensions and frame rate exceed the declared AVC level macroblocks-per-second limit',
-      );
-    }
-    final Rect colorRect;
-    final Rect? alphaRect;
-    if (rendition is AvcPackedAlphaRenditionV01) {
-      colorRect = rendition.colorRect;
-      alphaRect = rendition.alphaRect;
-    } else {
-      colorRect = (rendition as AvcOpaqueRenditionV01).colorRect;
-      alphaRect = null;
-    }
-    deriveAvcRenditionGeometryAtPath(
-      AvcRenditionGeometryInput(
-        canvasWidth: canvas.width,
-        canvasHeight: canvas.height,
-        codedWidth: rendition.codedWidth,
-        codedHeight: rendition.codedHeight,
-        colorRect: colorRect,
-        profile: rendition.profile,
-        alphaRect: alphaRect,
-        hasAlphaRectField: alphaRect != null,
-      ),
-      '$path[$index]',
-    );
-    if (productionProfile == null) {
-      productionProfile = rendition.profile;
-    } else if (productionProfile != rendition.profile) {
-      throw FormatError(
-        FormatErrorCode.profileInvalid,
-        'all production AVC renditions must use one profile and version',
-        FormatErrorDetails(path: path),
-      );
-    }
+    seen.add(rendition.id);
+    renditions.add(rendition);
   }
   return renditions;
 }
 
-RenditionV01 _cloneRendition(Object? value, CanvasV01 canvas, String path) {
+ProductionRendition _cloneRendition(
+  Object? value,
+  Canvas canvas,
+  VideoCodec codecFamily,
+  VideoLayout layout,
+  String path,
+) {
   final input = record(value, path);
-  final profile = input['profile'];
-  if (profile == 'reference-rgba-v0') {
-    exactKeys(
-      input,
-      ['id', 'profile', 'codec', 'codedWidth', 'codedHeight', 'alphaLayout', 'capabilities'],
-      path,
-    );
-    final common = _cloneRenditionCommon(input, path);
-    if (common.codedWidth != canvas.width || common.codedHeight != canvas.height) {
-      invalid(path, 'reference rendition dimensions must equal the canvas');
-    }
-    if (common.codedWidth > _referenceDimensionMax || common.codedHeight > _referenceDimensionMax) {
-      invalid(path, 'reference rendition dimensions must fit uint16');
-    }
-    final referenceSampleBytes = BigInt.from(_referenceSampleHeaderBytes) +
-        BigInt.from(common.codedWidth) * BigInt.from(common.codedHeight) * BigInt.from(4);
-    if (referenceSampleBytes > BigInt.from(0xffffffff)) {
-      invalid(path, 'reference rendition sample length must fit uint32');
-    }
-    literal(input['codec'], 'aval.reference-rgba', '$path.codec');
-    final alpha = record(input['alphaLayout'], '$path.alphaLayout');
-    exactKeys(alpha, ['type'], '$path.alphaLayout');
-    literal(alpha['type'], 'straight-rgba-v0', '$path.alphaLayout.type');
-    tuple(input['capabilities'], 0, '$path.capabilities');
-    return ReferenceRgbaRenditionV01(
-      id: common.id,
-      codedWidth: common.codedWidth,
-      codedHeight: common.codedHeight,
-    );
-  }
-
-  if (profile != 'avc-annexb-opaque-v0' &&
-      profile != 'avc-annexb-packed-alpha-v0' &&
-      profile != 'avc-annexb-opaque-v1' &&
-      profile != 'avc-annexb-packed-alpha-v1') {
-    invalid('$path.profile', 'has an unsupported rendition profile');
-  }
   exactKeys(
     input,
-    ['id', 'profile', 'codec', 'codedWidth', 'codedHeight', 'alphaLayout', 'bitrate', 'capabilities'],
+    ['id', 'codec', 'bitDepth', 'codedWidth', 'codedHeight', 'alphaLayout', 'bitrate'],
     path,
   );
-  final common = _cloneRenditionCommon(input, path);
-  final codec = _cloneAvcCodec(input['codec'], '$path.codec');
-  final bitrate =
-      _cloneBitrate(input['bitrate'], '$path.bitrate', _avcLevelLimitsForManifest(codec).maximumBitrate);
-  final capabilitiesInput = tuple(input['capabilities'], 2, '$path.capabilities');
-  literal(capabilitiesInput[0], 'webcodecs', '$path.capabilities[0]');
-  literal(capabilitiesInput[1], 'webgl2', '$path.capabilities[1]');
-  final alpha = record(input['alphaLayout'], '$path.alphaLayout');
-
-  if (profile == 'avc-annexb-opaque-v0' || profile == 'avc-annexb-opaque-v1') {
-    exactKeys(alpha, ['type', 'colorRect'], '$path.alphaLayout');
-    literal(alpha['type'], 'opaque-v0', '$path.alphaLayout.type');
-    final colorRect = _cloneRect(
-      alpha['colorRect'],
-      common.codedWidth,
-      common.codedHeight,
-      '$path.alphaLayout.colorRect',
-    );
-    return AvcOpaqueRenditionV01(
-      id: common.id,
-      profile: profile as String,
-      codec: codec,
-      codedWidth: common.codedWidth,
-      codedHeight: common.codedHeight,
-      colorRect: colorRect,
-      bitrate: bitrate,
-    );
+  final id = identifier(input['id'], '$path.id');
+  final bitDepthValue = integerInRange(input['bitDepth'], '$path.bitDepth', 8, 10);
+  if (bitDepthValue != 8 && bitDepthValue != 10) {
+    invalid('$path.bitDepth', 'must be 8 or 10');
   }
-
-  exactKeys(alpha, ['type', 'colorRect', 'alphaRect'], '$path.alphaLayout');
-  literal(alpha['type'], 'stacked-v0', '$path.alphaLayout.type');
-  final colorRect = _cloneRect(
-    alpha['colorRect'],
-    common.codedWidth,
-    common.codedHeight,
-    '$path.alphaLayout.colorRect',
+  final bitDepth = bitDepthValue;
+  if (codecFamily != 'av1' && bitDepth != 8) {
+    invalid('$path.bitDepth', '$codecFamily assets require 8-bit renditions');
+  }
+  if (!isVideoCodecString(input['codec'], codecFamily, bitDepth)) {
+    invalid('$path.codec', 'must be a canonical $codecFamily codec string matching bit depth');
+  }
+  final codedWidth = positiveInteger(input['codedWidth'], '$path.codedWidth', _dimensionMax);
+  final codedHeight = positiveInteger(input['codedHeight'], '$path.codedHeight', _dimensionMax);
+  if (codedWidth % 2 != 0 || codedHeight % 2 != 0) {
+    invalid(path, '4:2:0 coded dimensions must be even');
+  }
+  final alphaLayout = _cloneAlphaLayout(
+    input['alphaLayout'],
+    layout,
+    canvas,
+    codedWidth,
+    codedHeight,
+    '$path.alphaLayout',
   );
-  final alphaRect = _cloneRect(
-    alpha['alphaRect'],
-    common.codedWidth,
-    common.codedHeight,
-    '$path.alphaLayout.alphaRect',
-  );
-  return AvcPackedAlphaRenditionV01(
-    id: common.id,
-    profile: profile as String,
-    codec: codec,
-    codedWidth: common.codedWidth,
-    codedHeight: common.codedHeight,
-    colorRect: colorRect,
-    alphaRect: alphaRect,
+  final bitrate = _cloneBitrate(input['bitrate'], '$path.bitrate');
+  return ProductionRendition(
+    id: id,
+    codec: input['codec'] as String,
+    bitDepth: bitDepth,
+    codedWidth: codedWidth,
+    codedHeight: codedHeight,
+    alphaLayout: alphaLayout,
     bitrate: bitrate,
   );
 }
 
-class _RenditionCommon {
-  const _RenditionCommon(this.id, this.codedWidth, this.codedHeight);
-
-  final String id;
-  final int codedWidth;
-  final int codedHeight;
+AlphaLayout _cloneAlphaLayout(
+  Object? value,
+  VideoLayout layout,
+  Canvas canvas,
+  int codedWidth,
+  int codedHeight,
+  String path,
+) {
+  final input = record(value, path);
+  if (layout == 'opaque') {
+    exactKeys(input, ['type', 'colorRect'], path);
+    literal(input['type'], 'opaque', '$path.type');
+    final colorRect =
+        _cloneVisibleColorRect(input['colorRect'], canvas, codedWidth, codedHeight, '$path.colorRect');
+    return OpaqueAlphaLayout(colorRect: colorRect);
+  }
+  exactKeys(input, ['type', 'colorRect', 'alphaRect'], path);
+  literal(input['type'], 'stacked', '$path.type');
+  final colorRect =
+      _cloneVisibleColorRect(input['colorRect'], canvas, codedWidth, codedHeight, '$path.colorRect');
+  final alphaRect = _cloneRect(input['alphaRect'], codedWidth, codedHeight, '$path.alphaRect');
+  final paneHeight = colorRect.height % 2 == 0 ? colorRect.height : colorRect.height + 1;
+  final expectedY = paneHeight + packedAlphaGutter;
+  if (alphaRect.x != 0 ||
+      alphaRect.y != expectedY ||
+      alphaRect.width != colorRect.width ||
+      alphaRect.height != colorRect.height) {
+    invalid('$path.alphaRect', 'must be a second matching pane after the fixed eight-pixel gutter');
+  }
+  return StackedAlphaLayout(colorRect: colorRect, alphaRect: alphaRect);
 }
 
-_RenditionCommon _cloneRenditionCommon(Map<String, Object?> input, String path) {
-  final id = identifier(input['id'], '$path.id');
-  final codedWidth = positiveInteger(input['codedWidth'], '$path.codedWidth');
-  final codedHeight = positiveInteger(input['codedHeight'], '$path.codedHeight');
-  return _RenditionCommon(id, codedWidth, codedHeight);
+Rect _cloneVisibleColorRect(
+  Object? value,
+  Canvas canvas,
+  int codedWidth,
+  int codedHeight,
+  String path,
+) {
+  final rect = _cloneRect(value, codedWidth, codedHeight, path);
+  if (rect.x != 0 || rect.y != 0) {
+    invalid(path, 'visible color rectangle must begin at the decoded surface origin');
+  }
+  if (rect.width > canvas.width || rect.height > canvas.height) {
+    invalid(path, 'visible color rectangle must fit the logical canvas');
+  }
+  if (BigInt.from(rect.width) * BigInt.from(canvas.height) !=
+      BigInt.from(rect.height) * BigInt.from(canvas.width)) {
+    invalid(path, 'visible color rectangle must retain the canvas aspect ratio');
+  }
+  return rect;
 }
 
-BitrateV01 _cloneBitrate(Object? value, String path, int maximum) {
+Bitrate _cloneBitrate(Object? value, String path) {
   final input = record(value, path);
   exactKeys(input, ['average', 'peak'], path);
-  final average = positiveInteger(input['average'], '$path.average', maximum);
-  final peak = positiveInteger(input['peak'], '$path.peak', maximum);
+  final average = positiveInteger(input['average'], '$path.average');
+  final peak = positiveInteger(input['peak'], '$path.peak');
   if (average > peak) {
     invalid('$path.average', 'must not exceed peak bitrate');
   }
-  return BitrateV01(average: average, peak: peak);
-}
-
-AvcCodecV01 _cloneAvcCodec(Object? value, String path) {
-  if (!isAvcCodec(value)) {
-    invalid(path, 'must identify a supported Constrained Baseline AVC level');
-  }
-  return value as String;
-}
-
-AvcLevelLimits _avcLevelLimitsForManifest(AvcCodecV01 codec) {
-  final levelHex = codec.substring(codec.length - 2);
-  return avcLevelLimits(int.parse(levelHex, radix: 16));
+  return Bitrate(average: average, peak: peak);
 }
 
 Rect _cloneRect(Object? value, int surfaceWidth, int surfaceHeight, String path) {

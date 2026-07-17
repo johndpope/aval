@@ -1,4 +1,4 @@
-// Dart port of packages/format/test/graph-adapter.test.ts.
+// Dart port of packages/format/test/graph-adapter.test.ts (1.0).
 //
 // `GraphStateDefinition`/`GraphEdgeDefinition`/etc. in aval_graph do not
 // override `==`, so this port asserts field-by-field rather than one deep
@@ -8,6 +8,7 @@
 import 'package:aval_format/src/errors.dart';
 import 'package:aval_format/src/graph_adapter.dart';
 import 'package:aval_format/src/manifest_schema.dart';
+import 'package:aval_format/src/model.dart';
 import 'package:aval_graph/aval_graph.dart';
 import 'package:test/test.dart';
 
@@ -15,8 +16,8 @@ import 'manifest_fixture.dart';
 
 void main() {
   group('adaptManifestToMotionGraph', () {
-    test('maps the complete manifest graph to the hand-written M3 golden', () {
-      final graph = adaptManifestToMotionGraph(validateCompiledManifestV01(validManifest()));
+    test('maps the complete manifest graph to the hand-written canonical golden', () {
+      final graph = adaptManifestToMotionGraph(validateCompiledManifest(validManifest()));
       final definition = graph.definition;
 
       expect(definition.initialState, 'a-a');
@@ -88,13 +89,13 @@ void main() {
     });
 
     test('returns a graph detached from the manifest', () {
-      final manifest = validateCompiledManifestV01(validManifest());
+      final manifest = validateCompiledManifest(validManifest());
       final graph = adaptManifestToMotionGraph(manifest);
 
       expect(graph.definition.states, isNot(same(manifest.states)));
     });
 
-    test('wraps M3 geometry and ambiguity failures as GRAPH_INVALID', () {
+    test('wraps graph geometry and ambiguity failures as GRAPH_INVALID', () {
       final manifest = validManifest();
       final edges = (manifest['edges'] as List).cast<Map<String, Object?>>();
       final edge0 = Map<String, Object?>.from(edges[0]);
@@ -104,11 +105,41 @@ void main() {
       final newEdges = [edge0, ...edges.skip(1)];
       final mutated = Map<String, Object?>.from(manifest)..['edges'] = newEdges;
 
-      final schemaValid = validateCompiledManifestV01(mutated);
+      final schemaValid = validateCompiledManifest(mutated);
       expect(
         () => adaptManifestToMotionGraph(schemaValid),
         throwsA(predicate((e) => e is FormatError && e.code == FormatErrorCode.graphInvalid)),
       );
+    });
+
+    test('wraps malformed trusted input without leaking built-in errors', () {
+      // TS passes a hand-built `{ ...validManifest(), units: [] }` cast as a
+      // trusted CompiledManifest. Here the model is typed, so we rebuild the
+      // same trusted-but-malformed value directly with empty units.
+      final valid = validateCompiledManifest(validManifest());
+      final malformed = CompiledManifest(
+        generator: valid.generator,
+        codec: valid.codec,
+        bitstream: valid.bitstream,
+        layout: valid.layout,
+        canvas: valid.canvas,
+        frameRate: valid.frameRate,
+        renditions: valid.renditions,
+        units: const [],
+        initialState: valid.initialState,
+        states: valid.states,
+        edges: valid.edges,
+        bindings: valid.bindings,
+        readiness: valid.readiness,
+        limits: valid.limits,
+      );
+
+      try {
+        adaptManifestToMotionGraph(malformed);
+        fail('expected graph adaptation to fail');
+      } on FormatError catch (error) {
+        expect(error.code, FormatErrorCode.graphInvalid);
+      }
     });
   });
 }

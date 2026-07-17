@@ -18,7 +18,6 @@ enum FormatErrorCode {
   indexInvalid('INDEX_INVALID'),
   layoutInvalid('LAYOUT_INVALID'),
   profileInvalid('PROFILE_INVALID'),
-  referenceFrameInvalid('REFERENCE_FRAME_INVALID'),
   pngEnvelopeInvalid('PNG_ENVELOPE_INVALID'),
   pngDeflateInvalid('PNG_DEFLATE_INVALID'),
   pngScanlineInvalid('PNG_SCANLINE_INVALID'),

@@ -1,4 +1,4 @@
-/// Fixed 64-byte version-0.1 format header codec.
+/// Fixed 64-byte version-1.0 format header codec.
 ///
 /// Dart port of `packages/format/src/header.ts`.
 library;
@@ -45,7 +45,7 @@ Never _fail(String message, int offset) {
 void _assertMagic(Uint8List bytes) {
   for (var index = 0; index < formatMagic.length; index += 1) {
     if (bytes[index] != formatMagic[index]) {
-      _fail('format magic does not match AVLF 0.1', index);
+      _fail('format magic does not match AVLF 1.0', index);
     }
   }
 }
@@ -66,7 +66,7 @@ void _validateHeaderShape(_HeaderFields header, [FormatOptions? options]) {
   if (header.requiredFeatureFlags != 0) {
     throw FormatError(
       FormatErrorCode.featureUnsupported,
-      'required feature flags are unsupported in format 0.1',
+      'required feature flags are unsupported in format 1.0',
       const FormatErrorDetails(offset: 16),
     );
   }
@@ -92,16 +92,16 @@ void _validateHeaderShape(_HeaderFields header, [FormatOptions? options]) {
   if (header.indexOffset != expectedIndexOffset) {
     _fail('index offset must be $expectedIndexOffset', 48);
   }
-  if (header.indexLength < accessUnitIndexHeaderLength ||
-      (header.indexLength - accessUnitIndexHeaderLength) % accessUnitRecordLength != 0) {
+  if (header.indexLength < chunkIndexHeaderLength ||
+      (header.indexLength - chunkIndexHeaderLength) % chunkIndexRecordLength != 0) {
     _fail('index length does not encode whole access-unit records', 56);
   }
-  final sampleCount =
-      (header.indexLength - accessUnitIndexHeaderLength) ~/ accessUnitRecordLength;
-  if (sampleCount > budgets.maxSampleRecords) {
+  final chunkCount =
+      (header.indexLength - chunkIndexHeaderLength) ~/ chunkIndexRecordLength;
+  if (chunkCount > budgets.maxChunkRecords) {
     throw FormatError(
       FormatErrorCode.budgetExceeded,
-      'sample record count exceeds the active limit of ${budgets.maxSampleRecords}',
+      'chunk record count exceeds the active limit of ${budgets.maxChunkRecords}',
       const FormatErrorDetails(offset: 56),
     );
   }
@@ -120,7 +120,7 @@ void _validateHeaderShape(_HeaderFields header, [FormatOptions? options]) {
   }
 }
 
-/// Decodes and validates the exact 64-byte version-0.1 header.
+/// Decodes and validates the exact 64-byte version-1.0 header.
 FormatHeader parseHeader(Uint8List bytes, [FormatOptions? options]) {
   try {
     requireByteRange(
@@ -204,7 +204,7 @@ FormatHeader parseHeader(Uint8List bytes, [FormatOptions? options]) {
   }
 }
 
-/// Encodes one canonical version-0.1 header into a new 64-byte array.
+/// Encodes one canonical version-1.0 header into a new 64-byte array.
 Uint8List encodeHeader(FormatHeader header, [FormatOptions? options]) {
   try {
     _validateHeaderShape(
@@ -265,5 +265,5 @@ Uint8List encodeHeader(FormatHeader header, [FormatOptions? options]) {
   }
 }
 
-final int minimumCanonicalFileLength = formatHeaderLength + accessUnitIndexHeaderLength;
+final int minimumCanonicalFileLength = formatHeaderLength + chunkIndexHeaderLength;
 final int maximumDefaultFileLength = formatDefaultBudgets.maxFileBytes;

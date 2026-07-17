@@ -1,4 +1,4 @@
-/// Fixed-record version-0.1 access-unit index codec.
+/// Fixed-record version-1.0 decode-order encoded-chunk index codec.
 ///
 /// Dart port of `packages/format/src/access-unit-index.ts`.
 library;
@@ -6,19 +6,19 @@ library;
 import 'dart:typed_data';
 
 import 'checked_integer.dart';
+import 'chunk_plan.dart';
 import 'constants.dart';
 import 'errors.dart';
 import 'model.dart';
-import 'sample_plan.dart';
 
-const int _keyFlag = 0x0001;
+const int _randomAccessFlag = 0x00000001;
 
 int _recordByteOffset(int ordinal, int maximum) {
   return checkedAdd(
-    accessUnitIndexHeaderLength,
-    checkedMultiply(ordinal, accessUnitRecordLength, maximum, 'access-unit record offset'),
+    chunkIndexHeaderLength,
+    checkedMultiply(ordinal, chunkIndexRecordLength, maximum, 'encoded-chunk record offset'),
     maximum,
-    'access-unit record offset',
+    'encoded-chunk record offset',
   );
 }
 
@@ -31,29 +31,28 @@ Never _fail(String message, [int? offset]) {
 }
 
 void _assertMagic(Uint8List bytes) {
-  for (var index = 0; index < accessUnitIndexMagic.length; index += 1) {
-    if (bytes[index] != accessUnitIndexMagic[index]) {
-      _fail('access-unit index magic must be AVLI', index);
+  for (var index = 0; index < chunkIndexMagic.length; index += 1) {
+    if (bytes[index] != chunkIndexMagic[index]) {
+      _fail('encoded-chunk index magic must be AVLI', index);
     }
   }
 }
 
-CanonicalSamplePlan _canonicalSamplePlan(
-  CompiledManifestV01 manifest,
-  int maximum,
-  int maximumTotalFrames,
-) {
+CanonicalChunkPlan _canonicalChunkPlan(
+  CompiledManifest manifest, [
+  FormatOptions? options,
+]) {
+  final budgets = resolveFormatBudgets(options);
   try {
-    final plan = createCanonicalSamplePlan(
-      manifest.renditions.map((r) => PlanRendition(id: r.id, profile: r.profile)).toList(),
-      manifest.units.map((u) => PlanUnit(id: u.id, frameCount: u.frameCount)).toList(),
-      maximum,
-      maximumTotalFrames,
+    return createCanonicalChunkPlan(
+      manifest.renditions,
+      manifest.units,
+      budgets.maxChunkRecords,
+      budgets.maxTotalUnitFrames,
     );
-    validateCanonicalSampleSpans(plan, manifest.units, FormatErrorCode.indexInvalid);
-    return plan;
   } on FormatError catch (error) {
-    if (error.code == FormatErrorCode.budgetExceeded || error.code == FormatErrorCode.integerUnsafe) {
+    if (error.code == FormatErrorCode.budgetExceeded ||
+        error.code == FormatErrorCode.integerUnsafe) {
       rethrow;
     }
     throw FormatError(
@@ -62,99 +61,123 @@ CanonicalSamplePlan _canonicalSamplePlan(
       error.path == null ? null : FormatErrorDetails(path: error.path),
     );
   } catch (_) {
-    _fail('manifest sample plan could not be derived');
+    _fail('manifest chunk plan could not be derived');
   }
 }
 
 void _validateRecordSequence(
-  List<AccessUnitRecord> records,
-  CompiledManifestV01 manifest,
-  CanonicalSamplePlan plan, [
+  List<EncodedChunkRecord> records,
+  CanonicalChunkPlan plan, [
   FormatOptions? options,
 ]) {
   final budgets = resolveFormatBudgets(options);
-  final expectedCount = plan.recordCount;
-  if (records.length != expectedCount) {
-    _fail('access-unit record count must be $expectedCount, received ${records.length}', 8);
+  if (records.length != plan.recordCount) {
+    _fail(
+      'encoded-chunk record count must be ${plan.recordCount}, received ${records.length}',
+      8,
+    );
   }
 
-  for (final slot in plan.records()) {
-    final record = slot.ordinal < records.length ? records[slot.ordinal] : null;
-    final recordOffset = _recordByteOffset(slot.ordinal, budgets.maxIndexBytes);
-    if (record == null) {
-      _fail('access-unit record is missing', recordOffset);
-    }
-    if (record.renditionIndex != slot.renditionIndex ||
-        record.unitIndex != slot.unitIndex ||
-        record.frameIndex != slot.frameIndex) {
-      _fail('access-unit records must be ordered by rendition, unit, then frame', recordOffset + 12);
-    }
-    if (record.payloadLength < 1) {
-      _fail('access-unit payload length must be positive', recordOffset + 8);
-    }
-    if (record.payloadLength > budgets.maxSampleBytes) {
-      throw FormatError(
-        FormatErrorCode.budgetExceeded,
-        'access-unit payload length exceeds the active limit of ${budgets.maxSampleBytes}',
-        FormatErrorDetails(offset: recordOffset + 8),
+  for (final span in plan.spans) {
+    var displayedFrames = 0;
+    final end = span.chunkStart + span.chunkCount;
+    for (var ordinal = span.chunkStart; ordinal < end; ordinal += 1) {
+      final record = ordinal < records.length ? records[ordinal] : null;
+      final offset = _recordByteOffset(ordinal, budgets.maxIndexBytes);
+      if (record == null) _fail('encoded-chunk record is missing', offset);
+      if (record.byteLength < 1) {
+        _fail('encoded-chunk byte length must be positive', offset + 8);
+      }
+      if (record.byteLength > budgets.maxChunkBytes) {
+        throw FormatError(
+          FormatErrorCode.budgetExceeded,
+          'encoded-chunk byte length exceeds the active limit of ${budgets.maxChunkBytes}',
+          FormatErrorDetails(offset: offset + 8),
+        );
+      }
+      if (ordinal == span.chunkStart && !record.randomAccess) {
+        _fail('every unit must begin with a random-access chunk', offset + 32);
+      }
+      if (record.displayedFrameCount > 0 && record.duration == 0) {
+        _fail('a displayed encoded chunk must have a positive duration', offset + 24);
+      }
+      final lastTimestamp = BigInt.from(record.presentationTimestamp) +
+          BigInt.from(record.duration) *
+              BigInt.from(record.displayedFrameCount - 1 > 0
+                  ? record.displayedFrameCount - 1
+                  : 0);
+      if (lastTimestamp > BigInt.from(maxSafeInteger)) {
+        _fail('encoded-chunk presentation timeline exceeds the safe integer range',
+            offset + 16);
+      }
+      displayedFrames = checkedAdd(
+        displayedFrames,
+        record.displayedFrameCount,
+        budgets.maxTotalUnitFrames,
+        'unit displayed frame count',
       );
     }
-    if (slot.keyRequired && !record.key) {
+    if (displayedFrames != span.frameCount) {
       _fail(
-        slot.frameIndex == 0
-            ? 'frame zero of every unit must be marked key'
-            : 'every reference-rgba-v0 access unit must be marked key',
-        recordOffset + 18,
+        'unit ${span.unitId} rendition ${span.renditionId} must display exactly ${span.frameCount} frames',
+        _recordByteOffset(span.chunkStart, budgets.maxIndexBytes) + 12,
       );
     }
   }
 }
 
-AccessUnitRecord _parseRecord(Uint8List bytes, int ordinal, [FormatOptions? options]) {
+EncodedChunkRecord _parseRecord(Uint8List bytes, int ordinal, [FormatOptions? options]) {
   final budgets = resolveFormatBudgets(options);
   final offset = _recordByteOffset(ordinal, budgets.maxIndexBytes);
-  final payloadOffset = readUint64LE(
+  final byteOffset = readUint64LE(
     bytes,
     offset,
     budgets.maxFileBytes,
     FormatErrorCode.indexInvalid,
-    'access-unit payload offset',
+    'encoded-chunk byte offset',
   );
-  final payloadLength =
-      readUint32LE(bytes, offset + 8, FormatErrorCode.indexInvalid, 'access-unit payload length');
-  final unitIndex =
-      readUint32LE(bytes, offset + 12, FormatErrorCode.indexInvalid, 'access-unit unit index');
-  final renditionIndex =
-      readUint16LE(bytes, offset + 16, FormatErrorCode.indexInvalid, 'access-unit rendition index');
-  final flags = readUint16LE(bytes, offset + 18, FormatErrorCode.indexInvalid, 'access-unit flags');
-  if ((flags & ~_keyFlag) != 0) {
-    _fail('access-unit record uses unknown flag bits', offset + 18);
+  final byteLength =
+      readUint32LE(bytes, offset + 8, FormatErrorCode.indexInvalid, 'encoded-chunk byte length');
+  final displayedFrameCount = readUint32LE(
+      bytes, offset + 12, FormatErrorCode.indexInvalid, 'encoded-chunk displayed frame count');
+  final presentationTimestamp = readUint64LE(
+    bytes,
+    offset + 16,
+    maxSafeInteger,
+    FormatErrorCode.indexInvalid,
+    'encoded-chunk presentation timestamp',
+  );
+  final duration = readUint64LE(
+    bytes,
+    offset + 24,
+    maxSafeInteger,
+    FormatErrorCode.indexInvalid,
+    'encoded-chunk duration',
+  );
+  final flags =
+      readUint32LE(bytes, offset + 32, FormatErrorCode.indexInvalid, 'encoded-chunk flags');
+  if ((flags & ~_randomAccessFlag) != 0) {
+    _fail('encoded-chunk record uses unknown flag bits', offset + 32);
   }
-  final frameIndex =
-      readUint32LE(bytes, offset + 20, FormatErrorCode.indexInvalid, 'access-unit frame index');
-  for (var reserved = offset + 24; reserved < offset + 32; reserved += 1) {
+  for (var reserved = offset + 36; reserved < offset + 48; reserved += 1) {
     if (bytes[reserved] != 0) {
-      _fail('access-unit record reserved bytes must be zero', reserved);
+      _fail('encoded-chunk record reserved bytes must be zero', reserved);
     }
   }
-
-  return AccessUnitRecord(
-    payloadOffset: payloadOffset,
-    payloadLength: payloadLength,
-    unitIndex: unitIndex,
-    renditionIndex: renditionIndex,
-    key: (flags & _keyFlag) != 0,
-    frameIndex: frameIndex,
+  return EncodedChunkRecord(
+    byteOffset: byteOffset,
+    byteLength: byteLength,
+    presentationTimestamp: presentationTimestamp,
+    duration: duration,
+    randomAccess: (flags & _randomAccessFlag) != 0,
+    displayedFrameCount: displayedFrameCount,
   );
 }
 
-/// Parses one exact version-0.1 access-unit index view.
-///
-/// The supplied view must contain the index and nothing else. The returned
-/// records are detached numeric metadata and retain no input bytes.
-List<AccessUnitRecord> parseAccessUnitIndex(
+/// Parse the exact fixed-width 1.0 decode-order chunk index.
+List<EncodedChunkRecord> parseEncodedChunkIndex(
   Uint8List bytes,
-  CompiledManifestV01 manifest, [
+  CompiledManifest manifest, [
   FormatOptions? options,
 ]) {
   try {
@@ -162,173 +185,122 @@ List<AccessUnitRecord> parseAccessUnitIndex(
     requireByteRange(
       bytes,
       0,
-      accessUnitIndexHeaderLength,
+      chunkIndexHeaderLength,
       FormatErrorCode.indexInvalid,
-      'access-unit index header',
+      'encoded-chunk index header',
     );
     _assertMagic(bytes);
-
     final recordSize =
-        readUint16LE(bytes, 4, FormatErrorCode.indexInvalid, 'access-unit record size');
-    if (recordSize != accessUnitRecordLength) {
-      _fail('access-unit record size must be $accessUnitRecordLength', 4);
+        readUint16LE(bytes, 4, FormatErrorCode.indexInvalid, 'encoded-chunk record size');
+    if (recordSize != chunkIndexRecordLength) {
+      _fail('encoded-chunk record size must be $chunkIndexRecordLength', 4);
     }
     if (readUint16LE(bytes, 6, FormatErrorCode.indexInvalid, 'index reserved field') != 0) {
-      _fail('access-unit index reserved field must be zero', 6);
+      _fail('encoded-chunk index reserved field must be zero', 6);
     }
-    final sampleCount =
-        readUint32LE(bytes, 8, FormatErrorCode.indexInvalid, 'access-unit sample count');
+    final chunkCount =
+        readUint32LE(bytes, 8, FormatErrorCode.indexInvalid, 'encoded-chunk count');
     if (readUint32LE(bytes, 12, FormatErrorCode.indexInvalid, 'index reserved field') != 0) {
-      _fail('access-unit index reserved field must be zero', 12);
+      _fail('encoded-chunk index reserved field must be zero', 12);
     }
-    if (sampleCount > budgets.maxSampleRecords) {
+    if (chunkCount > budgets.maxChunkRecords) {
       throw FormatError(
         FormatErrorCode.budgetExceeded,
-        'access-unit sample count exceeds the active limit of ${budgets.maxSampleRecords}',
+        'encoded-chunk count exceeds the active limit of ${budgets.maxChunkRecords}',
         const FormatErrorDetails(offset: 8),
       );
     }
-
-    final recordsLength = checkedMultiply(
-      sampleCount,
-      accessUnitRecordLength,
-      budgets.maxIndexBytes,
-      'access-unit records length',
-    );
     final expectedLength = checkedAdd(
-      accessUnitIndexHeaderLength,
-      recordsLength,
+      chunkIndexHeaderLength,
+      checkedMultiply(
+        chunkCount,
+        chunkIndexRecordLength,
+        budgets.maxIndexBytes,
+        'encoded-chunk records length',
+      ),
       budgets.maxIndexBytes,
-      'access-unit index length',
+      'encoded-chunk index length',
     );
     if (bytes.length != expectedLength) {
       _fail(
-        'access-unit index length must be exactly $expectedLength bytes',
+        'encoded-chunk index length must be exactly $expectedLength bytes',
         bytes.length < expectedLength ? bytes.length : expectedLength,
       );
     }
-
-    final plan = _canonicalSamplePlan(manifest, budgets.maxSampleRecords, budgets.maxTotalUnitFrames);
-    if (sampleCount != plan.recordCount) {
-      _fail('access-unit sample count must match the manifest count of ${plan.recordCount}', 8);
+    final plan = _canonicalChunkPlan(manifest, options);
+    if (chunkCount != plan.recordCount) {
+      _fail('encoded-chunk count must match the manifest count of ${plan.recordCount}', 8);
     }
-
-    final records = <AccessUnitRecord>[];
-    try {
-      for (var ordinal = 0; ordinal < sampleCount; ordinal += 1) {
-        records.add(_parseRecord(bytes, ordinal, options));
-      }
-    } on FormatError {
-      rethrow;
-    } catch (_) {
-      throw FormatError(
-        FormatErrorCode.indexInvalid,
-        'access-unit index allocation for $sampleCount records failed',
-      );
+    final records = <EncodedChunkRecord>[];
+    for (var ordinal = 0; ordinal < chunkCount; ordinal += 1) {
+      records.add(_parseRecord(bytes, ordinal, options));
     }
-    _validateRecordSequence(records, manifest, plan, options);
+    _validateRecordSequence(records, plan, options);
     return records;
   } on FormatError {
     rethrow;
   } catch (_) {
-    throw FormatError(FormatErrorCode.indexInvalid, 'access-unit index could not be parsed');
+    throw FormatError(
+        FormatErrorCode.indexInvalid, 'encoded-chunk index could not be parsed');
   }
 }
 
-/// Encodes one exact version-0.1 access-unit index into a fresh byte array.
-Uint8List encodeAccessUnitIndex(
-  List<AccessUnitRecord> records,
-  CompiledManifestV01 manifest, [
+/// Encode the exact fixed-width 1.0 decode-order chunk index.
+Uint8List encodeEncodedChunkIndex(
+  List<EncodedChunkRecord> records,
+  CompiledManifest manifest, [
   FormatOptions? options,
 ]) {
   try {
     final budgets = resolveFormatBudgets(options);
-    if (records.length > budgets.maxSampleRecords) {
+    if (records.length > budgets.maxChunkRecords) {
       throw FormatError(
         FormatErrorCode.budgetExceeded,
-        'access-unit sample count exceeds the active limit of ${budgets.maxSampleRecords}',
+        'encoded-chunk count exceeds the active limit',
         const FormatErrorDetails(offset: 8),
       );
     }
     final length = checkedAdd(
-      accessUnitIndexHeaderLength,
+      chunkIndexHeaderLength,
       checkedMultiply(
         records.length,
-        accessUnitRecordLength,
+        chunkIndexRecordLength,
         budgets.maxIndexBytes,
-        'access-unit records length',
+        'encoded-chunk records length',
       ),
       budgets.maxIndexBytes,
-      'access-unit index length',
+      'encoded-chunk index length',
     );
-    Uint8List bytes;
-    try {
-      bytes = Uint8List(length);
-    } catch (_) {
-      throw FormatError(
-        FormatErrorCode.indexInvalid,
-        'access-unit index allocation of $length bytes failed',
-      );
-    }
-    bytes.setRange(0, accessUnitIndexMagic.length, accessUnitIndexMagic);
-    writeUint16LE(bytes, 4, accessUnitRecordLength, FormatErrorCode.indexInvalid, 'access-unit record size');
+    final bytes = Uint8List(length);
+    bytes.setRange(0, chunkIndexMagic.length, chunkIndexMagic);
+    writeUint16LE(bytes, 4, chunkIndexRecordLength, FormatErrorCode.indexInvalid,
+        'encoded-chunk record size');
     writeUint16LE(bytes, 6, 0, FormatErrorCode.indexInvalid, 'index reserved field');
-    writeUint32LE(bytes, 8, records.length, FormatErrorCode.indexInvalid, 'access-unit sample count');
+    writeUint32LE(bytes, 8, records.length, FormatErrorCode.indexInvalid, 'encoded-chunk count');
     writeUint32LE(bytes, 12, 0, FormatErrorCode.indexInvalid, 'index reserved field');
 
     for (var ordinal = 0; ordinal < records.length; ordinal += 1) {
       final record = records[ordinal];
       final offset = _recordByteOffset(ordinal, budgets.maxIndexBytes);
-      writeUint64LE(
-        bytes,
-        offset,
-        record.payloadOffset,
-        FormatErrorCode.indexInvalid,
-        'access-unit payload offset',
-      );
-      writeUint32LE(
-        bytes,
-        offset + 8,
-        record.payloadLength,
-        FormatErrorCode.indexInvalid,
-        'access-unit payload length',
-      );
-      writeUint32LE(
-        bytes,
-        offset + 12,
-        record.unitIndex,
-        FormatErrorCode.indexInvalid,
-        'access-unit unit index',
-      );
-      writeUint16LE(
-        bytes,
-        offset + 16,
-        record.renditionIndex,
-        FormatErrorCode.indexInvalid,
-        'access-unit rendition index',
-      );
-      writeUint16LE(
-        bytes,
-        offset + 18,
-        record.key ? _keyFlag : 0,
-        FormatErrorCode.indexInvalid,
-        'access-unit flags',
-      );
-      writeUint32LE(
-        bytes,
-        offset + 20,
-        record.frameIndex,
-        FormatErrorCode.indexInvalid,
-        'access-unit frame index',
-      );
+      writeUint64LE(bytes, offset, record.byteOffset, FormatErrorCode.indexInvalid,
+          'encoded-chunk byte offset');
+      writeUint32LE(bytes, offset + 8, record.byteLength, FormatErrorCode.indexInvalid,
+          'encoded-chunk byte length');
+      writeUint32LE(bytes, offset + 12, record.displayedFrameCount,
+          FormatErrorCode.indexInvalid, 'encoded-chunk displayed frame count');
+      writeUint64LE(bytes, offset + 16, record.presentationTimestamp,
+          FormatErrorCode.indexInvalid, 'encoded-chunk presentation timestamp');
+      writeUint64LE(bytes, offset + 24, record.duration, FormatErrorCode.indexInvalid,
+          'encoded-chunk duration');
+      writeUint32LE(bytes, offset + 32, record.randomAccess ? _randomAccessFlag : 0,
+          FormatErrorCode.indexInvalid, 'encoded-chunk flags');
     }
-
-    // Reuse the parser as the one semantic validation path for writer input.
-    parseAccessUnitIndex(bytes, manifest, options);
+    parseEncodedChunkIndex(bytes, manifest, options);
     return bytes;
   } on FormatError {
     rethrow;
   } catch (_) {
-    throw FormatError(FormatErrorCode.indexInvalid, 'access-unit index could not be encoded');
+    throw FormatError(
+        FormatErrorCode.indexInvalid, 'encoded-chunk index could not be encoded');
   }
 }

@@ -8,14 +8,26 @@ library;
 
 import 'constants.dart' show identifierPattern, sha256HexPattern;
 import 'errors.dart';
-import 'model.dart' show ResidencyEndpointV01;
+import 'model.dart' show ResidencyEndpoint;
 import 'utf8.dart' show utf8ByteLength;
 
 Map<String, Object?> record(Object? value, String path) {
   if (value is! Map) {
     invalid(path, 'must be an object');
   }
-  return value.map((key, v) => MapEntry(key as String, v));
+  // TS `record` returns the object as-is and defers key inspection to
+  // `exactKeys`, whose `Reflect.ownKeys` loop rejects non-string (symbol)
+  // keys with `contains unknown field [symbol]` (manifest-validation.ts:71-77).
+  // Dart JSON maps are keyed by `String`; a hostile non-string key is rejected
+  // here with the identical message and path so the behavior is preserved.
+  final result = <String, Object?>{};
+  value.forEach((key, dynamic v) {
+    if (key is! String) {
+      invalid(path, 'contains unknown field [symbol]');
+    }
+    result[key] = v;
+  });
+  return result;
 }
 
 List<Object?> array(Object? value, String path) {
@@ -165,7 +177,7 @@ void requireNumberOrder(List<int> values, String path) {
   }
 }
 
-int compareEndpoint(ResidencyEndpointV01 a, ResidencyEndpointV01 b) {
+int compareEndpoint(ResidencyEndpoint a, ResidencyEndpoint b) {
   final byState = compareAscii(a.state, b.state);
   return byState != 0 ? byState : compareAscii(a.port, b.port);
 }

@@ -1,10 +1,12 @@
 /// Cross-referential manifest validation: state/edge/unit/binding relations.
 ///
-/// Dart port of `packages/format/src/manifest-relations.ts`.
+/// Dart port of `packages/format/src/manifest-relations.ts` (1.0).
 library;
 
 import 'manifest_validation.dart';
 import 'model.dart';
+
+const int _maxSafeInteger = 9007199254740991;
 
 class ManifestRelationInput {
   const ManifestRelationInput({
@@ -18,12 +20,12 @@ class ManifestRelationInput {
   });
 
   final String initialState;
-  final List<RenditionV01> renditions;
-  final List<UnitV01> units;
-  final List<StateV01> states;
-  final List<EdgeV01> edges;
-  final List<BindingV01> bindings;
-  final ReadinessV01 readiness;
+  final List<ProductionRendition> renditions;
+  final List<Unit> units;
+  final List<State> states;
+  final List<Edge> edges;
+  final List<Binding> bindings;
+  final Readiness readiness;
 }
 
 void validateManifestRelations(ManifestRelationInput input) {
@@ -39,7 +41,7 @@ void validateManifestRelations(ManifestRelationInput input) {
     final state = input.states[index];
     final path = 'states[$index]';
     final body = unitsById[state.bodyUnit];
-    if (body is! BodyUnitV01) {
+    if (body is! BodyUnit) {
       invalid('$path.bodyUnit', 'must reference a body unit');
     }
     _incrementUse(unitUseCount, body.id);
@@ -48,24 +50,24 @@ void validateManifestRelations(ManifestRelationInput input) {
         invalid('$path.initialUnit', 'is allowed only on the initial state');
       }
       final initial = unitsById[state.initialUnit];
-      if (initial is! OneShotUnitV01) {
+      if (initial is! OneShotUnit) {
         invalid('$path.initialUnit', 'must reference a one-shot unit');
       }
       _incrementUse(unitUseCount, initial.id);
     }
   }
 
-  final reversibleEdges = <String, List<({EdgeV01 edge, int index})>>{};
+  final reversibleEdges = <String, List<({Edge edge, int index})>>{};
   final eventNames = <String>{};
   for (var index = 0; index < input.edges.length; index += 1) {
     final edge = input.edges[index];
     _validateEdgeReferences(edge, index, statesById, unitsById, unitUseCount);
     final trigger = edge.trigger;
-    if (trigger is EventTriggerV01) {
+    if (trigger is EventTrigger) {
       eventNames.add(trigger.name);
     }
-    final transition = edge is NonCutEdgeV01 ? edge.transition : null;
-    if (transition is ReversibleTransitionV01) {
+    final transition = edge is NonCutEdge ? edge.transition : null;
+    if (transition is ReversibleTransition) {
       final group = reversibleEdges.putIfAbsent(transition.unit, () => []);
       group.add((edge: edge, index: index));
     }
@@ -81,7 +83,11 @@ void validateManifestRelations(ManifestRelationInput input) {
   _validateReadiness(input.readiness, input.initialState, statesById, edgesById, unitsById);
 }
 
-void validateBlobCount(List<UnitV01> units, List<RenditionV01> renditions, FormatBudgets budgets) {
+void validateBlobCount(
+  List<Unit> units,
+  List<ProductionRendition> renditions,
+  FormatBudgets budgets,
+) {
   _rejectBlobCount(units.length * renditions.length, budgets);
 }
 
@@ -93,16 +99,16 @@ void validateRawBlobCount(Object? units, int renditionCount, FormatBudgets budge
 }
 
 void _rejectBlobCount(int count, FormatBudgets budgets) {
-  if (count > budgets.maxBlobRanges) {
+  if (count > _maxSafeInteger || count > budgets.maxBlobRanges) {
     invalid('manifest', 'declares $count blobs, exceeding ${budgets.maxBlobRanges}');
   }
 }
 
 void _validateEdgeReferences(
-  EdgeV01 edge,
+  Edge edge,
   int index,
-  Map<String, StateV01> statesById,
-  Map<String, UnitV01> unitsById,
+  Map<String, State> statesById,
+  Map<String, Unit> unitsById,
   Map<String, int> unitUseCount,
 ) {
   final path = 'edges[$index]';
@@ -116,16 +122,16 @@ void _validateEdgeReferences(
   }
   final sourceBody = unitsById[source.bodyUnit];
   final targetBody = unitsById[target.bodyUnit];
-  if (sourceBody is! BodyUnitV01 || targetBody is! BodyUnitV01) {
+  if (sourceBody is! BodyUnit || targetBody is! BodyUnit) {
     invalid(path, 'state body reference is invalid');
   }
   if (!targetBody.ports.any((port) => port.id == edge.start.targetPort)) {
     invalid('$path.start.targetPort', 'does not reference the target body');
   }
   final start = edge.start;
-  if (start is PortalStartV01) {
+  if (start is PortalStart) {
     final sourcePortId = start.sourcePort;
-    PortV01? sourcePort;
+    Port? sourcePort;
     for (final port in sourceBody.ports) {
       if (port.id == sourcePortId) {
         sourcePort = port;
@@ -140,23 +146,23 @@ void _validateEdgeReferences(
             sourcePort.portalFrames.last != sourceBody.frameCount - 1)) {
       invalid('$path.start.sourcePort', 'finite source port must include the held final frame');
     }
-  } else if (start is FinishStartV01 && sourceBody.playback == 'loop') {
+  } else if (start is FinishStart && sourceBody.playback == 'loop') {
     invalid('$path.start.type', 'finish cannot originate from a looping body');
   }
 
-  final transition = edge is NonCutEdgeV01 ? edge.transition : null;
-  if (transition is LockedTransitionV01) {
+  final transition = edge is NonCutEdge ? edge.transition : null;
+  if (transition is LockedTransition) {
     final unit = unitsById[transition.unit];
-    if (unit is! BridgeUnitV01) {
+    if (unit is! BridgeUnit) {
       invalid('$path.transition.unit', 'must reference a bridge unit');
     }
     _incrementUse(unitUseCount, unit.id);
     if (edge.continuity != 'exact-authored') {
       invalid('$path.continuity', 'locked transitions require exact-authored');
     }
-  } else if (transition is ReversibleTransitionV01) {
+  } else if (transition is ReversibleTransition) {
     final unit = unitsById[transition.unit];
-    if (unit is! ReversibleUnitV01) {
+    if (unit is! ReversibleUnit) {
       invalid('$path.transition.unit', 'must reference a reversible unit');
     }
     _incrementUse(unitUseCount, unit.id);
@@ -166,8 +172,8 @@ void _validateEdgeReferences(
 }
 
 void _validateReversibleGroups(
-  Map<String, List<({EdgeV01 edge, int index})>> groups,
-  Map<String, UnitV01> unitsById,
+  Map<String, List<({Edge edge, int index})>> groups,
+  Map<String, Unit> unitsById,
 ) {
   for (final entry in groups.entries) {
     final unitId = entry.key;
@@ -177,15 +183,15 @@ void _validateReversibleGroups(
     }
     final first = group[0];
     final second = group[1];
-    ({EdgeV01 edge, int index})? primary;
-    ({EdgeV01 edge, int index})? inverse;
+    ({Edge edge, int index})? primary;
+    ({Edge edge, int index})? inverse;
     for (final candidate in [first, second]) {
       final transition =
-          candidate.edge is NonCutEdgeV01 ? (candidate.edge as NonCutEdgeV01).transition : null;
-      if (transition is ReversibleTransitionV01 && transition.direction == 'forward') {
+          candidate.edge is NonCutEdge ? (candidate.edge as NonCutEdge).transition : null;
+      if (transition is ReversibleTransition && transition.direction == 'forward') {
         primary = candidate;
       }
-      if (transition is ReversibleTransitionV01 && transition.direction == 'reverse') {
+      if (transition is ReversibleTransition && transition.direction == 'reverse') {
         inverse = candidate;
       }
     }
@@ -193,10 +199,10 @@ void _validateReversibleGroups(
       invalid('edges', 'reversible unit ${quote(unitId)} needs forward and reverse edges');
     }
     final primaryTransition =
-        primary.edge is NonCutEdgeV01 ? (primary.edge as NonCutEdgeV01).transition : null;
+        primary.edge is NonCutEdge ? (primary.edge as NonCutEdge).transition : null;
     final inverseTransition =
-        inverse.edge is NonCutEdgeV01 ? (inverse.edge as NonCutEdgeV01).transition : null;
-    if (primaryTransition is! ReversibleTransitionV01 || inverseTransition is! ReversibleTransitionV01) {
+        inverse.edge is NonCutEdge ? (inverse.edge as NonCutEdge).transition : null;
+    if (primaryTransition is! ReversibleTransition || inverseTransition is! ReversibleTransition) {
       invalid('edges', 'reversible unit ${quote(unitId)} has invalid transitions');
     }
     if (primaryTransition.reverseOf != null) {
@@ -212,7 +218,7 @@ void _validateReversibleGroups(
       invalid('edges', 'reversible pair must reverse its states');
     }
     final unit = unitsById[unitId];
-    if (unit is! ReversibleUnitV01) {
+    if (unit is! ReversibleUnit) {
       invalid('edges', 'reversible unit ${quote(unitId)} is missing');
     }
     _validateResidencyForEdge(unit, primary.edge, primary.index);
@@ -220,10 +226,10 @@ void _validateReversibleGroups(
   }
 }
 
-void _validateResidencyForEdge(ReversibleUnitV01 unit, EdgeV01 edge, int index) {
+void _validateResidencyForEdge(ReversibleUnit unit, Edge edge, int index) {
   final path = 'edges[$index]';
-  ResidencyEndpointV01? source;
-  ResidencyEndpointV01? target;
+  ResidencyEndpoint? source;
+  ResidencyEndpoint? target;
   for (final endpoint in unit.residency.endpoints) {
     if (endpoint.state == edge.from) source = endpoint;
     if (endpoint.state == edge.to) target = endpoint;
@@ -232,7 +238,7 @@ void _validateResidencyForEdge(ReversibleUnitV01 unit, EdgeV01 edge, int index) 
     invalid(path, 'must connect the reversible residency states');
   }
   final start = edge.start;
-  if (start is PortalStartV01 && start.sourcePort != source.port) {
+  if (start is PortalStart && start.sourcePort != source.port) {
     invalid('$path.start.sourcePort', 'must match source residency endpoint');
   }
   if (edge.start.targetPort != target.port) {
@@ -240,10 +246,10 @@ void _validateResidencyForEdge(ReversibleUnitV01 unit, EdgeV01 edge, int index) 
   }
 }
 
-void _validateUseCounts(List<UnitV01> units, Map<String, int> counts) {
+void _validateUseCounts(List<Unit> units, Map<String, int> counts) {
   for (final unit in units) {
     final count = counts[unit.id] ?? 0;
-    final expected = unit is ReversibleUnitV01 ? 2 : 1;
+    final expected = unit is ReversibleUnit ? 2 : 1;
     if (count != expected) {
       invalid(
         'units',
@@ -254,13 +260,16 @@ void _validateUseCounts(List<UnitV01> units, Map<String, int> counts) {
 }
 
 void _validateReadiness(
-  ReadinessV01 readiness,
+  Readiness readiness,
   String initialStateId,
-  Map<String, StateV01> statesById,
-  Map<String, EdgeV01> edgesById,
-  Map<String, UnitV01> unitsById,
+  Map<String, State> statesById,
+  Map<String, Edge> edgesById,
+  Map<String, Unit> unitsById,
 ) {
-  final immediate = edgesById.values.where((edge) => edge.from == initialStateId).map((edge) => edge.id).toList()
+  final immediate = edgesById.values
+      .where((edge) => edge.from == initialStateId)
+      .map((edge) => edge.id)
+      .toList()
     ..sort(compareAscii);
   if (!_sameStrings(readiness.immediateEdges, immediate)) {
     invalid('readiness.immediateEdges', 'must exactly list edges originating at initialState');
@@ -277,7 +286,7 @@ void _validateReadiness(
   for (final edgeId in immediate) {
     final edge = edgesById[edgeId]!;
     required.add(statesById[edge.to]!.bodyUnit);
-    final transition = edge is NonCutEdgeV01 ? edge.transition : null;
+    final transition = edge is NonCutEdge ? edge.transition : null;
     if (transition != null) required.add(transition.unit);
   }
   for (final unitId in required) {

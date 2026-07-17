@@ -1,23 +1,32 @@
-/// Version-0.1 AVAL wire model: budgets, manifest types, and layout records.
+/// Version-1.0 AVAL wire model: budgets, manifest types, and layout records.
 ///
 /// Dart port of `packages/format/src/model.ts`. TypeScript discriminated
-/// unions become sealed class hierarchies; plain interfaces become
-/// immutable classes. String-literal unions whose only runtime use is
-/// equality/membership testing performed elsewhere (in the
-/// `manifest_*schema.dart` validators, mirroring `manifest-*.ts`) are kept
-/// as plain `String`/`typedef` rather than Dart `enum`s, so the single set
-/// of legal literals lives in one place exactly as it does in the TS
-/// source.
+/// unions become sealed class hierarchies; plain interfaces become immutable
+/// classes. String-literal unions whose only runtime use is equality/
+/// membership testing performed elsewhere (in the `manifest_*schema.dart`
+/// validators, mirroring `manifest-*.ts`) are kept as plain `String`/`typedef`
+/// rather than Dart `enum`s, so the single set of legal literals lives in one
+/// place exactly as it does in the TS source.
 library;
 
-// ignore_for_file: constant_identifier_names
+import 'dart:typed_data';
 
 import 'package:aval_graph/aval_graph.dart' show ValidatedMotionGraph;
 
-import 'avc/codec.dart' show AvcCodecV01;
-
 typedef Id = String;
 typedef Sha256Hex = String;
+
+/// `"h264" | "h265" | "vp9" | "av1"`.
+typedef VideoCodec = String;
+
+/// `"annex-b" | "frame" | "low-overhead"`.
+typedef VideoBitstream = String;
+
+/// `"opaque" | "packed-alpha"`.
+typedef VideoLayout = String;
+
+/// `8 | 10`.
+typedef VideoBitDepth = int;
 
 /// `readonly [x, y, width, height]` in the TS source.
 class Rect {
@@ -50,7 +59,7 @@ class FormatBudgets {
     required this.maxFileBytes,
     required this.maxManifestBytes,
     required this.maxIndexBytes,
-    required this.maxSampleBytes,
+    required this.maxChunkBytes,
     required this.maxPngBytes,
     required this.maxJsonDepth,
     required this.maxJsonNodes,
@@ -62,7 +71,7 @@ class FormatBudgets {
     required this.maxBindings,
     required this.maxBlobRanges,
     required this.maxTotalUnitFrames,
-    required this.maxSampleRecords,
+    required this.maxChunkRecords,
     required this.maxPortsPerBody,
     required this.maxReversibleFrames,
   });
@@ -70,7 +79,7 @@ class FormatBudgets {
   final int maxFileBytes;
   final int maxManifestBytes;
   final int maxIndexBytes;
-  final int maxSampleBytes;
+  final int maxChunkBytes;
   final int maxPngBytes;
   final int maxJsonDepth;
   final int maxJsonNodes;
@@ -82,7 +91,7 @@ class FormatBudgets {
   final int maxBindings;
   final int maxBlobRanges;
   final int maxTotalUnitFrames;
-  final int maxSampleRecords;
+  final int maxChunkRecords;
   final int maxPortsPerBody;
   final int maxReversibleFrames;
 
@@ -92,7 +101,7 @@ class FormatBudgets {
         'maxFileBytes': maxFileBytes,
         'maxManifestBytes': maxManifestBytes,
         'maxIndexBytes': maxIndexBytes,
-        'maxSampleBytes': maxSampleBytes,
+        'maxChunkBytes': maxChunkBytes,
         'maxPngBytes': maxPngBytes,
         'maxJsonDepth': maxJsonDepth,
         'maxJsonNodes': maxJsonNodes,
@@ -104,7 +113,7 @@ class FormatBudgets {
         'maxBindings': maxBindings,
         'maxBlobRanges': maxBlobRanges,
         'maxTotalUnitFrames': maxTotalUnitFrames,
-        'maxSampleRecords': maxSampleRecords,
+        'maxChunkRecords': maxChunkRecords,
         'maxPortsPerBody': maxPortsPerBody,
         'maxReversibleFrames': maxReversibleFrames,
       };
@@ -113,7 +122,7 @@ class FormatBudgets {
         maxFileBytes: map['maxFileBytes']!,
         maxManifestBytes: map['maxManifestBytes']!,
         maxIndexBytes: map['maxIndexBytes']!,
-        maxSampleBytes: map['maxSampleBytes']!,
+        maxChunkBytes: map['maxChunkBytes']!,
         maxPngBytes: map['maxPngBytes']!,
         maxJsonDepth: map['maxJsonDepth']!,
         maxJsonNodes: map['maxJsonNodes']!,
@@ -125,15 +134,15 @@ class FormatBudgets {
         maxBindings: map['maxBindings']!,
         maxBlobRanges: map['maxBlobRanges']!,
         maxTotalUnitFrames: map['maxTotalUnitFrames']!,
-        maxSampleRecords: map['maxSampleRecords']!,
+        maxChunkRecords: map['maxChunkRecords']!,
         maxPortsPerBody: map['maxPortsPerBody']!,
         maxReversibleFrames: map['maxReversibleFrames']!,
       );
 }
 
 /// `{ budgets?: Partial<FormatBudgets> }`. A `Partial<FormatBudgets>` is
-/// represented as a sparse `Map<String, int>` keyed by the same field names
-/// as [FormatBudgets.toMap], since the TS validator itself treats budgets
+/// represented as a sparse `Map<String, int>` keyed by the same field names as
+/// [FormatBudgets.toMap], since the TS validator itself treats budgets
 /// generically by key name (`Reflect.ownKeys`).
 class FormatOptions {
   const FormatOptions({this.budgets});
@@ -141,15 +150,24 @@ class FormatOptions {
   final Map<String, int>? budgets;
 }
 
-class RationalV01 {
-  const RationalV01({required this.numerator, required this.denominator});
+class Rational {
+  const Rational({required this.numerator, required this.denominator});
 
   final int numerator;
   final int denominator;
+
+  @override
+  bool operator ==(Object other) =>
+      other is Rational &&
+      other.numerator == numerator &&
+      other.denominator == denominator;
+
+  @override
+  int get hashCode => Object.hash(numerator, denominator);
 }
 
-class CanvasV01 {
-  const CanvasV01({
+class Canvas {
+  const Canvas({
     required this.width,
     required this.height,
     required this.fit,
@@ -162,116 +180,101 @@ class CanvasV01 {
 
   /// `"contain" | "cover" | "fill" | "none"`.
   final String fit;
+
+  /// `readonly [numerator, denominator]`.
   final List<int> pixelAspect;
 
   /// Always `"srgb"` (the only literal in the TS union).
   final String colorSpace;
 }
 
-class BitrateV01 {
-  const BitrateV01({required this.average, required this.peak});
+class Bitrate {
+  const Bitrate({required this.average, required this.peak});
 
   final int average;
   final int peak;
+
+  @override
+  bool operator ==(Object other) =>
+      other is Bitrate && other.average == average && other.peak == peak;
+
+  @override
+  int get hashCode => Object.hash(average, peak);
 }
 
-/// `"avc-annexb-opaque-v0" | "avc-annexb-packed-alpha-v0" |
-/// "avc-annexb-opaque-v1" | "avc-annexb-packed-alpha-v1"`.
-typedef AvcProductionRenditionProfileV01 = String;
+/// TS discriminated union `AlphaLayout`. [type] is the discriminant
+/// (`"opaque" | "stacked"`).
+sealed class AlphaLayout {
+  const AlphaLayout({required this.type, required this.colorRect});
 
-/// TS discriminated union `RenditionV01`. [profile] is the discriminant;
-/// use `is` checks (`rendition is AvcOpaqueRenditionV01`, etc.) the same
-/// way TS narrows on `rendition.profile`.
-sealed class RenditionV01 {
-  const RenditionV01({
+  final String type;
+  final Rect colorRect;
+}
+
+class OpaqueAlphaLayout extends AlphaLayout {
+  const OpaqueAlphaLayout({required super.colorRect}) : super(type: 'opaque');
+}
+
+class StackedAlphaLayout extends AlphaLayout {
+  const StackedAlphaLayout({required super.colorRect, required this.alphaRect})
+      : super(type: 'stacked');
+
+  final Rect alphaRect;
+}
+
+/// One quality rung in a single-codec asset. Array order is author preference.
+class ProductionRendition {
+  const ProductionRendition({
     required this.id,
-    required this.profile,
     required this.codec,
+    required this.bitDepth,
     required this.codedWidth,
     required this.codedHeight,
-    required this.capabilities,
+    required this.alphaLayout,
+    required this.bitrate,
   });
 
   final Id id;
-  final String profile;
   final String codec;
+  final VideoBitDepth bitDepth;
   final int codedWidth;
   final int codedHeight;
-  final List<String> capabilities;
+  final AlphaLayout alphaLayout;
+  final Bitrate bitrate;
 }
 
-class ReferenceRgbaRenditionV01 extends RenditionV01 {
-  const ReferenceRgbaRenditionV01({
-    required super.id,
-    required super.codedWidth,
-    required super.codedHeight,
-  }) : super(
-          profile: 'reference-rgba-v0',
-          codec: 'aval.reference-rgba',
-          capabilities: const [],
-        );
-}
-
-/// Covers both `"avc-annexb-opaque-v0"` and `"avc-annexb-opaque-v1"`
-/// (identical shape in the TS union; [profile] carries the exact literal).
-class AvcOpaqueRenditionV01 extends RenditionV01 {
-  const AvcOpaqueRenditionV01({
-    required super.id,
-    required String profile,
-    required AvcCodecV01 codec,
-    required super.codedWidth,
-    required super.codedHeight,
-    required this.colorRect,
-    required this.bitrate,
-  }) : super(
-          profile: profile,
-          codec: codec,
-          capabilities: const ['webcodecs', 'webgl2'],
-        );
-
-  final Rect colorRect;
-  final BitrateV01 bitrate;
-}
-
-/// Covers both `"avc-annexb-packed-alpha-v0"` and
-/// `"avc-annexb-packed-alpha-v1"`.
-class AvcPackedAlphaRenditionV01 extends RenditionV01 {
-  const AvcPackedAlphaRenditionV01({
-    required super.id,
-    required String profile,
-    required AvcCodecV01 codec,
-    required super.codedWidth,
-    required super.codedHeight,
-    required this.colorRect,
-    required this.alphaRect,
-    required this.bitrate,
-  }) : super(
-          profile: profile,
-          codec: codec,
-          capabilities: const ['webcodecs', 'webgl2'],
-        );
-
-  final Rect colorRect;
-  final Rect alphaRect;
-  final BitrateV01 bitrate;
-}
-
-class SampleSpanV01 {
-  const SampleSpanV01({
+/// One unit/rendition blob in the global decode-order chunk array.
+class UnitChunkSpan {
+  const UnitChunkSpan({
     required this.rendition,
-    required this.sampleStart,
-    required this.sampleCount,
+    required this.chunkStart,
+    required this.chunkCount,
+    required this.frameCount,
     required this.sha256,
   });
 
   final Id rendition;
-  final int sampleStart;
-  final int sampleCount;
+  final int chunkStart;
+  final int chunkCount;
+  final int frameCount;
   final Sha256Hex sha256;
+
+  @override
+  bool operator ==(Object other) =>
+      other is UnitChunkSpan &&
+      other.rendition == rendition &&
+      other.chunkStart == chunkStart &&
+      other.chunkCount == chunkCount &&
+      other.frameCount == frameCount &&
+      other.sha256 == sha256;
+
+  @override
+  int get hashCode =>
+      Object.hash(rendition, chunkStart, chunkCount, frameCount, sha256);
 }
 
-class PortV01 {
-  const PortV01({required this.id, required this.portalFrames});
+class Port {
+  const Port({required this.id, required this.portalFrames});
 
   final Id id;
 
@@ -280,8 +283,8 @@ class PortV01 {
   final List<int> portalFrames;
 }
 
-class ResidencyEndpointV01 {
-  const ResidencyEndpointV01({
+class ResidencyEndpoint {
+  const ResidencyEndpoint({
     required this.state,
     required this.port,
     required this.frames,
@@ -292,21 +295,21 @@ class ResidencyEndpointV01 {
   final int frames;
 }
 
-class ReversibleResidencyV01 {
-  const ReversibleResidencyV01(this.endpoints);
+class ReversibleResidency {
+  const ReversibleResidency(this.endpoints);
 
   /// Exactly two entries, matching the TS tuple
-  /// `readonly [ResidencyEndpointV01, ResidencyEndpointV01]`.
-  final List<ResidencyEndpointV01> endpoints;
+  /// `readonly [ResidencyEndpoint, ResidencyEndpoint]`.
+  final List<ResidencyEndpoint> endpoints;
 }
 
-/// TS discriminated union `UnitV01`. [kind] is the discriminant.
-sealed class UnitV01 {
-  const UnitV01({
+/// TS discriminated union `Unit`. [kind] is the discriminant.
+sealed class Unit {
+  const Unit({
     required this.id,
     required this.kind,
     required this.frameCount,
-    required this.samples,
+    required this.chunks,
   });
 
   final Id id;
@@ -314,79 +317,79 @@ sealed class UnitV01 {
   /// `"body" | "bridge" | "reversible" | "one-shot"`.
   final String kind;
   final int frameCount;
-  final List<SampleSpanV01> samples;
+  final List<UnitChunkSpan> chunks;
 }
 
-class BodyUnitV01 extends UnitV01 {
-  const BodyUnitV01({
+class BodyUnit extends Unit {
+  const BodyUnit({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
     required this.playback,
     required this.ports,
   }) : super(kind: 'body');
 
   /// `"loop" | "finite"`.
   final String playback;
-  final List<PortV01> ports;
+  final List<Port> ports;
 }
 
-class BridgeUnitV01 extends UnitV01 {
-  const BridgeUnitV01({
+class BridgeUnit extends Unit {
+  const BridgeUnit({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
   }) : super(kind: 'bridge');
 }
 
-class ReversibleUnitV01 extends UnitV01 {
-  const ReversibleUnitV01({
+class ReversibleUnit extends Unit {
+  const ReversibleUnit({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
     required this.residency,
   }) : super(kind: 'reversible');
 
-  final ReversibleResidencyV01 residency;
+  final ReversibleResidency residency;
 }
 
-class OneShotUnitV01 extends UnitV01 {
-  const OneShotUnitV01({
+class OneShotUnit extends Unit {
+  const OneShotUnit({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
   }) : super(kind: 'one-shot');
 }
 
-class StateV01 {
-  const StateV01({required this.id, required this.bodyUnit, this.initialUnit});
+class State {
+  const State({required this.id, required this.bodyUnit, this.initialUnit});
 
   final Id id;
   final Id bodyUnit;
   final Id? initialUnit;
 }
 
-/// TS discriminated union `TriggerV01`. [type] is the discriminant.
-sealed class TriggerV01 {
-  const TriggerV01(this.type);
+/// TS discriminated union `Trigger`. [type] is the discriminant.
+sealed class Trigger {
+  const Trigger(this.type);
 
   /// `"event" | "completion"`.
   final String type;
 }
 
-class EventTriggerV01 extends TriggerV01 {
-  const EventTriggerV01(this.name) : super('event');
+class EventTrigger extends Trigger {
+  const EventTrigger(this.name) : super('event');
 
   final Id name;
 }
 
-class CompletionTriggerV01 extends TriggerV01 {
-  const CompletionTriggerV01() : super('completion');
+class CompletionTrigger extends Trigger {
+  const CompletionTrigger() : super('completion');
 }
 
-/// TS discriminated union `StartV01`. [type] is the discriminant.
-sealed class StartV01 {
-  const StartV01({
+/// TS discriminated union `Start`. [type] is the discriminant.
+sealed class Start {
+  const Start({
     required this.type,
     required this.targetPort,
     required this.maxWaitFrames,
@@ -398,8 +401,8 @@ sealed class StartV01 {
   final int maxWaitFrames;
 }
 
-class PortalStartV01 extends StartV01 {
-  const PortalStartV01({
+class PortalStart extends Start {
+  const PortalStart({
     required this.sourcePort,
     required super.targetPort,
     required super.maxWaitFrames,
@@ -408,33 +411,33 @@ class PortalStartV01 extends StartV01 {
   final Id sourcePort;
 }
 
-class FinishStartV01 extends StartV01 {
-  const FinishStartV01({
+class FinishStart extends Start {
+  const FinishStart({
     required super.targetPort,
     required super.maxWaitFrames,
   }) : super(type: 'finish');
 }
 
-class CutStartV01 extends StartV01 {
-  const CutStartV01({required super.targetPort})
+class CutStart extends Start {
+  const CutStart({required super.targetPort})
       : super(type: 'cut', maxWaitFrames: 1);
 }
 
-/// TS discriminated union `TransitionV01`. [kind] is the discriminant.
-sealed class TransitionV01 {
-  const TransitionV01({required this.kind, required this.unit});
+/// TS discriminated union `Transition`. [kind] is the discriminant.
+sealed class Transition {
+  const Transition({required this.kind, required this.unit});
 
   /// `"locked" | "reversible"`.
   final String kind;
   final Id unit;
 }
 
-class LockedTransitionV01 extends TransitionV01 {
-  const LockedTransitionV01({required super.unit}) : super(kind: 'locked');
+class LockedTransition extends Transition {
+  const LockedTransition({required super.unit}) : super(kind: 'locked');
 }
 
-class ReversibleTransitionV01 extends TransitionV01 {
-  const ReversibleTransitionV01({
+class ReversibleTransition extends Transition {
+  const ReversibleTransition({
     required super.unit,
     required this.direction,
     this.reverseOf,
@@ -445,10 +448,10 @@ class ReversibleTransitionV01 extends TransitionV01 {
   final Id? reverseOf;
 }
 
-/// TS discriminated union `EdgeV01` (`NonCutEdgeV01 | CutEdgeV01`).
-/// [continuity] `== 'cut'` iff this is a [CutEdgeV01].
-sealed class EdgeV01 {
-  const EdgeV01({
+/// TS discriminated union `Edge` (`NonCutEdge | CutEdge`).
+/// [continuity] `== 'cut'` iff this is a [CutEdge].
+sealed class Edge {
+  const Edge({
     required this.id,
     required this.from,
     required this.to,
@@ -460,15 +463,15 @@ sealed class EdgeV01 {
   final Id id;
   final Id from;
   final Id to;
-  final TriggerV01? trigger;
-  final StartV01 start;
+  final Trigger? trigger;
+  final Start start;
 
   /// `"exact-authored" | "exact-reverse" | "cut"`.
   final String continuity;
 }
 
-class NonCutEdgeV01 extends EdgeV01 {
-  const NonCutEdgeV01({
+class NonCutEdge extends Edge {
+  const NonCutEdge({
     required super.id,
     required super.from,
     required super.to,
@@ -478,16 +481,16 @@ class NonCutEdgeV01 extends EdgeV01 {
     this.transition,
   });
 
-  final TransitionV01? transition;
+  final Transition? transition;
 }
 
-class CutEdgeV01 extends EdgeV01 {
-  const CutEdgeV01({
+class CutEdge extends Edge {
+  const CutEdge({
     required super.id,
     required super.from,
     required super.to,
     super.trigger,
-    required CutStartV01 start,
+    required CutStart start,
     required this.targetRunwayFrames,
   }) : super(start: start, continuity: 'cut');
 
@@ -496,17 +499,17 @@ class CutEdgeV01 extends EdgeV01 {
 
 /// `"activate" | "engagement.off" | "engagement.on" | "focus.in" |
 /// "focus.out" | "hidden" | "pointer.enter" | "pointer.leave" | "visible"`.
-typedef BindingSourceV01 = String;
+typedef BindingSource = String;
 
-class BindingV01 {
-  const BindingV01({required this.source, required this.event});
+class Binding {
+  const Binding({required this.source, required this.event});
 
-  final BindingSourceV01 source;
+  final BindingSource source;
   final Id event;
 }
 
-class ReadinessV01 {
-  const ReadinessV01({
+class Readiness {
+  const Readiness({
     required this.bootstrapUnits,
     required this.immediateEdges,
   });
@@ -517,8 +520,8 @@ class ReadinessV01 {
   final List<Id> immediateEdges;
 }
 
-class DeclaredLimitsV01 {
-  const DeclaredLimitsV01({
+class DeclaredLimits {
+  const DeclaredLimits({
     required this.maxCompiledBytes,
     required this.maxRuntimeBytes,
     required this.decodedPixelBytes,
@@ -533,9 +536,12 @@ class DeclaredLimitsV01 {
   final int runtimeWorkingSetBytes;
 }
 
-class CompiledManifestV01 {
-  const CompiledManifestV01({
+class CompiledManifest {
+  const CompiledManifest({
     required this.generator,
+    required this.codec,
+    required this.bitstream,
+    required this.layout,
     required this.canvas,
     required this.frameRate,
     required this.renditions,
@@ -548,19 +554,22 @@ class CompiledManifestV01 {
     required this.limits,
   });
 
-  /// Always `"0.1"`.
-  String get formatVersion => '0.1';
+  /// Always `"1.0"`.
+  String get formatVersion => '1.0';
   final String generator;
-  final CanvasV01 canvas;
-  final RationalV01 frameRate;
-  final List<RenditionV01> renditions;
-  final List<UnitV01> units;
+  final VideoCodec codec;
+  final VideoBitstream bitstream;
+  final VideoLayout layout;
+  final Canvas canvas;
+  final Rational frameRate;
+  final List<ProductionRendition> renditions;
+  final List<Unit> units;
   final Id initialState;
-  final List<StateV01> states;
-  final List<EdgeV01> edges;
-  final List<BindingV01> bindings;
-  final ReadinessV01 readiness;
-  final DeclaredLimitsV01 limits;
+  final List<State> states;
+  final List<Edge> edges;
+  final List<Binding> bindings;
+  final Readiness readiness;
+  final DeclaredLimits limits;
 }
 
 class FormatHeader {
@@ -571,11 +580,11 @@ class FormatHeader {
     required this.indexLength,
   });
 
-  /// Always `0`.
-  int get major => 0;
-
   /// Always `1`.
-  int get minor => 1;
+  int get major => 1;
+
+  /// Always `0`.
+  int get minor => 0;
 
   /// Always `64`.
   int get headerLength => 64;
@@ -591,22 +600,37 @@ class FormatHeader {
   final int indexLength;
 }
 
-class AccessUnitRecord {
-  const AccessUnitRecord({
-    required this.payloadOffset,
-    required this.payloadLength,
-    required this.unitIndex,
-    required this.renditionIndex,
-    required this.key,
-    required this.frameIndex,
+/// Fixed-width decode-order metadata for one elementary encoded chunk.
+class EncodedChunkRecord {
+  const EncodedChunkRecord({
+    required this.byteOffset,
+    required this.byteLength,
+    required this.presentationTimestamp,
+    required this.duration,
+    required this.randomAccess,
+    required this.displayedFrameCount,
   });
 
-  final int payloadOffset;
-  final int payloadLength;
-  final int unitIndex;
-  final int renditionIndex;
-  final bool key;
-  final int frameIndex;
+  final int byteOffset;
+  final int byteLength;
+  final int presentationTimestamp;
+  final int duration;
+  final bool randomAccess;
+  final int displayedFrameCount;
+
+  @override
+  bool operator ==(Object other) =>
+      other is EncodedChunkRecord &&
+      other.byteOffset == byteOffset &&
+      other.byteLength == byteLength &&
+      other.presentationTimestamp == presentationTimestamp &&
+      other.duration == duration &&
+      other.randomAccess == randomAccess &&
+      other.displayedFrameCount == displayedFrameCount;
+
+  @override
+  int get hashCode => Object.hash(byteOffset, byteLength, presentationTimestamp,
+      duration, randomAccess, displayedFrameCount);
 }
 
 class ByteRange {
@@ -614,6 +638,13 @@ class ByteRange {
 
   final int offset;
   final int length;
+
+  @override
+  bool operator ==(Object other) =>
+      other is ByteRange && other.offset == offset && other.length == length;
+
+  @override
+  int get hashCode => Object.hash(offset, length);
 }
 
 class UnitBlobRange extends ByteRange {
@@ -622,15 +653,17 @@ class UnitBlobRange extends ByteRange {
     required super.length,
     required this.rendition,
     required this.unit,
-    required this.sampleStart,
-    required this.sampleCount,
+    required this.chunkStart,
+    required this.chunkCount,
+    required this.frameCount,
     required this.sha256,
   });
 
   final Id rendition;
   final Id unit;
-  final int sampleStart;
-  final int sampleCount;
+  final int chunkStart;
+  final int chunkCount;
+  final int frameCount;
   final Sha256Hex sha256;
 }
 
@@ -645,9 +678,9 @@ class ParsedFrontIndex {
   });
 
   final FormatHeader header;
-  final CompiledManifestV01 manifest;
+  final CompiledManifest manifest;
   final ValidatedMotionGraph graph;
-  final List<AccessUnitRecord> records;
+  final List<EncodedChunkRecord> records;
   final ByteRange frontIndexRange;
   final List<UnitBlobRange> unitBlobs;
 }
@@ -662,98 +695,75 @@ class ValidatedAssetLayout {
   final ByteRange fileRange;
 }
 
-class ReferenceFrameHeader {
-  const ReferenceFrameHeader({
-    required this.width,
-    required this.height,
-    required this.frameIndex,
-    required this.rgbaLength,
-  });
-
-  final int width;
-  final int height;
-  final int frameIndex;
-  final int rgbaLength;
-}
-
-class ReferenceFrameDescriptor extends ReferenceFrameHeader {
-  const ReferenceFrameDescriptor({
-    required super.width,
-    required super.height,
-    required super.frameIndex,
-    required super.rgbaLength,
-    required this.rgbaRange,
-  });
-
-  final ByteRange rgbaRange;
-}
-
-class SampleDigestInputV01 {
-  const SampleDigestInputV01({required this.rendition, required this.sha256});
+class ChunkDigestInput {
+  const ChunkDigestInput({required this.rendition, required this.sha256});
 
   final Id rendition;
   final Sha256Hex sha256;
 }
 
-/// TS `UnitInputOf<TKind>`: the writer-facing counterpart of [UnitV01] with
-/// `samples: readonly SampleDigestInputV01[]` instead of `SampleSpanV01[]`.
-sealed class UnitInputV01 {
-  const UnitInputV01({
+/// TS `UnitInputOf<TKind>`: the writer-facing counterpart of [Unit] with
+/// `chunks: readonly ChunkDigestInput[]` instead of `UnitChunkSpan[]`.
+sealed class UnitInput {
+  const UnitInput({
     required this.id,
     required this.kind,
     required this.frameCount,
-    required this.samples,
+    required this.chunks,
   });
 
   final Id id;
   final String kind;
   final int frameCount;
-  final List<SampleDigestInputV01> samples;
+  final List<ChunkDigestInput> chunks;
 }
 
-class BodyUnitInputV01 extends UnitInputV01 {
-  const BodyUnitInputV01({
+class BodyUnitInput extends UnitInput {
+  const BodyUnitInput({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
     required this.playback,
     required this.ports,
   }) : super(kind: 'body');
 
   final String playback;
-  final List<PortV01> ports;
+  final List<Port> ports;
 }
 
-class BridgeUnitInputV01 extends UnitInputV01 {
-  const BridgeUnitInputV01({
+class BridgeUnitInput extends UnitInput {
+  const BridgeUnitInput({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
   }) : super(kind: 'bridge');
 }
 
-class ReversibleUnitInputV01 extends UnitInputV01 {
-  const ReversibleUnitInputV01({
+class ReversibleUnitInput extends UnitInput {
+  const ReversibleUnitInput({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
     required this.residency,
   }) : super(kind: 'reversible');
 
-  final ReversibleResidencyV01 residency;
+  final ReversibleResidency residency;
 }
 
-class OneShotUnitInputV01 extends UnitInputV01 {
-  const OneShotUnitInputV01({
+class OneShotUnitInput extends UnitInput {
+  const OneShotUnitInput({
     required super.id,
     required super.frameCount,
-    required super.samples,
+    required super.chunks,
   }) : super(kind: 'one-shot');
 }
 
-class CompiledManifestInputV01 {
-  const CompiledManifestInputV01({
+class CompiledManifestInput {
+  const CompiledManifestInput({
     required this.generator,
+    required this.codec,
+    required this.bitstream,
+    required this.layout,
     required this.canvas,
     required this.frameRate,
     required this.renditions,
@@ -766,42 +776,52 @@ class CompiledManifestInputV01 {
     required this.limits,
   });
 
-  String get formatVersion => '0.1';
+  String get formatVersion => '1.0';
   final String generator;
-  final CanvasV01 canvas;
-  final RationalV01 frameRate;
-  final List<RenditionV01> renditions;
-  final List<UnitInputV01> units;
+  final VideoCodec codec;
+  final VideoBitstream bitstream;
+  final VideoLayout layout;
+  final Canvas canvas;
+  final Rational frameRate;
+  final List<ProductionRendition> renditions;
+  final List<UnitInput> units;
   final Id initialState;
-  final List<StateV01> states;
-  final List<EdgeV01> edges;
-  final List<BindingV01> bindings;
-  final ReadinessV01 readiness;
-  final DeclaredLimitsV01 limits;
+  final List<State> states;
+  final List<Edge> edges;
+  final List<Binding> bindings;
+  final Readiness readiness;
+  final DeclaredLimits limits;
 }
 
-class AccessUnitInputV01 {
-  const AccessUnitInputV01({
+/// Caller-owned payload plus timeline metadata, identified within one unit.
+class EncodedChunkInput {
+  const EncodedChunkInput({
     required this.rendition,
     required this.unit,
-    required this.frameIndex,
-    required this.key,
+    required this.decodeIndex,
+    required this.presentationTimestamp,
+    required this.duration,
+    required this.randomAccess,
+    required this.displayedFrameCount,
     required this.bytes,
   });
 
   final Id rendition;
   final Id unit;
-  final int frameIndex;
-  final bool key;
-  final List<int> bytes;
+  final int decodeIndex;
+  final int presentationTimestamp;
+  final int duration;
+  final bool randomAccess;
+  final int displayedFrameCount;
+  final Uint8List bytes;
 }
 
-class CanonicalAssetInputV01 {
-  const CanonicalAssetInputV01({
+class CanonicalAssetInput {
+  const CanonicalAssetInput({
     required this.manifest,
-    required this.accessUnits,
+    required this.chunks,
   });
 
-  final CompiledManifestInputV01 manifest;
-  final List<AccessUnitInputV01> accessUnits;
+  final CompiledManifestInput manifest;
+  final List<EncodedChunkInput> chunks;
 }
