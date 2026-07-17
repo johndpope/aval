@@ -111,10 +111,10 @@ class _RabbitPageState extends State<RabbitPage>
     if (_hovering == hovering) return;
     _hovering = hovering;
     if (hovering) {
-      _controller.onHoverEnter();
-    } else {
-      _controller.onHoverLeave();
+      // engagement.on → "hi" event (mansion-woman binding).
+      _controller.onEngagementOn();
     }
+    // engagement.off has no binding; hi→idle is completion-triggered.
   }
 
   @override
@@ -148,7 +148,7 @@ class _RabbitPageState extends State<RabbitPage>
       mainAxisSize: MainAxisSize.min,
       children: [
         const SizedBox(height: 24),
-        Text('AVAL · grass-rabbit',
+        Text('AVAL · mansion-woman',
             style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 4),
         Text(
@@ -165,7 +165,7 @@ class _RabbitPageState extends State<RabbitPage>
         const SizedBox(height: 16),
         _StateBadge(controller: _controller, epoch: _stateEpoch),
         const SizedBox(height: 12),
-        Text('Hover the video to drive the state graph',
+        Text('Hover → "hi" · Tap → "great" · Drives the state graph',
             style: Theme.of(context)
                 .textTheme
                 .bodySmall
@@ -179,18 +179,23 @@ class _RabbitPageState extends State<RabbitPage>
     return MouseRegion(
       onEnter: (_) => _setHover(true),
       onExit: (_) => _setHover(false),
-      child: Container(
-        width: 720,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: Colors.white12),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: AspectRatio(
-          aspectRatio: aspect,
-          child: RepaintBoundary(
-            child: CustomPaint(
-              painter: _FramePainter(image: _displayImage),
+      child: GestureDetector(
+        onTap: () {
+          if (_controller.loaded) _controller.onActivate();
+        },
+        child: Container(
+          width: 720,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.white12),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: AspectRatio(
+            aspectRatio: aspect,
+            child: RepaintBoundary(
+              child: CustomPaint(
+                painter: _FramePainter(image: _displayImage),
+              ),
             ),
           ),
         ),

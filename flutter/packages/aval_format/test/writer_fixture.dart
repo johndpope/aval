@@ -1,18 +1,20 @@
 // Dart port of packages/format/test/writer-fixture.ts.
 import 'dart:typed_data';
 
-import 'package:aval_format/src/manifest_schema.dart' show validateCompiledManifestV01;
+import 'package:aval_format/src/manifest_schema.dart' show validateCompiledManifest;
 import 'package:aval_format/src/model.dart';
-import 'package:aval_format/src/reference_frame.dart';
 
 import 'manifest_fixture.dart';
 
 /// Converts a validated compiled manifest back into writer-input shape
-/// (`CompiledManifestInputV01`, whose units carry `SampleDigestInputV01`
-/// instead of the fully-derived `SampleSpanV01`).
-CompiledManifestInputV01 manifestInputFromCompiled(CompiledManifestV01 manifest) {
-  return CompiledManifestInputV01(
+/// (`CompiledManifestInput`, whose units carry `ChunkDigestInput`
+/// instead of the fully-derived `UnitChunkSpan`).
+CompiledManifestInput manifestInputFromCompiled(CompiledManifest manifest) {
+  return CompiledManifestInput(
     generator: manifest.generator,
+    codec: manifest.codec,
+    bitstream: manifest.bitstream,
+    layout: manifest.layout,
     canvas: manifest.canvas,
     frameRate: manifest.frameRate,
     renditions: manifest.renditions,
@@ -26,49 +28,52 @@ CompiledManifestInputV01 manifestInputFromCompiled(CompiledManifestV01 manifest)
   );
 }
 
-UnitInputV01 _unitInputFrom(UnitV01 unit) {
-  final samples = unit.samples
-      .map((s) => SampleDigestInputV01(rendition: s.rendition, sha256: s.sha256))
+UnitInput _unitInputFrom(Unit unit) {
+  final chunks = unit.chunks
+      .map((chunk) => ChunkDigestInput(rendition: chunk.rendition, sha256: chunk.sha256))
       .toList();
-  if (unit is BodyUnitV01) {
-    return BodyUnitInputV01(
+  if (unit is BodyUnit) {
+    return BodyUnitInput(
       id: unit.id,
       frameCount: unit.frameCount,
-      samples: samples,
+      chunks: chunks,
       playback: unit.playback,
       ports: unit.ports,
     );
   }
-  if (unit is BridgeUnitV01) {
-    return BridgeUnitInputV01(id: unit.id, frameCount: unit.frameCount, samples: samples);
+  if (unit is BridgeUnit) {
+    return BridgeUnitInput(id: unit.id, frameCount: unit.frameCount, chunks: chunks);
   }
-  if (unit is ReversibleUnitV01) {
-    return ReversibleUnitInputV01(
+  if (unit is ReversibleUnit) {
+    return ReversibleUnitInput(
       id: unit.id,
       frameCount: unit.frameCount,
-      samples: samples,
+      chunks: chunks,
       residency: unit.residency,
     );
   }
-  final oneShot = unit as OneShotUnitV01;
-  return OneShotUnitInputV01(id: oneShot.id, frameCount: oneShot.frameCount, samples: samples);
+  final oneShot = unit as OneShotUnit;
+  return OneShotUnitInput(id: oneShot.id, frameCount: oneShot.frameCount, chunks: chunks);
 }
 
-/// Reconstructs the typed [CompiledManifestV01] the untyped
+/// Reconstructs the typed [CompiledManifest] the untyped
 /// `manifest_fixture.dart` builds, by round-tripping it through the real
 /// schema validator (the fixture is authored as an untyped Map tree exactly
 /// like the TS source's object literal, and this is the one place both
 /// typed and untyped worlds need to meet for the writer fixture).
-CompiledManifestV01 _validCompiledManifest() {
-  return validateCompiledManifestV01(validManifest());
+CompiledManifest _validCompiledManifest() {
+  return validateCompiledManifest(validManifest());
 }
 
-/// A fresh valid writer input with real AVRF samples.
-CanonicalAssetInputV01 validWriterInput({String generatorSuffix = ''}) {
+/// A fresh valid writer input with one encoded chunk per displayed frame.
+CanonicalAssetInput validWriterInput({String generatorSuffix = ''}) {
   final compiled = _validCompiledManifest();
   final baseManifest = manifestInputFromCompiled(compiled);
-  final manifest = CompiledManifestInputV01(
+  final manifest = CompiledManifestInput(
     generator: baseManifest.generator + generatorSuffix,
+    codec: baseManifest.codec,
+    bitstream: baseManifest.bitstream,
+    layout: baseManifest.layout,
     canvas: baseManifest.canvas,
     frameRate: baseManifest.frameRate,
     renditions: baseManifest.renditions,
@@ -82,52 +87,53 @@ CanonicalAssetInputV01 validWriterInput({String generatorSuffix = ''}) {
   );
 
   var ordinal = 0;
-  final accessUnits = <AccessUnitInputV01>[];
+  final chunks = <EncodedChunkInput>[];
   for (final rendition in compiled.renditions) {
     for (final unit in compiled.units) {
-      for (var frameIndex = 0; frameIndex < unit.frameCount; frameIndex += 1) {
-        final fillValue = ordinal & 0xff;
-        ordinal += 1;
-        final bytes = encodeReferenceFrame(ReferenceFrameInput(
-          width: rendition.codedWidth,
-          height: rendition.codedHeight,
-          frameIndex: frameIndex,
-          rgba: Uint8List(rendition.codedWidth * rendition.codedHeight * 4)
-            ..fillRange(0, rendition.codedWidth * rendition.codedHeight * 4, fillValue),
-        ));
-        accessUnits.add(AccessUnitInputV01(
+      for (var decodeIndex = 0; decodeIndex < unit.frameCount; decodeIndex += 1) {
+        chunks.add(EncodedChunkInput(
           rendition: rendition.id,
           unit: unit.id,
-          frameIndex: frameIndex,
-          key: true,
-          bytes: bytes,
+          decodeIndex: decodeIndex,
+          presentationTimestamp: decodeIndex,
+          duration: 1,
+          randomAccess: decodeIndex == 0,
+          displayedFrameCount: 1,
+          bytes: Uint8List.fromList([0, 0, 1, ordinal++ & 0xff]),
         ));
       }
     }
   }
-  return CanonicalAssetInputV01(manifest: manifest, accessUnits: accessUnits);
+  return CanonicalAssetInput(manifest: manifest, chunks: chunks);
 }
 
-/// Extends the compact fixture to exercise rendition-major canonicalization.
-CanonicalAssetInputV01 twoRenditionWriterInput() {
+/// Extends the compact fixture to exercise authored rendition order.
+CanonicalAssetInput twoRenditionWriterInput() {
   final input = validWriterInput();
-  final original = input.manifest.renditions[0] as ReferenceRgbaRenditionV01;
-  final alternate = ReferenceRgbaRenditionV01(
+  final original = input.manifest.renditions[0];
+  final alternate = ProductionRendition(
     id: 'alternate',
+    codec: original.codec,
+    bitDepth: original.bitDepth,
     codedWidth: original.codedWidth,
     codedHeight: original.codedHeight,
+    alphaLayout: original.alphaLayout,
+    bitrate: const Bitrate(average: 500, peak: 1000),
   );
   final units = input.manifest.units.map((unit) {
-    final firstDigest = unit.samples[0].sha256;
-    final samples = [
-      SampleDigestInputV01(rendition: alternate.id, sha256: firstDigest),
-      ...unit.samples,
+    final firstDigest = unit.chunks[0].sha256;
+    final chunks = [
+      ChunkDigestInput(rendition: alternate.id, sha256: firstDigest),
+      ...unit.chunks,
     ];
-    return _withSamples(unit, samples);
+    return _withChunks(unit, chunks);
   }).toList();
 
-  final manifest = CompiledManifestInputV01(
+  final manifest = CompiledManifestInput(
     generator: input.manifest.generator,
+    codec: input.manifest.codec,
+    bitstream: input.manifest.bitstream,
+    layout: input.manifest.layout,
     canvas: input.manifest.canvas,
     frameRate: input.manifest.frameRate,
     renditions: [alternate, original],
@@ -140,84 +146,143 @@ CanonicalAssetInputV01 twoRenditionWriterInput() {
     limits: input.manifest.limits,
   );
 
-  final accessUnits = <AccessUnitInputV01>[
-    for (final sample in input.accessUnits)
-      AccessUnitInputV01(
+  final chunks = <EncodedChunkInput>[
+    for (final chunk in input.chunks)
+      EncodedChunkInput(
         rendition: alternate.id,
-        unit: sample.unit,
-        frameIndex: sample.frameIndex,
-        key: sample.key,
-        bytes: Uint8List.fromList(sample.bytes),
+        unit: chunk.unit,
+        decodeIndex: chunk.decodeIndex,
+        presentationTimestamp: chunk.presentationTimestamp,
+        duration: chunk.duration,
+        randomAccess: chunk.randomAccess,
+        displayedFrameCount: chunk.displayedFrameCount,
+        bytes: Uint8List.fromList(chunk.bytes),
       ),
-    ...input.accessUnits,
+    ...input.chunks,
   ];
-  return CanonicalAssetInputV01(manifest: manifest, accessUnits: accessUnits);
+  return CanonicalAssetInput(manifest: manifest, chunks: chunks);
 }
 
-UnitInputV01 _withSamples(UnitInputV01 unit, List<SampleDigestInputV01> samples) {
-  if (unit is BodyUnitInputV01) {
-    return BodyUnitInputV01(
+/// Adds bytes to the first chunk for large-offset boundary tests.
+CanonicalAssetInput largeChunkWriterInput(int extraPayloadBytes) {
+  if (extraPayloadBytes < 0) {
+    throw ArgumentError('extra payload bytes must be nonnegative');
+  }
+  final input = validWriterInput();
+  final maxCompiled = input.manifest.limits.maxCompiledBytes;
+  final bumped = extraPayloadBytes + 1024 * 1024;
+  final newMax = maxCompiled >= 32 * 1024 * 1024 && bumped <= maxCompiled
+      ? maxCompiled
+      : (bumped > 32 * 1024 * 1024 ? bumped : 32 * 1024 * 1024);
+  return CanonicalAssetInput(
+    manifest: CompiledManifestInput(
+      generator: input.manifest.generator,
+      codec: input.manifest.codec,
+      bitstream: input.manifest.bitstream,
+      layout: input.manifest.layout,
+      canvas: input.manifest.canvas,
+      frameRate: input.manifest.frameRate,
+      renditions: input.manifest.renditions,
+      units: input.manifest.units,
+      initialState: input.manifest.initialState,
+      states: input.manifest.states,
+      edges: input.manifest.edges,
+      bindings: input.manifest.bindings,
+      readiness: input.manifest.readiness,
+      limits: DeclaredLimits(
+        maxCompiledBytes: newMax,
+        maxRuntimeBytes: input.manifest.limits.maxRuntimeBytes,
+        decodedPixelBytes: input.manifest.limits.decodedPixelBytes,
+        persistentCacheBytes: input.manifest.limits.persistentCacheBytes,
+        runtimeWorkingSetBytes: input.manifest.limits.runtimeWorkingSetBytes,
+      ),
+    ),
+    chunks: [
+      for (var ordinal = 0; ordinal < input.chunks.length; ordinal += 1)
+        ordinal == 0
+            ? EncodedChunkInput(
+                rendition: input.chunks[ordinal].rendition,
+                unit: input.chunks[ordinal].unit,
+                decodeIndex: input.chunks[ordinal].decodeIndex,
+                presentationTimestamp: input.chunks[ordinal].presentationTimestamp,
+                duration: input.chunks[ordinal].duration,
+                randomAccess: input.chunks[ordinal].randomAccess,
+                displayedFrameCount: input.chunks[ordinal].displayedFrameCount,
+                bytes: Uint8List(1 + extraPayloadBytes)
+                  ..fillRange(0, 1 + extraPayloadBytes, ordinal & 0xff),
+              )
+            : input.chunks[ordinal],
+    ],
+  );
+}
+
+/// Rebuilds writer metadata from parsed values while reusing caller payloads.
+CanonicalAssetInput writerInputFromParsed(
+  ParsedFrontIndex front,
+  List<EncodedChunkInput> chunks,
+) {
+  return CanonicalAssetInput(
+    manifest: manifestInputFromCompiled(front.manifest),
+    chunks: chunks,
+  );
+}
+
+UnitInput _withChunks(UnitInput unit, List<ChunkDigestInput> chunks) {
+  if (unit is BodyUnitInput) {
+    return BodyUnitInput(
       id: unit.id,
       frameCount: unit.frameCount,
-      samples: samples,
+      chunks: chunks,
       playback: unit.playback,
       ports: unit.ports,
     );
   }
-  if (unit is BridgeUnitInputV01) {
-    return BridgeUnitInputV01(id: unit.id, frameCount: unit.frameCount, samples: samples);
+  if (unit is BridgeUnitInput) {
+    return BridgeUnitInput(id: unit.id, frameCount: unit.frameCount, chunks: chunks);
   }
-  if (unit is ReversibleUnitInputV01) {
-    return ReversibleUnitInputV01(
+  if (unit is ReversibleUnitInput) {
+    return ReversibleUnitInput(
       id: unit.id,
       frameCount: unit.frameCount,
-      samples: samples,
+      chunks: chunks,
       residency: unit.residency,
     );
   }
-  final oneShot = unit as OneShotUnitInputV01;
-  return OneShotUnitInputV01(id: oneShot.id, frameCount: oneShot.frameCount, samples: samples);
-}
-
-/// Rebuilds writer metadata from parsed values while reusing caller payloads.
-CanonicalAssetInputV01 writerInputFromParsed(
-  ParsedFrontIndex front,
-  List<AccessUnitInputV01> accessUnits,
-) {
-  return CanonicalAssetInputV01(
-    manifest: manifestInputFromCompiled(front.manifest),
-    accessUnits: accessUnits,
-  );
+  final oneShot = unit as OneShotUnitInput;
+  return OneShotUnitInput(id: oneShot.id, frameCount: oneShot.frameCount, chunks: chunks);
 }
 
 /// Reverses all semantically unordered input arrays without changing meaning.
-CanonicalAssetInputV01 shuffledWriterInput(CanonicalAssetInputV01 input) {
+CanonicalAssetInput shuffledWriterInput(CanonicalAssetInput input) {
   final manifest = input.manifest;
   final units = manifest.units.reversed.map((unit) {
-    if (unit is BodyUnitInputV01) {
-      return BodyUnitInputV01(
+    if (unit is BodyUnitInput) {
+      return BodyUnitInput(
         id: unit.id,
         frameCount: unit.frameCount,
-        samples: unit.samples.reversed.toList(),
+        chunks: unit.chunks.reversed.toList(),
         playback: unit.playback,
         ports: unit.ports.reversed
-            .map((port) => PortV01(id: port.id, portalFrames: port.portalFrames.reversed.toList()))
+            .map((port) => Port(id: port.id, portalFrames: port.portalFrames.reversed.toList()))
             .toList(),
       );
     }
-    if (unit is ReversibleUnitInputV01) {
-      return ReversibleUnitInputV01(
+    if (unit is ReversibleUnitInput) {
+      return ReversibleUnitInput(
         id: unit.id,
         frameCount: unit.frameCount,
-        samples: unit.samples.reversed.toList(),
-        residency: ReversibleResidencyV01(unit.residency.endpoints.reversed.toList()),
+        chunks: unit.chunks.reversed.toList(),
+        residency: ReversibleResidency(unit.residency.endpoints.reversed.toList()),
       );
     }
-    return _withSamples(unit, unit.samples.reversed.toList());
+    return _withChunks(unit, unit.chunks.reversed.toList());
   }).toList();
 
-  final reversedManifest = CompiledManifestInputV01(
+  final reversedManifest = CompiledManifestInput(
     generator: manifest.generator,
+    codec: manifest.codec,
+    bitstream: manifest.bitstream,
+    layout: manifest.layout,
     canvas: manifest.canvas,
     frameRate: manifest.frameRate,
     renditions: manifest.renditions.reversed.toList(),
@@ -226,16 +291,16 @@ CanonicalAssetInputV01 shuffledWriterInput(CanonicalAssetInputV01 input) {
     states: manifest.states.reversed.toList(),
     edges: manifest.edges.reversed.toList(),
     bindings: manifest.bindings.reversed.toList(),
-    readiness: ReadinessV01(
+    readiness: Readiness(
       bootstrapUnits: manifest.readiness.bootstrapUnits.reversed.toList(),
       immediateEdges: manifest.readiness.immediateEdges.reversed.toList(),
     ),
     limits: manifest.limits,
   );
 
-  return CanonicalAssetInputV01(
+  return CanonicalAssetInput(
     manifest: reversedManifest,
-    accessUnits: input.accessUnits.reversed.toList(),
+    chunks: input.chunks.reversed.toList(),
   );
 }
 

@@ -50,13 +50,12 @@ class RabbitController extends ChangeNotifier {
   /// Maps a graph *state* to the *unit* whose frames represent it.
   static const Map<String, String> unitForState = <String, String>{
     'idle': 'idle-loop',
-    'entering': 'hover-in',
-    'hover': 'hover-loop',
-    'exiting': 'hover-out',
+    'hi': 'hi',
+    'great': 'great',
   };
 
   /// Units that loop (others play once and hold their last frame).
-  static const Set<String> loopUnitIds = <String>{'idle-loop', 'hover-loop'};
+  static const Set<String> loopUnitIds = <String>{'idle-loop'};
 
   /// The graph state names, in manifest order.
   List<String> get stateNames =>
@@ -87,7 +86,7 @@ class RabbitController extends ChangeNotifier {
     final snap = engine.snapshot();
     if (snap.presentation is GraphPresentationIntro) return 'intro';
     final vs = snap.visualState ?? _graph?.definition.initialState ?? 'idle';
-    return unitForState[vs] ?? 'idle-loop';
+    return unitForState[vs] ?? vs;
   }
 
   bool isLoopUnit(String unitId) => loopUnitIds.contains(unitId);
@@ -109,7 +108,7 @@ class RabbitController extends ChangeNotifier {
 
   Future<void> load() async {
     try {
-      final data = await rootBundle.load('assets/grass-rabbit.avl');
+      final data = await rootBundle.load('assets/mansion-woman.avl/h264.avl');
       final bytes =
           data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
 
@@ -141,26 +140,30 @@ class RabbitController extends ChangeNotifier {
 
   Future<void> _decodeAllUnits(
     Uint8List bytes,
-    CompiledManifestV01 manifest,
-    List<AccessUnitRecord> records,
+    CompiledManifest manifest,
+    List<EncodedChunkRecord> records,
     int codedWidth,
     int codedHeight,
   ) async {
     debugPrint('[rabbit] opening dylib: $avalDecodeLibPath');
     final bindings = AvalDecodeBindings.open(avalDecodeLibPath);
 
-    // Each unit is a closed GOP whose first access unit is a self-contained
-    // IDR (verified: record.key on every unit's frame 0). Decode each unit in
-    // its own session for a clean decoder reset between units.
-    for (var u = 0; u < manifest.units.length; u++) {
-      final unit = manifest.units[u];
-      final unitRecords = records
-          .where((r) => r.unitIndex == u && r.renditionIndex == 0)
-          .toList()
-        ..sort((a, b) => a.frameIndex.compareTo(b.frameIndex));
+    // Format 1.0: each unit embeds its own chunk spans (rendition id + chunk
+    // start/count) referencing the flat global decode-order `records` list.
+    // Each unit is a closed GOP whose first chunk is a self-contained IDR.
+    for (final unit in manifest.units) {
+      if (unit.chunks.isEmpty) continue;
+      // Use the first rendition span (single-rendition assets for now).
+      final span = unit.chunks.first;
+      final unitRecords = <EncodedChunkRecord>[];
+      for (var c = 0; c < span.chunkCount; c++) {
+        final idx = span.chunkStart + c;
+        if (idx < 0 || idx >= records.length) break;
+        unitRecords.add(records[idx]);
+      }
       if (unitRecords.isEmpty) continue;
-      if (!unitRecords.first.key) {
-        throw StateError('unit ${unit.id} first access unit is not a key frame');
+      if (!unitRecords.first.randomAccess) {
+        throw StateError('unit ${unit.id} first chunk is not a key frame');
       }
 
       final frames = unitFrames.putIfAbsent(unit.id, () => <ui.Image>[]);
@@ -172,8 +175,8 @@ class RabbitController extends ChangeNotifier {
           final record = unitRecords[i];
           final annexB = Uint8List.sublistView(
             bytes,
-            record.payloadOffset,
-            record.payloadOffset + record.payloadLength,
+            record.byteOffset,
+            record.byteOffset + record.byteLength,
           );
           final frameId = session.submit(
             ordinal: i,
@@ -181,7 +184,7 @@ class RabbitController extends ChangeNotifier {
             duration: 1,
             unitFrame: i,
             unitFrameCount: unit.frameCount,
-            isKey: record.key,
+            isKey: record.randomAccess,
             data: annexB,
             unitId: unit.id,
           );
@@ -224,12 +227,19 @@ class RabbitController extends ChangeNotifier {
     _contentOrdinal += BigInt.one;
   }
 
-  void onHoverEnter() {
-    if (loaded) engine.send('hover.enter');
+  /// engagement.on → "hi" event (mansion-woman binding).
+  void onEngagementOn() {
+    if (loaded) engine.send('hi');
   }
 
-  void onHoverLeave() {
-    if (loaded) engine.send('hover.leave');
+  /// engagement.off — no binding in mansion-woman; hi completes back to idle.
+  void onEngagementOff() {
+    // The hi→idle edge is completion-triggered, so nothing to send here.
+  }
+
+  /// activate → "great" event (mansion-woman binding).
+  void onActivate() {
+    if (loaded) engine.send('great');
   }
 
   @override

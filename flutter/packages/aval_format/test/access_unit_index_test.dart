@@ -9,18 +9,30 @@ import 'package:test/test.dart';
 
 final String _sha256Zeros = '0'.padRight(64, '0');
 
-CompiledManifestV01 _manifestWith(RenditionV01 rendition, UnitV01 unit) => CompiledManifestV01(
+CompiledManifest _manifestWith({
+  required ProductionRendition rendition,
+  required Unit unit,
+}) =>
+    CompiledManifest(
       generator: 'test',
-      canvas: const CanvasV01(width: 1, height: 1, fit: 'contain', pixelAspect: [1, 1]),
-      frameRate: const RationalV01(numerator: 30, denominator: 1),
+      codec: rendition.codec,
+      bitstream: 'annex-b',
+      layout: 'opaque',
+      canvas: Canvas(
+        width: rendition.codedWidth,
+        height: rendition.codedHeight,
+        fit: 'contain',
+        pixelAspect: const [1, 1],
+      ),
+      frameRate: const Rational(numerator: 30, denominator: 1),
       renditions: [rendition],
       units: [unit],
       initialState: 'a',
       states: const [],
       edges: const [],
       bindings: const [],
-      readiness: const ReadinessV01(bootstrapUnits: [], immediateEdges: []),
-      limits: const DeclaredLimitsV01(
+      readiness: const Readiness(bootstrapUnits: [], immediateEdges: []),
+      limits: const DeclaredLimits(
         maxCompiledBytes: maxSafeInteger,
         maxRuntimeBytes: maxSafeInteger,
         decodedPixelBytes: 0,
@@ -29,73 +41,61 @@ CompiledManifestV01 _manifestWith(RenditionV01 rendition, UnitV01 unit) => Compi
       ),
     );
 
-final CompiledManifestV01 avcManifest = _manifestWith(
-  AvcOpaqueRenditionV01(
-    id: 'avc',
-    profile: 'avc-annexb-opaque-v0',
-    codec: 'avc1.42E00A',
-    codedWidth: 16,
-    codedHeight: 16,
-    colorRect: const Rect(0, 0, 16, 16),
-    bitrate: const BitrateV01(average: 1, peak: 1),
-  ),
-  BodyUnitV01(
-    id: 'body',
-    frameCount: 2,
-    playback: 'finite',
-    ports: const [],
-    samples: [
-      SampleSpanV01(rendition: 'avc', sampleStart: 0, sampleCount: 2, sha256: _sha256Zeros),
-    ],
-  ),
+ProductionRendition _videoRendition() => ProductionRendition(
+      id: 'video',
+      codec: 'avc1.42E00A',
+      bitDepth: 8,
+      codedWidth: 16,
+      codedHeight: 16,
+      alphaLayout: OpaqueAlphaLayout(colorRect: const Rect(0, 0, 16, 16)),
+      bitrate: const Bitrate(average: 1, peak: 1),
+    );
+
+Unit _bodyUnit({required int frameCount, required int chunkCount}) => BodyUnit(
+      id: 'body',
+      frameCount: frameCount,
+      playback: 'finite',
+      ports: const [],
+      chunks: [
+        UnitChunkSpan(
+          rendition: 'video',
+          chunkStart: 0,
+          chunkCount: chunkCount,
+          frameCount: frameCount,
+          sha256: _sha256Zeros,
+        ),
+      ],
+    );
+
+final CompiledManifest manifest = _manifestWith(
+  rendition: _videoRendition(),
+  unit: _bodyUnit(frameCount: 2, chunkCount: 2),
 );
 
-final CompiledManifestV01 referenceManifest = _manifestWith(
-  const ReferenceRgbaRenditionV01(id: 'reference', codedWidth: 1, codedHeight: 1),
-  BodyUnitV01(
-    id: 'body',
-    frameCount: 2,
-    playback: 'finite',
-    ports: const [],
-    samples: [
-      SampleSpanV01(rendition: 'reference', sampleStart: 0, sampleCount: 2, sha256: _sha256Zeros),
-    ],
+final List<EncodedChunkRecord> kRecords = [
+  const EncodedChunkRecord(
+    byteOffset: 128,
+    byteLength: 4,
+    presentationTimestamp: 1,
+    duration: 1,
+    randomAccess: true,
+    displayedFrameCount: 1,
   ),
-);
-
-final List<AccessUnitRecord> kRecords = [
-  const AccessUnitRecord(
-    payloadOffset: 128,
-    payloadLength: 4,
-    unitIndex: 0,
-    renditionIndex: 0,
-    key: true,
-    frameIndex: 0,
-  ),
-  const AccessUnitRecord(
-    payloadOffset: 132,
-    payloadLength: 5,
-    unitIndex: 0,
-    renditionIndex: 0,
-    key: false,
-    frameIndex: 1,
+  const EncodedChunkRecord(
+    byteOffset: 132,
+    byteLength: 5,
+    presentationTimestamp: 0,
+    duration: 1,
+    randomAccess: false,
+    displayedFrameCount: 1,
   ),
 ];
 
-const String goldenHex = '41564c49200000000200000000000000'
-    '8000000000000000040000000000000000000100000000000000000000000000'
-    '8400000000000000050000000000000000000000010000000000000000000000';
+const String goldenHex = '41564c49300000000200000000000000'
+    '800000000000000004000000010000000100000000000000010000000000000001000000000000000000000000000000'
+    '840000000000000005000000010000000000000000000000010000000000000000000000000000000000000000000000';
 
 String _hex(Uint8List bytes) => bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
-
-AccessUnitRecord _withKey(AccessUnitRecord record, bool key) => AccessUnitRecord(
-      payloadOffset: record.payloadOffset,
-      payloadLength: record.payloadLength,
-      unitIndex: record.unitIndex,
-      renditionIndex: record.renditionIndex,
-      key: key,
-      frameIndex: record.frameIndex,
-    );
 
 FormatError _expectFormatError(dynamic Function() operation, FormatErrorCode code) {
   try {
@@ -108,189 +108,191 @@ FormatError _expectFormatError(dynamic Function() operation, FormatErrorCode cod
 }
 
 void main() {
-  group('version-0.1 access-unit index', () {
-    test('encodes the exact 16 + 32N canonical bytes', () {
-      final bytes = encodeAccessUnitIndex(kRecords, avcManifest);
-      expect(bytes.length, 80);
+  group('version-1.0 encoded-chunk index', () {
+    test('encodes the exact 16 + 48N canonical bytes', () {
+      final bytes = encodeEncodedChunkIndex(kRecords, manifest);
+      expect(bytes.length, 112);
       expect(_hex(bytes), goldenHex);
     });
 
-    test('parses detached numeric records', () {
-      final bytes = encodeAccessUnitIndex(kRecords, avcManifest);
-      final parsed = parseAccessUnitIndex(bytes, avcManifest);
+    test('preserves decode order independently from presentation timestamps', () {
+      final bytes = encodeEncodedChunkIndex(kRecords, manifest);
+      final parsed = parseEncodedChunkIndex(bytes, manifest);
       expect(parsed.length, kRecords.length);
       for (var i = 0; i < parsed.length; i += 1) {
-        expect(parsed[i].payloadOffset, kRecords[i].payloadOffset);
-        expect(parsed[i].payloadLength, kRecords[i].payloadLength);
-        expect(parsed[i].key, kRecords[i].key);
-        expect(parsed[i].frameIndex, kRecords[i].frameIndex);
+        expect(parsed[i].byteOffset, kRecords[i].byteOffset);
+        expect(parsed[i].byteLength, kRecords[i].byteLength);
+        expect(parsed[i].presentationTimestamp, kRecords[i].presentationTimestamp);
+        expect(parsed[i].duration, kRecords[i].duration);
+        expect(parsed[i].randomAccess, kRecords[i].randomAccess);
+        expect(parsed[i].displayedFrameCount, kRecords[i].displayedFrameCount);
       }
+      expect(parsed.map((r) => r.presentationTimestamp).toList(), [1, 0]);
       bytes.fillRange(0, bytes.length, 0);
-      expect(parsed[0].payloadOffset, kRecords[0].payloadOffset);
+      expect(parsed[0].byteOffset, kRecords[0].byteOffset);
     });
 
-    test('supports an unaligned view and reads no adjacent bytes', () {
-      final index = encodeAccessUnitIndex(kRecords, avcManifest);
-      final storage = Uint8List(index.length + 7)..fillRange(0, index.length + 7, 0xa5);
-      final view = Uint8List.sublistView(storage, 3, 3 + index.length);
-      view.setRange(0, index.length, index);
-      final parsed = parseAccessUnitIndex(view, avcManifest);
-      expect(parsed.length, kRecords.length);
-      expect(storage.sublist(0, 3), [0xa5, 0xa5, 0xa5]);
-      expect(storage.sublist(3 + index.length), [0xa5, 0xa5, 0xa5, 0xa5]);
+    test('supports hidden chunks and multiple chunks per displayed frame timeline', () {
+      final hiddenManifest = _manifestWith(
+        rendition: _videoRendition(),
+        unit: _bodyUnit(frameCount: 1, chunkCount: 2),
+      );
+      final records = <EncodedChunkRecord>[
+        EncodedChunkRecord(
+          byteOffset: kRecords[0].byteOffset,
+          byteLength: kRecords[0].byteLength,
+          presentationTimestamp: kRecords[0].presentationTimestamp,
+          duration: 0,
+          randomAccess: kRecords[0].randomAccess,
+          displayedFrameCount: 0,
+        ),
+        EncodedChunkRecord(
+          byteOffset: kRecords[1].byteOffset,
+          byteLength: kRecords[1].byteLength,
+          presentationTimestamp: 0,
+          duration: kRecords[1].duration,
+          randomAccess: kRecords[1].randomAccess,
+          displayedFrameCount: kRecords[1].displayedFrameCount,
+        ),
+      ];
+      final parsed = parseEncodedChunkIndex(
+        encodeEncodedChunkIndex(records, hiddenManifest),
+        hiddenManifest,
+      );
+      expect(parsed.length, records.length);
+      for (var i = 0; i < parsed.length; i += 1) {
+        expect(parsed[i].duration, records[i].duration);
+        expect(parsed[i].displayedFrameCount, records[i].displayedFrameCount);
+      }
     });
 
-    test('rejects every truncation and any trailing byte before record allocation', () {
-      final bytes = encodeAccessUnitIndex(kRecords, avcManifest);
+    test('rejects every truncation and any trailing byte', () {
+      final bytes = encodeEncodedChunkIndex(kRecords, manifest);
       for (var length = 0; length < bytes.length; length += 1) {
         _expectFormatError(
-          () => parseAccessUnitIndex(Uint8List.sublistView(bytes, 0, length), avcManifest),
+          () => parseEncodedChunkIndex(Uint8List.sublistView(bytes, 0, length), manifest),
           FormatErrorCode.indexInvalid,
         );
       }
       final trailing = Uint8List(bytes.length + 1)..setRange(0, bytes.length, bytes);
-      _expectFormatError(() => parseAccessUnitIndex(trailing, avcManifest), FormatErrorCode.indexInvalid);
+      _expectFormatError(() => parseEncodedChunkIndex(trailing, manifest), FormatErrorCode.indexInvalid);
     });
 
-    test('rejects magic, record-size, header-reserved, and record-reserved mutations', () {
-      final offsets = [0, 4, 6, 12, 16 + 24];
+    test('rejects magic, size, reserved bytes, and unknown flag bits', () {
+      const offsets = [0, 4, 6, 12, 16 + 36, 16 + 40];
       for (final offset in offsets) {
-        final bytes = encodeAccessUnitIndex(kRecords, avcManifest);
-        bytes[offset] = bytes[offset] ^ 1;
-        _expectFormatError(() => parseAccessUnitIndex(bytes, avcManifest), FormatErrorCode.indexInvalid);
+        final bytes = encodeEncodedChunkIndex(kRecords, manifest);
+        bytes[offset] = (bytes[offset] ^ 1) & 0xff;
+        _expectFormatError(() => parseEncodedChunkIndex(bytes, manifest), FormatErrorCode.indexInvalid);
       }
+      final flag = encodeEncodedChunkIndex(kRecords, manifest);
+      flag[16 + 32] = 2;
+      _expectFormatError(() => parseEncodedChunkIndex(flag, manifest), FormatErrorCode.indexInvalid);
     });
 
-    test('rejects unknown flag bits and non-key unit entry frames', () {
-      final unknownFlag = encodeAccessUnitIndex(kRecords, avcManifest);
-      unknownFlag[16 + 18] = 2;
-      _expectFormatError(() => parseAccessUnitIndex(unknownFlag, avcManifest), FormatErrorCode.indexInvalid);
+    test('requires independent random-access unit entry and exact displayed coverage', () {
+      final entry = encodeEncodedChunkIndex(kRecords, manifest);
+      writeUint32LE(entry, 16 + 32, 0);
+      _expectFormatError(() => parseEncodedChunkIndex(entry, manifest), FormatErrorCode.indexInvalid);
 
-      final nonKeyEntry = encodeAccessUnitIndex(kRecords, avcManifest);
-      nonKeyEntry[16 + 18] = 0;
-      _expectFormatError(() => parseAccessUnitIndex(nonKeyEntry, avcManifest), FormatErrorCode.indexInvalid);
+      final coverage = encodeEncodedChunkIndex(kRecords, manifest);
+      writeUint32LE(coverage, 16 + 12, 0);
+      _expectFormatError(() => parseEncodedChunkIndex(coverage, manifest), FormatErrorCode.indexInvalid);
+
+      final duration = encodeEncodedChunkIndex(kRecords, manifest);
+      writeUint64LE(duration, 16 + 24, BigInt.zero);
+      _expectFormatError(() => parseEncodedChunkIndex(duration, manifest), FormatErrorCode.indexInvalid);
     });
 
-    test('requires every reference-rgba-v0 record to be key', () {
-      _expectFormatError(
-        () => encodeAccessUnitIndex(kRecords, referenceManifest),
-        FormatErrorCode.indexInvalid,
-      );
-      final allKey = kRecords.map((record) => _withKey(record, true)).toList();
-      final parsed = parseAccessUnitIndex(encodeAccessUnitIndex(allKey, referenceManifest), referenceManifest);
-      expect(parsed.every((record) => record.key), true);
-    });
-
-    test('rejects zero and lower-budget sample lengths without a product ceiling', () {
-      final zero = encodeAccessUnitIndex(kRecords, avcManifest);
+    test('rejects zero/over-budget byte lengths and unsafe timestamps', () {
+      final zero = encodeEncodedChunkIndex(kRecords, manifest);
       writeUint32LE(zero, 16 + 8, 0);
-      _expectFormatError(() => parseAccessUnitIndex(zero, avcManifest), FormatErrorCode.indexInvalid);
+      _expectFormatError(() => parseEncodedChunkIndex(zero, manifest), FormatErrorCode.indexInvalid);
 
-      final formerlyOversized = encodeAccessUnitIndex(kRecords, avcManifest);
-      writeUint32LE(formerlyOversized, 16 + 8, 2 * 1024 * 1024 + 1);
-      expect(
-        parseAccessUnitIndex(formerlyOversized, avcManifest)[0].payloadLength,
-        2 * 1024 * 1024 + 1,
-      );
-
-      final lowered = encodeAccessUnitIndex(kRecords, avcManifest);
       _expectFormatError(
-        () => parseAccessUnitIndex(lowered, avcManifest, const FormatOptions(budgets: {'maxSampleBytes': 4})),
-        FormatErrorCode.budgetExceeded,
-      );
-    });
-
-    test('rejects unsafe and caller-over-budget payload offsets', () {
-      final unsafe = encodeAccessUnitIndex(kRecords, avcManifest);
-      writeUint64LE(unsafe, 16, BigInt.from(maxSafeInteger) + BigInt.one);
-      _expectFormatError(() => parseAccessUnitIndex(unsafe, avcManifest), FormatErrorCode.integerUnsafe);
-
-      final overFormerBudget = encodeAccessUnitIndex(kRecords, avcManifest);
-      writeUint64LE(overFormerBudget, 16, 32 * 1024 * 1024 + 1);
-      expect(
-        parseAccessUnitIndex(overFormerBudget, avcManifest)[0].payloadOffset,
-        32 * 1024 * 1024 + 1,
-      );
-      _expectFormatError(
-        () => parseAccessUnitIndex(
-          overFormerBudget,
-          avcManifest,
-          const FormatOptions(budgets: {'maxFileBytes': 32 * 1024 * 1024}),
+        () => parseEncodedChunkIndex(
+          encodeEncodedChunkIndex(kRecords, manifest),
+          manifest,
+          const FormatOptions(budgets: {'maxChunkBytes': 4}),
         ),
         FormatErrorCode.budgetExceeded,
       );
+
+      final unsafe = encodeEncodedChunkIndex(kRecords, manifest);
+      writeUint64LE(unsafe, 16 + 16, BigInt.from(maxSafeInteger) + BigInt.one);
+      _expectFormatError(() => parseEncodedChunkIndex(unsafe, manifest), FormatErrorCode.integerUnsafe);
     });
 
-    test('cross-checks record count, canonical order, and frame coverage', () {
-      final wrongCount = Uint8List.sublistView(encodeAccessUnitIndex(kRecords, avcManifest), 0, 48);
-      writeUint32LE(wrongCount, 8, 1);
-      _expectFormatError(() => parseAccessUnitIndex(wrongCount, avcManifest), FormatErrorCode.indexInvalid);
-
-      final wrongFrame = encodeAccessUnitIndex(kRecords, avcManifest);
-      writeUint32LE(wrongFrame, 16 + 20, 1);
-      _expectFormatError(() => parseAccessUnitIndex(wrongFrame, avcManifest), FormatErrorCode.indexInvalid);
-
-      final wrongUnit = encodeAccessUnitIndex(kRecords, avcManifest);
-      writeUint32LE(wrongUnit, 16 + 12, 1);
-      _expectFormatError(() => parseAccessUnitIndex(wrongUnit, avcManifest), FormatErrorCode.indexInvalid);
-    });
-
-    test('allows later AVC samples to carry or omit the structural key bit', () {
-      final allKey = kRecords.map((record) => _withKey(record, true)).toList();
-      final parsed = parseAccessUnitIndex(encodeAccessUnitIndex(allKey, avcManifest), avcManifest);
-      expect(parsed.every((record) => record.key), true);
-    });
-
-    test('round-trips an index above the former 4 MiB scale', () {
-      const recordCount = 131073;
-      final manifest = _manifestWith(
-        AvcOpaqueRenditionV01(
-          id: 'avc',
-          profile: 'avc-annexb-opaque-v0',
-          codec: 'avc1.42E00A',
-          codedWidth: 16,
-          codedHeight: 16,
-          colorRect: const Rect(0, 0, 16, 16),
-          bitrate: const BitrateV01(average: 1, peak: 1),
-        ),
-        BodyUnitV01(
+    test('cross-checks the canonical manifest chunk spans', () {
+      final wrongSpanManifest = _manifestWith(
+        rendition: _videoRendition(),
+        unit: BodyUnit(
           id: 'body',
-          frameCount: recordCount,
+          frameCount: 2,
           playback: 'finite',
           ports: const [],
-          samples: [
-            SampleSpanV01(rendition: 'avc', sampleStart: 0, sampleCount: recordCount, sha256: _sha256Zeros),
+          chunks: [
+            UnitChunkSpan(
+              rendition: 'video',
+              chunkStart: 1,
+              chunkCount: 2,
+              frameCount: 2,
+              sha256: _sha256Zeros,
+            ),
           ],
         ),
       );
-      final records = List<AccessUnitRecord>.generate(
+      _expectFormatError(
+        () => parseEncodedChunkIndex(
+          encodeEncodedChunkIndex(kRecords, manifest),
+          wrongSpanManifest,
+        ),
+        FormatErrorCode.indexInvalid,
+      );
+    });
+
+    test('round-trips an index above the former scale', () {
+      const recordCount = 100000;
+      final bigManifest = _manifestWith(
+        rendition: _videoRendition(),
+        unit: _bodyUnit(frameCount: recordCount, chunkCount: recordCount),
+      );
+      final records = List<EncodedChunkRecord>.generate(
         recordCount,
-        (frameIndex) => AccessUnitRecord(
-          payloadOffset: 8000000 + frameIndex,
-          payloadLength: 1,
-          unitIndex: 0,
-          renditionIndex: 0,
-          key: frameIndex == 0,
-          frameIndex: frameIndex,
+        (index) => EncodedChunkRecord(
+          byteOffset: 8000000 + index,
+          byteLength: 1,
+          presentationTimestamp: index,
+          duration: 1,
+          randomAccess: index == 0,
+          displayedFrameCount: 1,
         ),
       );
 
-      final bytes = encodeAccessUnitIndex(records, manifest);
-      final parsed = parseAccessUnitIndex(bytes, manifest);
+      final bytes = encodeEncodedChunkIndex(records, bigManifest);
+      final parsed = parseEncodedChunkIndex(bytes, bigManifest);
 
       expect(bytes.length, greaterThan(4 * 1024 * 1024));
       expect(parsed.length, recordCount);
-      expect(parsed.last.frameIndex, recordCount - 1);
+      expect(parsed.last.presentationTimestamp, recordCount - 1);
     }, timeout: const Timeout(Duration(seconds: 20)));
 
-    test('honors record/index budgets before allocating record results', () {
-      final bytes = encodeAccessUnitIndex(kRecords, avcManifest);
+    test('honors record/index budgets and wraps hostile inputs', () {
+      final bytes = encodeEncodedChunkIndex(kRecords, manifest);
       _expectFormatError(
-        () => parseAccessUnitIndex(bytes, avcManifest, const FormatOptions(budgets: {'maxSampleRecords': 1})),
+        () => parseEncodedChunkIndex(
+          bytes,
+          manifest,
+          const FormatOptions(budgets: {'maxChunkRecords': 1}),
+        ),
         FormatErrorCode.budgetExceeded,
       );
       _expectFormatError(
-        () => parseAccessUnitIndex(bytes, avcManifest, const FormatOptions(budgets: {'maxIndexBytes': 79})),
+        () => parseEncodedChunkIndex(
+          bytes,
+          manifest,
+          const FormatOptions(budgets: {'maxIndexBytes': 111}),
+        ),
         FormatErrorCode.budgetExceeded,
       );
     });

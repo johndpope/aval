@@ -11,7 +11,7 @@ void main() {
       final callerInput = shuffledWriterInput(twoRenditionWriterInput());
       final first = writeCanonicalAsset(callerInput);
       final parsed = parseFrontIndex(first);
-      final reconstructed = writerInputFromParsed(parsed, callerInput.accessUnits);
+      final reconstructed = writerInputFromParsed(parsed, callerInput.chunks);
       final second = writeCanonicalAsset(reconstructed);
 
       expect(byteIdentity(first, second), true);
@@ -20,28 +20,35 @@ void main() {
       expect(layout.fileRange.length, second.length);
     });
 
-    test('preserves every derived sample span and payload byte range', () {
+    test('preserves every derived chunk span and payload byte range', () {
       final input = twoRenditionWriterInput();
       final bytes = writeCanonicalAsset(input);
       final parsed = parseFrontIndex(bytes);
 
-      expect(parsed.records.length, input.accessUnits.length);
+      expect(parsed.records.length, input.chunks.length);
       for (var index = 0; index < parsed.records.length; index += 1) {
         final record = parsed.records[index];
-        final slice = bytes.sublist(record.payloadOffset, record.payloadOffset + record.payloadLength);
-        expect(slice, input.accessUnits[index].bytes);
+        final slice = bytes.sublist(record.byteOffset, record.byteOffset + record.byteLength);
+        expect(slice, input.chunks[index].bytes);
       }
 
-      final totalFrames = parsed.manifest.units.fold<int>(0, (sum, unit) => sum + unit.frameCount);
       for (var unitIndex = 0; unitIndex < parsed.manifest.units.length; unitIndex += 1) {
         final unit = parsed.manifest.units[unitIndex];
-        final prefix = parsed.manifest.units
-            .sublist(0, unitIndex)
-            .fold<int>(0, (sum, candidate) => sum + candidate.frameCount);
-        for (var renditionIndex = 0; renditionIndex < unit.samples.length; renditionIndex += 1) {
-          final sample = unit.samples[renditionIndex];
-          expect(sample.sampleStart, renditionIndex * totalFrames + prefix);
-          expect(sample.sampleCount, unit.frameCount);
+        for (var renditionIndex = 0; renditionIndex < unit.chunks.length; renditionIndex += 1) {
+          final span = unit.chunks[renditionIndex];
+          final previousRenditions = parsed.manifest.units.fold<int>(
+            0,
+            (sum, candidate) =>
+                sum +
+                candidate.chunks
+                    .sublist(0, renditionIndex)
+                    .fold<int>(0, (inner, candidateSpan) => inner + candidateSpan.chunkCount),
+          );
+          final prefix = parsed.manifest.units
+              .sublist(0, unitIndex)
+              .fold<int>(0, (sum, candidate) => sum + candidate.chunks[renditionIndex].chunkCount);
+          expect(span.chunkStart, previousRenditions + prefix);
+          expect(span.frameCount, unit.frameCount);
         }
       }
     });
