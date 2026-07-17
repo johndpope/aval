@@ -401,6 +401,12 @@
 					"$(inherited)",
 					"-laval_decode",
 					"-lc++",
+					"-framework",
+					"VideoToolbox",
+					"-framework",
+					"CoreMedia",
+					"-framework",
+					"CoreVideo",
 				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -590,6 +596,12 @@
 					"$(inherited)",
 					"-laval_decode",
 					"-lc++",
+					"-framework",
+					"VideoToolbox",
+					"-framework",
+					"CoreMedia",
+					"-framework",
+					"CoreVideo",
 				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -622,6 +634,12 @@
 					"$(inherited)",
 					"-laval_decode",
 					"-lc++",
+					"-framework",
+					"VideoToolbox",
+					"-framework",
+					"CoreMedia",
+					"-framework",
+					"CoreVideo",
 				);
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

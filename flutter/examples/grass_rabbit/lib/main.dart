@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 
+import 'src/gpu_frame_painter.dart';
 import 'src/rabbit_controller.dart';
 import 'src/unit_audio.dart';
 
@@ -51,6 +52,11 @@ class _RabbitPageState extends State<RabbitPage>
   /// The frame currently on screen; the painter repaints when it changes.
   final ValueNotifier<ui.Image?> _displayImage = ValueNotifier<ui.Image?>(null);
 
+  /// The compiled GPU frame-compositor shader (ARCHITECTURE.md §3.2). Null
+  /// until loaded, during which `_buildVideoSurface` falls back to the CPU
+  /// painter so first paint is never blocked on shader compilation.
+  ui.FragmentProgram? _frameProgram;
+
   /// Rebuild signal for the state label (visual/requested state changed).
   final ValueNotifier<int> _stateEpoch = ValueNotifier<int>(0);
 
@@ -59,8 +65,9 @@ class _RabbitPageState extends State<RabbitPage>
   int _stepCount = 0;
   bool _hovering = false;
 
-  /// When true, video fills the window/screen (cover + pinch-zoom).
-  bool _maximized = false;
+  /// When true, video fills the window/screen (contain + pinch-zoom). The app
+  /// starts maximized so the whole scene is the immediate presentation.
+  bool _maximized = true;
 
   /// Pinch/pan transform while maximized.
   final TransformationController _zoomController = TransformationController();
@@ -76,7 +83,13 @@ class _RabbitPageState extends State<RabbitPage>
   @override
   void initState() {
     super.initState();
+    // App starts maximized (see [_maximized]); apply immersive chrome to match.
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     _ticker = createTicker(_onTick);
+    loadFramePaintProgram().then((program) {
+      if (!mounted) return;
+      setState(() => _frameProgram = program);
+    });
     _controller.load().then((_) {
       if (!mounted) return;
       setState(() {});
@@ -271,8 +284,9 @@ class _RabbitPageState extends State<RabbitPage>
             transformationController: _zoomController,
             minScale: 1.0,
             maxScale: 5.0,
-            // Allow panning past edges so the user can re-center after zoom.
-            boundaryMargin: const EdgeInsets.all(200),
+            // Clamp panning to the content edges so dragging can never reveal
+            // the black background behind the video (no over-pan into the void).
+            boundaryMargin: EdgeInsets.zero,
             clipBehavior: Clip.hardEdge,
             child: SizedBox(
               width: availW,
@@ -280,7 +294,12 @@ class _RabbitPageState extends State<RabbitPage>
               child: _buildVideoSurface(
                 borderRadius: 0,
                 showBorder: false,
-                fit: BoxFit.cover,
+                // contain (not cover) so the *whole* landscape frame is the
+                // zoom/pan coordinate space. cover would crop the frame to a
+                // center slice before zooming, making the rest of the scene
+                // unreachable. Letterbox bars at scale 1.0 in portrait are the
+                // honest framing of a 16:9 video and vanish as you zoom in.
+                fit: BoxFit.contain,
                 // Double-tap resets zoom without firing "great".
                 onDoubleTap: _resetZoom,
               ),
@@ -383,7 +402,18 @@ class _RabbitPageState extends State<RabbitPage>
           clipBehavior: Clip.antiAlias,
           child: RepaintBoundary(
             child: CustomPaint(
-              painter: _FramePainter(image: _displayImage, fit: fit),
+              painter: _frameProgram != null
+                  ? GpuFramePainter(
+                      image: _displayImage,
+                      program: _frameProgram!,
+                      fit: fit,
+                    )
+                  : _FramePainter(image: _displayImage, fit: fit),
+              // Video repaints every frame, so the layer must never be
+              // raster-cached. Without this, InteractiveViewer's parent
+              // Transform (pan/zoom) triggers the raster cache to reuse a
+              // frozen snapshot of the video while dragging.
+              willChange: true,
               child: const SizedBox.expand(),
             ),
           ),

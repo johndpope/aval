@@ -56,10 +56,7 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use openh264::decoder::{Decoder, DecoderConfig, Flush};
-use openh264::formats::YUVSource;
-use openh264::OpenH264API;
-
+use crate::adapter::{DecoderAdapter, OpenH264Adapter};
 use crate::error::AvalDecodeError;
 use crate::ledger::FrameCreditLedger;
 use crate::sample_sequence::{expected_timestamp, DecodeChunk, DecoderSampleSequence};
@@ -232,9 +229,9 @@ pub struct DecoderMetrics {
     pub disposed: bool,
 }
 
-/// Owner of the sole `openh264` decoder for a session.
+/// Owner of the sole decode backend for a session.
 pub struct DecoderSession {
-    decoder: Option<Decoder>,
+    decoder: Option<Box<dyn DecoderAdapter>>,
     config: Option<SessionConfig>,
     credits: FrameCreditLedger,
     sequence: DecoderSampleSequence,
@@ -313,25 +310,38 @@ impl DecoderSession {
         }
         Self::validate_config(&config)?;
 
-        // Default openh264 flush-after-decode OOMs (`dsOutOfMemory`) on High-profile
-        // streams with B-frames (mansion-woman, etc.): forced flush corrupts the DPB.
-        // NoFlush matches DecodeFrameNoDelay usage and leaves reordering to the codec.
-        let decoder = match Decoder::with_api_config(
-            OpenH264API::from_source(),
-            DecoderConfig::new().flush_after_decode(Flush::NoFlush),
-        ) {
+        // Backend selection (ARCHITECTURE.md §2(c)). `configure` already
+        // rejected every non-H.264 codec, so only H.264 reaches this point.
+        // On Apple targets the hardware VideoToolbox backend is the default;
+        // set AVAL_DECODE_OPENH264=1 to force the software backend for A/B
+        // debugging. Every other platform uses OpenH264.
+        let decoder = match self.build_decoder() {
             Ok(decoder) => decoder,
-            Err(error) => {
-                return Err(self.fail(AvalDecodeError::DecodeFailed(format!(
-                    "failed to create openh264 decoder: {error}"
-                ))));
-            }
+            Err(error) => return Err(self.fail(error)),
         };
 
         self.decoder = Some(decoder);
         self.config = Some(config);
         self.configure_calls += 1;
         Ok(())
+    }
+
+    /// Constructs the decode backend for this session (ARCHITECTURE.md §2(c)).
+    ///
+    /// Apple targets default to the hardware VideoToolbox backend, overridable
+    /// to software with `AVAL_DECODE_OPENH264=1`; all other platforms use
+    /// OpenH264. Kept out of [`configure`] so the selection policy lives in one
+    /// place.
+    fn build_decoder(&self) -> Result<Box<dyn DecoderAdapter>, AvalDecodeError> {
+        #[cfg(target_vendor = "apple")]
+        {
+            let force_software = std::env::var_os("AVAL_DECODE_OPENH264")
+                .is_some_and(|value| value == "1");
+            if !force_software {
+                return Ok(Box::new(crate::adapter::VideoToolboxAdapter::new()?));
+            }
+        }
+        Ok(Box::new(OpenH264Adapter::new()?))
     }
 
     /// Activates a new generation (TS `#activateGeneration`). Generations must
@@ -455,35 +465,11 @@ impl DecoderSession {
         self.accepted_samples += 1;
         self.submitted_chunks += 1;
 
-        // Decode, converting the borrowed I420 into an owned RGBA buffer before
-        // the decoder borrow ends.
+        // Decode one access unit through the configured backend, which returns
+        // an owned RGBA picture (or `None` while priming). The backend owns the
+        // codec + colorspace conversion; the session owns everything else.
         let decoder = self.decoder.as_mut().expect("configured session decoder");
-        let converted = match decoder.decode(chunk.data) {
-            Ok(Some(yuv)) => {
-                let (width, height) = yuv.dimensions();
-                let (y_stride, uv_stride, _) = yuv.strides();
-                let len =
-                    yuv::rgba_len(width, height).ok_or(AvalDecodeError::DecoderOutputInvalid)?;
-                let mut rgba = vec![0u8; len];
-                yuv::i420_to_rgba(
-                    yuv.y(),
-                    yuv.u(),
-                    yuv.v(),
-                    width,
-                    height,
-                    y_stride,
-                    uv_stride,
-                    &mut rgba,
-                )?;
-                Some((width, height, rgba))
-            }
-            Ok(None) => None,
-            Err(error) => {
-                return Err(AvalDecodeError::DecodeFailed(format!(
-                    "openh264 rejected the chunk: {error}"
-                )));
-            }
-        };
+        let converted = decoder.decode(chunk.data)?;
 
         // Hidden chunk: no displayed output is expected.
         if chunk.displayed_frame_count == 0 {
@@ -496,9 +482,10 @@ impl DecoderSession {
         }
 
         // From here `displayed_frame_count == 1`.
-        let Some((width, height, rgba)) = converted else {
+        let Some(frame) = converted else {
             return Ok(SubmitOutcome::Priming);
         };
+        let (width, height, rgba) = (frame.width, frame.height, frame.rgba);
 
         // Geometry must match the configured coded surface (TS validateDecodedFrame).
         if width != config.coded_width || height != config.coded_height {

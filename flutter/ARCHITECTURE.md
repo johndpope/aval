@@ -200,22 +200,53 @@ a documented alternative only if a future rendition profile needs decoder
 features OpenH264 doesn't cover (e.g. a hypothetical higher-profile
 rendition) — not needed for AVAL's current format.
 
-### (c) Platform channels to AVFoundation/VideoToolbox (iOS/macOS) + MediaCodec (Android) — optional efficiency backend
+### (c) Platform channels to AVFoundation/VideoToolbox (iOS/macOS) + MediaCodec (Android) — next GPU phase (decode side)
 v1 kept this as a *fallback* motivated by ffmpeg's licensing/packaging
 risk; with (a) resolving that risk via a BSD-licensed decoder, this option
-is **no longer necessary as a hedge** — but it remains worth keeping as an
-**optional, opt-in high-efficiency backend** for a different reason:
-OpenH264 is a **software** decoder with no dedicated video-decode silicon
-path, so for AVAL's actual usage pattern (small, often long-running hover/
-idle loops) a hardware decoder is meaningfully better for battery/thermal
-on mobile, even though OpenH264 is plenty fast for correctness and even
-modest real-time margins. Recommendation: ship OpenH264 as the default on
-all platforms for v1 parity work, and treat a VideoToolbox/MediaCodec
-backend behind the same `DecoderAdapter` interface as a **post-parity
-efficiency optimization**, selectable per build or per device-capability
-probe, not a day-one requirement. Windows/Linux still have no equivalent
-first-party surface, so this was never going to be a five-platform
-solution on its own.
+is **no longer necessary as a hedge** — but it remains worth building as a
+**high-efficiency backend** for a different reason: OpenH264 is a
+**software** decoder with no dedicated video-decode silicon path, so for
+AVAL's actual usage pattern (small, often long-running hover/idle loops) a
+hardware decoder is meaningfully better for battery/thermal on mobile, even
+though OpenH264 is plenty fast for correctness and even modest real-time
+margins.
+
+Now that §3's `FragmentProgram` compositor ships GPU-accelerated rendering,
+this is the remaining CPU-bound stage in the pipeline. Concrete plan for
+this phase:
+
+- **`DecoderAdapter` does not exist yet as code** — despite being referenced
+  throughout this document and in `aval_decode`'s doc comments
+  (`decoder.rs`, `error.rs`), `DecoderSession` today directly and concretely
+  owns an `openh264::decoder::Decoder`; there is no trait to implement
+  against. This phase starts by introducing that trait (openh264 becomes its
+  first implementor, behavior-preserving) before adding a second one.
+- **VideoToolbox's decompression session API is plain C**
+  (`VTDecompressionSessionCreate`, `VTDecompressionSessionDecodeFrame`,
+  `VTDecompressionSessionInvalidate`), not Objective-C — Rust can bind it
+  directly via FFI (hand-written or `bindgen` against the VideoToolbox/
+  CoreMedia/CoreVideo headers) with no Swift/ObjC bridge needed for the
+  decode call itself. Building a `CMSampleBuffer` from an Annex-B access
+  unit and reading back a `CVPixelBuffer` are the two non-trivial pieces.
+- **Keep the existing FFI contract**: convert the decoded `CVPixelBuffer`
+  to the same RGBA shape `AvalDecodeFrame` already returns (CPU copy via
+  `CVPixelBufferLockBaseAddress`, matching today's contract) so this backend
+  plugs in entirely behind `aval_decode_take_frame` — **zero changes** to
+  `aval_ffi.dart`, `GpuFramePainter`, or the shader. A true zero-copy
+  GPU-surface hand-off (`Texture`/`TextureRegistry`) was already evaluated
+  and rejected in §3.2 for the render side and is not part of this phase;
+  the win here is decode CPU/battery cost, not another render path.
+- MediaCodec (Android) is a separate, structurally different binding
+  (JNI, not a C API) and is a follow-up phase, not bundled with the
+  VideoToolbox work.
+- Windows/Linux still have no equivalent first-party hardware-decode
+  surface, so OpenH264 remains their only backend regardless.
+
+Recommendation: ship OpenH264 as the default on all platforms for v1 parity
+work, and land the VideoToolbox backend behind the (newly introduced)
+`DecoderAdapter` interface as the next efficiency phase — selectable per
+build or per device-capability probe — with MediaCodec following once
+VideoToolbox is validated.
 
 ### (d) `media_kit`/libmpv — still rejected
 Unchanged from v1: `media_kit` wraps `libmpv`, a general-purpose *player*
@@ -394,7 +425,17 @@ on modern hardware but throws away the entire reason the web version does
 this compositing on GPU.
 
 **`FragmentProgram` (dart:ui `FragmentProgram`, `.frag` compiled to SkSL via
-Impeller) driving a `CustomPainter`**: **recommended.** Upload the *raw*
+Impeller) driving a `CustomPainter`**: **recommended — implemented.** Shipped
+in `flutter/examples/grass_rabbit` as `shaders/frame.frag` +
+`lib/src/gpu_frame_painter.dart`'s `GpuFramePainter`, wired into `main.dart`
+in place of the CPU `_FramePainter` (kept only as the fallback painter while
+the shader program loads at startup). Verified on macOS: correct,
+artifact-free compositing with playback and state transitions running
+through the shader. The current `aval_decode` core has no packed-alpha
+profile yet (§3.3), so today's shader always takes the `u_has_alpha == 0`
+branch — `u_alpha_uv`/`u_has_alpha` stay in the uniform layout, unused, so a
+future packed-alpha decode core only needs to start passing real values, not
+touch the shader or painter structure. Upload the *raw*
 packed decoded frame (one `ui.Image`, still vertically stacked
 color/gutter/alpha, straight out of the decoder, no CPU compositing) and
 run a fragment shader that is a near-verbatim transliteration of
@@ -462,7 +503,7 @@ the CPU-conversion path is shipped and certified, not a v1-parity
 requirement — minimizing new, unvalidated shader surface during the
 initial port.
 
-### Recommendation
+### Recommendation — implemented (compositing stage), upload stage still CPU
 Native/FFI decode produces a raw packed RGBA buffer per frame — with the
 Rust core (§2(a)/§3.3), that means I420→RGBA conversion happens in Rust,
 SIMD-accelerated, immediately after `openh264::Decoder::decode()` — then
@@ -475,6 +516,14 @@ design doc's alpha-quality gate (mean error ≤2/255, p99 ≤8/255) was built
 to protect, while replacing only the two constructs (`sampler2DArray`,
 `gl_FragCoord`) that have no Impeller equivalent with behaviorally
 identical Flutter-native substitutions.
+
+**Status**: the compositing half of this recommendation is built exactly as
+described (`GpuFramePainter`, §3.2). The upload half is not yet — grass_rabbit
+still uploads via `ui.decodeImageFromPixels` (`rabbit_controller.dart`), the
+simplest CPU-copy path, not the zero-copy `ImmutableBuffer`/`ImageDescriptor`
+route named here. Replacing that upload call is a small, isolated follow-up
+that does not touch the shader or painter — the GPU compositing win is
+already realized independent of it.
 
 ---
 
@@ -810,10 +859,15 @@ work being complete.
 | 9 | **Widget API + readiness/events/diagnostics parity** | `element/src/*` (public-types, element-public-state, diagnostics, error taxonomy, shadow-layers two-layer model) | A Flutter demo reproduces `examples/grass-rabbit/main.js` behavior (one-shot hint-icon dismissal, state-label badge via `visualstatechange`, readiness-gated first paint) with equivalent Dart code | 2 |
 | 10 | **Remaining transition types + cross-platform hardening** | `cut-presentation-coordinator.ts`, `reversible-presentation.ts`, `page-resource-manager.ts`/`page-reclamation.ts`, `verified-blob-store.ts` (sha256/integrity), `browser-context-recovery.ts`'s terminal-loss policy | Cut and reversible transitions work on a synthetic test asset (grass-rabbit itself doesn't exercise them); certification-style test matrix passes on iOS/Android/macOS/Windows/Linux with no dropped frames at portal boundaries under simulated jitter | 4–6 |
 | 11 | **Performance/parity certification** | n/a (validation phase) | Automated pixel-diff harness vs. browser reference frames across the full `motion.json`, passing the M6 alpha-quality gate (mean ≤2/255, p99 ≤8/255); memory/GPU budget audit; docs finalized | 2–3 |
+| 12 | **GPU-accelerated rendering (`FragmentProgram` compositor)** (§3.2) | New `shaders/frame.frag`, `GpuFramePainter` | ✅ **Done** in `flutter/examples/grass_rabbit` — shader compositing replaces the CPU `Canvas.drawImageRect` path; verified rendering correctly on macOS. Upload stage (`ui.decodeImageFromPixels` → `ImmutableBuffer`/`ImageDescriptor`) remains a small open follow-up (§3, Recommendation) | done |
+| 13 | **Hardware decode backend (VideoToolbox)** (§2(c)) | New `DecoderAdapter` trait + `VideoToolboxAdapter` in `aval_decode`; VideoToolbox/CoreMedia/CoreVideo C API bindings | `DecoderAdapter` trait introduced with `openh264` as its first implementor (behavior-preserving); `VideoToolboxAdapter` decodes the same grass-rabbit access units as Phase 3, output byte-identical (or within the M6 alpha/color gate) to the OpenH264 path through the unchanged `aval_decode_take_frame` FFI contract; measured battery/CPU improvement on at least one iOS device | 3–4 |
+| 14 | **Hardware decode backend (MediaCodec, Android)** (§2(c)) | JNI bindings to Android `MediaCodec` | Same exit bar as Phase 13, ported to Android's JNI-based API instead of a C ABI; gated on Phase 13 validating the `DecoderAdapter` split cleanly | 3–4 |
 
 **Total estimate: ~27–34 agent sessions** (v2 adds the ~1–2 session Phase
 3b WASM spike vs. v1's estimate), excluding the parallel
 `aval_graph`/`aval_format` porting effort (Phase 1 gates on that work).
+Phases 12–14 (GPU rendering, hardware decode) are additive efficiency work
+layered on top of that estimate, not part of the original v1/v2 scope.
 
 ---
 
@@ -831,7 +885,7 @@ work being complete.
 | 8 | Reduced-motion signal differs across platforms (web `prefers-reduced-motion` vs. Flutter's `MediaQuery.disableAnimations` vs. each OS's real accessibility API) | Enumerate each platform's true reduced-motion signal early (iOS "Reduce Motion", Android "Remove animations", not just Flutter's `MediaQuery` proxy which may not reflect the OS setting identically everywhere); design `AvalMotion.auto` against real per-platform queries |
 | 9 | Ported byte-budget/resource accounting (M2 spec's ≤24/48/64 MiB caps) has no real GPU-memory-pressure signal wired in, risking OOM on mobile in ways the web version never needed to handle | Port the byte-budget math as-is but add platform memory-pressure hooks (iOS `didReceiveMemoryWarning`, Android `onTrimMemory`) into the ported `page-reclamation.ts` coordinator |
 | 10 | *(v2, decided)* Flutter Web has two viable decode backends (WebCodecs-via-interop, WASM-compiled `aval_decode`) that could drift from each other if both are maintained long-term | Ship WebCodecs-via-`dart:js_interop` as the *only* default web backend (§2) — it is hardware-accelerated and is the literal reference implementation; keep the WASM Rust-core path as an explicitly optional, separately-gated build target (Phase 3b) for certification/offline/no-WebCodecs scenarios only, not a second backend maintained at parity by default |
-| 11 | *(new, v2)* `openh264` is a **software** decoder with no hardware-acceleration path, costing more CPU/battery than a hardware decoder on mobile, especially across AVAL's long-running hover/idle loop content | Ship OpenH264 as the default for v1 parity (correctness first); treat the VideoToolbox/MediaCodec platform-channel backend (§2(c)) as a scheduled post-parity efficiency optimization behind the same `DecoderAdapter` interface, gated on measured battery/thermal impact rather than assumed |
+| 11 | *(v2, now actively planned — see Phase 13/14)* `openh264` is a **software** decoder with no hardware-acceleration path, costing more CPU/battery than a hardware decoder on mobile, especially across AVAL's long-running hover/idle loop content | Ship OpenH264 as the default for v1 parity (correctness first); the `DecoderAdapter` trait does not exist in code yet, so Phase 13 introduces it (openh264 as first implementor) before adding `VideoToolboxAdapter` behind it, gated on measured battery/thermal impact rather than assumed |
 | 12 | *(new, v2)* `openh264-sys2`'s `wasm32` C-toolchain build path is not battle-tested for this project; the Phase 3b spike could fail or prove fragile to maintain across Rust/Emscripten/`wasm-bindgen` toolchain upgrades | Timebox Phase 3b explicitly as a go/no-go spike (§7); if it fails, permanently drop the WASM-Rust web backend and rely solely on WebCodecs-via-interop for web (already the recommended default) — no architecture changes needed elsewhere if this path is abandoned |
 | 13 | *(new, v2)* The I420→RGBA conversion step (§3.3), which has no analog in the original WebGL2 pipeline, could introduce color-space or chroma-upsampling errors (wrong BT.709 coefficients, incorrect chroma siting) invisible until compared against the browser reference | Validate the Rust-side I420→RGBA conversion against the same M6 alpha/color-quality gate (mean ≤2/255, p99 ≤8/255) using the Phase 4/11 pixel-diff harness before trusting it as "done"; treat this conversion as a first-class, independently-tested unit (input: a known I420 test pattern; expected: a known RGBA output), not an incidental detail of the decode step |
 

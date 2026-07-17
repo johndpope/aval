@@ -17,6 +17,7 @@
 //! - [`ffi`]     <- the `extern "C"` boundary
 //! - [`error`]   <- the shared status/error taxonomy
 
+pub mod adapter;
 pub mod decoder;
 pub mod error;
 pub mod ffi;
@@ -24,6 +25,7 @@ pub mod ledger;
 pub mod sample_sequence;
 pub mod yuv;
 
+pub use adapter::{DecodedRgbaFrame, DecoderAdapter, OpenH264Adapter};
 pub use decoder::{DecoderSession, SessionConfig, SubmitOutcome, VideoCodec};
 pub use error::{AvalDecodeError, AvalDecodeStatus};
 pub use ledger::FrameCreditLedger;

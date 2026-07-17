@@ -25,6 +25,11 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 # that require rustc 1.89. Revisit this pin when the build toolchain is upgraded.
 openh264 = "=0.9.1"
 
+[build-dependencies]
+# Compiles the Objective-C VideoToolbox decode backend (src/vt/videotoolbox_decoder.m)
+# into the staticlib on Apple targets. See build.rs and ARCHITECTURE.md §2(c).
+cc = "1"
+
 [dev-dependencies]
 # (none) - unit/integration tests use only std, plus the fixture file under tests/fixtures.
 
