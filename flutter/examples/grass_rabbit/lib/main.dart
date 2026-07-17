@@ -5,15 +5,19 @@
 // animation, while the aval_graph MotionGraphEngine reacts to mouse hover and
 // drives the state label (idle/entering/hover/exiting).
 
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 
 import 'src/rabbit_controller.dart';
+import 'src/unit_audio.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const GrassRabbitApp());
 }
 
@@ -41,6 +45,7 @@ class RabbitPage extends StatefulWidget {
 class _RabbitPageState extends State<RabbitPage>
     with SingleTickerProviderStateMixin {
   final RabbitController _controller = RabbitController();
+  final UnitAudioPlayer _audio = UnitAudioPlayer();
   late final Ticker _ticker;
 
   /// The frame currently on screen; the painter repaints when it changes.
@@ -54,9 +59,19 @@ class _RabbitPageState extends State<RabbitPage>
   int _stepCount = 0;
   bool _hovering = false;
 
+  /// When true, video fills the window/screen (cover + pinch-zoom).
+  bool _maximized = false;
+
+  /// Pinch/pan transform while maximized.
+  final TransformationController _zoomController = TransformationController();
+
   /// The unit currently being played and its unit-local frame counter.
   String _currentUnit = '';
   int _unitLocalFrame = 0;
+
+  /// After a unit switch, hold the previous paint until the new unit is ready,
+  /// then show its first frame once before advancing.
+  bool _awaitingFirstFrame = false;
 
   @override
   void initState() {
@@ -70,9 +85,34 @@ class _RabbitPageState extends State<RabbitPage>
         // drive playback.
         _currentUnit = _controller.currentUnitId();
         _displayImage.value = _controller.imageFor(_currentUnit, 0);
+        _syncAudio(_currentUnit);
         _ticker.start();
       }
     });
+  }
+
+  void _syncAudio(String unitId) {
+    // Fire-and-forget; just_audio handles overlap by replacing the source.
+    _audio.playUnit(unitId, loop: _controller.isLoopUnit(unitId));
+  }
+
+  void _setMaximized(bool value) {
+    if (_maximized == value) return;
+    setState(() {
+      _maximized = value;
+      // Reset zoom when entering/leaving maximized mode.
+      _zoomController.value = Matrix4.identity();
+    });
+    // Immersive chrome on mobile; no-op / harmless on macOS desktop.
+    if (value) {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    } else {
+      SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    }
+  }
+
+  void _resetZoom() {
+    _zoomController.value = Matrix4.identity();
   }
 
   void _onTick(Duration elapsed) {
@@ -97,10 +137,21 @@ class _RabbitPageState extends State<RabbitPage>
       if (unit != _currentUnit) {
         _currentUnit = unit;
         _unitLocalFrame = 0;
-      } else {
+        _awaitingFirstFrame = true;
+        _syncAudio(unit);
+        // High-res units are decoded on demand; keep painting the previous
+        // frame until the new unit has frames (no black flash).
+        unawaited(_controller.ensureUnitDecoded(unit));
+      } else if (_controller.isUnitReady(unit) && !_awaitingFirstFrame) {
         _unitLocalFrame++;
       }
-      _displayImage.value = _controller.imageFor(unit, _unitLocalFrame);
+      // Only advance the painted frame when the unit is ready; otherwise hold
+      // whatever is currently on screen (last frame of previous unit).
+      final next = _controller.imageFor(unit, _unitLocalFrame);
+      if (next != null) {
+        _displayImage.value = next;
+        _awaitingFirstFrame = false;
+      }
     }
     // Cheap: bump the label epoch every step; the label widget only rebuilds
     // when the rendered string actually changes.
@@ -119,9 +170,12 @@ class _RabbitPageState extends State<RabbitPage>
 
   @override
   void dispose() {
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    _zoomController.dispose();
     _ticker.dispose();
     _displayImage.dispose();
     _stateEpoch.dispose();
+    _audio.dispose();
     _controller.dispose();
     super.dispose();
   }
@@ -130,52 +184,184 @@ class _RabbitPageState extends State<RabbitPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF101014),
-      body: Center(child: _buildBody()),
+      body: _buildBody(),
     );
   }
 
   Widget _buildBody() {
     if (_controller.error != null) {
-      return _ErrorView(
-        error: _controller.error!,
-        libPath: avalDecodeLibPath,
+      return Center(
+        child: _ErrorView(
+          error: _controller.error!,
+          libPath: avalDecodeLibPath,
+        ),
       );
     }
     if (!_controller.loaded) {
-      return const _LoadingView();
+      return const Center(child: _LoadingView());
     }
-    return Column(
-      mainAxisSize: MainAxisSize.min,
+    if (_maximized) {
+      return _buildMaximized();
+    }
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight - 48),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('AVAL · mansion-woman',
+                      style: Theme.of(context).textTheme.titleMedium),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${_controller.totalFrames} frames · ${_controller.unitFrames.length} units · '
+                    '${_controller.canvasWidth}×${_controller.canvasHeight} · '
+                    '${_controller.frameRateNumerator}fps · FFI decode',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.white54),
+                  ),
+                  const SizedBox(height: 16),
+                  Align(
+                    alignment: Alignment.center,
+                    child: _buildVideo(maxWidth: 720),
+                  ),
+                  const SizedBox(height: 16),
+                  _StateBadge(controller: _controller, epoch: _stateEpoch),
+                  const SizedBox(height: 12),
+                  Text(
+                    defaultTargetPlatform == TargetPlatform.iOS ||
+                            defaultTargetPlatform == TargetPlatform.android
+                        ? 'Long-press → "hi" · Tap → "great"'
+                        : 'Hover → "hi" · Tap → "great" · Drives the state graph',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.white38),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Full-screen presentation: video **covers** the display (no letterbox),
+  /// with pinch-to-zoom / pan. Double-tap resets zoom.
+  Widget _buildMaximized() {
+    final size = MediaQuery.sizeOf(context);
+    // Use full physical screen (including under notch) so cover truly fills.
+    final availH = size.height;
+    final availW = size.width;
+    final padding = MediaQuery.paddingOf(context);
+
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        const SizedBox(height: 24),
-        Text('AVAL · mansion-woman',
-            style: Theme.of(context).textTheme.titleMedium),
-        const SizedBox(height: 4),
-        Text(
-          '${_controller.totalFrames} frames · ${_controller.unitFrames.length} units · '
-          '${_controller.canvasWidth}×${_controller.canvasHeight} · '
-          '${_controller.frameRateNumerator}fps · FFI decode',
-          style: Theme.of(context)
-              .textTheme
-              .bodySmall
-              ?.copyWith(color: Colors.white54),
+        Positioned.fill(
+          child: InteractiveViewer(
+            transformationController: _zoomController,
+            minScale: 1.0,
+            maxScale: 5.0,
+            // Allow panning past edges so the user can re-center after zoom.
+            boundaryMargin: const EdgeInsets.all(200),
+            clipBehavior: Clip.hardEdge,
+            child: SizedBox(
+              width: availW,
+              height: availH,
+              child: _buildVideoSurface(
+                borderRadius: 0,
+                showBorder: false,
+                fit: BoxFit.cover,
+                // Double-tap resets zoom without firing "great".
+                onDoubleTap: _resetZoom,
+              ),
+            ),
+          ),
         ),
-        const SizedBox(height: 16),
-        _buildVideo(),
-        const SizedBox(height: 16),
-        _StateBadge(controller: _controller, epoch: _stateEpoch),
-        const SizedBox(height: 12),
-        Text('Hover → "hi" · Tap → "great" · Drives the state graph',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.white38)),
+        Positioned(
+          top: padding.top + 8,
+          right: padding.right + 8,
+          child: _MaximizeButton(
+            maximized: true,
+            onPressed: () => _setMaximized(false),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: padding.bottom + 12,
+          child: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _StateBadge(controller: _controller, epoch: _stateEpoch),
+                const SizedBox(height: 8),
+                Text(
+                  'Pinch to zoom · Double-tap to reset',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.white54,
+                        shadows: const [
+                          Shadow(blurRadius: 6, color: Colors.black87),
+                        ],
+                      ),
+                ),
+              ],
+            ),
+          ),
+        ),
       ],
     );
   }
 
-  Widget _buildVideo() {
+  Widget _buildVideo({required double maxWidth}) {
     final aspect = _controller.canvasWidth / _controller.canvasHeight;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth.isFinite
+            ? constraints.maxWidth.clamp(0.0, maxWidth)
+            : maxWidth;
+        return Stack(
+          clipBehavior: Clip.none,
+          children: [
+            SizedBox(
+              width: width,
+              child: AspectRatio(
+                aspectRatio: aspect,
+                child: _buildVideoSurface(
+                  borderRadius: 12,
+                  showBorder: true,
+                ),
+              ),
+            ),
+            Positioned(
+              top: 8,
+              right: 8,
+              child: _MaximizeButton(
+                maximized: false,
+                onPressed: () => _setMaximized(true),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildVideoSurface({
+    required double borderRadius,
+    required bool showBorder,
+    BoxFit fit = BoxFit.contain,
+    VoidCallback? onDoubleTap,
+  }) {
     return MouseRegion(
       onEnter: (_) => _setHover(true),
       onExit: (_) => _setHover(false),
@@ -183,19 +369,22 @@ class _RabbitPageState extends State<RabbitPage>
         onTap: () {
           if (_controller.loaded) _controller.onActivate();
         },
+        // Mobile has no hover: long-press stands in for engagement.on → "hi".
+        onLongPress: () {
+          if (_controller.loaded) _controller.onEngagementOn();
+        },
+        onDoubleTap: onDoubleTap,
         child: Container(
-          width: 720,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.white12),
+            borderRadius: BorderRadius.circular(borderRadius),
+            border: showBorder ? Border.all(color: Colors.white12) : null,
+            color: Colors.black,
           ),
           clipBehavior: Clip.antiAlias,
-          child: AspectRatio(
-            aspectRatio: aspect,
-            child: RepaintBoundary(
-              child: CustomPaint(
-                painter: _FramePainter(image: _displayImage),
-              ),
+          child: RepaintBoundary(
+            child: CustomPaint(
+              painter: _FramePainter(image: _displayImage, fit: fit),
+              child: const SizedBox.expand(),
             ),
           ),
         ),
@@ -204,30 +393,65 @@ class _RabbitPageState extends State<RabbitPage>
   }
 }
 
-/// Paints the current decoded frame with BoxFit.contain (matches the manifest
-/// canvas fit). Repaints whenever [image] changes.
+/// Toggle between compact and full-height video presentation.
+class _MaximizeButton extends StatelessWidget {
+  const _MaximizeButton({required this.maximized, required this.onPressed});
+
+  final bool maximized;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.55),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
+      child: IconButton(
+        tooltip: maximized ? 'Exit fullscreen' : 'Fullscreen · zoom',
+        icon: Icon(
+          maximized ? Icons.fullscreen_exit : Icons.fullscreen,
+          color: Colors.white,
+        ),
+        onPressed: onPressed,
+      ),
+    );
+  }
+}
+
+/// Paints the current decoded frame. [fit] is [BoxFit.contain] in compact mode
+/// and [BoxFit.cover] when maximized so the frame fills the screen.
 class _FramePainter extends CustomPainter {
-  _FramePainter({required this.image}) : super(repaint: image);
+  _FramePainter({required this.image, this.fit = BoxFit.contain})
+      : super(repaint: image);
 
   final ValueListenable<ui.Image?> image;
+  final BoxFit fit;
 
   @override
   void paint(Canvas canvas, Size size) {
     final img = image.value;
     if (img == null) return;
     final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
-    final fitted = applyBoxFit(BoxFit.contain, src.size, size);
+    final fitted = applyBoxFit(fit, src.size, size);
+    final inputSubrect = Alignment.center.inscribe(
+      fitted.source,
+      src,
+    );
     final dstRect = Alignment.center.inscribe(
       fitted.destination,
       Offset.zero & size,
     );
     canvas.drawImageRect(
-        img, src, dstRect, Paint()..filterQuality = FilterQuality.medium);
+      img,
+      inputSubrect,
+      dstRect,
+      Paint()..filterQuality = FilterQuality.high,
+    );
   }
 
   @override
   bool shouldRepaint(_FramePainter oldDelegate) =>
-      oldDelegate.image != image;
+      oldDelegate.image != image || oldDelegate.fit != fit;
 }
 
 /// Shows the graph's visual state, plus the requested state while a transition

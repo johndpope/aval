@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Build the Rust decode core, then run a Flutter example app.
 # Usage: run.sh [example] [flutter-run-args...]
-#   run.sh                                    # grass_rabbit on macOS
-#   run.sh grass_rabbit -d macos              # explicit macOS
-#   run.sh grass_rabbit -d ios                # first available iOS simulator
-#   run.sh grass_rabbit -d "iPhone 17 Pro"    # named simulator
+#   run.sh                                              # grass_rabbit on macOS
+#   run.sh grass_rabbit -d macos                        # explicit macOS
+#   run.sh grass_rabbit -d ios                          # iOS simulator
+#   run.sh grass_rabbit -d "John’s iPhone" --release    # physical device, release
 set -euo pipefail
 
 FLUTTER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,7 +18,7 @@ if [ ! -d "$EXAMPLE_DIR" ]; then
   exit 1
 fi
 
-# Detect target device from remaining args (before we may inject -d).
+# Detect -d / --device-id from remaining args.
 DEVICE_HINT=""
 ARGS=("$@")
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
@@ -34,48 +34,123 @@ if [ -z "$DEVICE_HINT" ] && [ "$(uname -s)" = Darwin ]; then
   DEVICE_HINT="macos"
 fi
 
-# Choose Rust triple + library name for the host or iOS simulator.
+# Classify the target: host / ios-sim / ios-device.
+TARGET_KIND="host"
+case "$DEVICE_HINT" in
+  macos|"") TARGET_KIND="host" ;;
+  ios|simulator) TARGET_KIND="ios-sim" ;;
+  iPhone*|iPad*|iphone*|ipad*)
+    # Physical devices show up in `flutter devices` as ios (not simulator).
+    if flutter devices 2>/dev/null | grep -F "$DEVICE_HINT" | grep -qi simulator; then
+      TARGET_KIND="ios-sim"
+    elif [[ "$DEVICE_HINT" == *Simulator* ]]; then
+      TARGET_KIND="ios-sim"
+    else
+      # UDID-like or named phone: prefer physical if listed as non-simulator.
+      if flutter devices 2>/dev/null | grep -F "$DEVICE_HINT" | grep -qi 'ios' && \
+         ! flutter devices 2>/dev/null | grep -F "$DEVICE_HINT" | grep -qi simulator; then
+        TARGET_KIND="ios-device"
+      else
+        # Ambiguous name — check simctl for a match first.
+        if xcrun simctl list devices available 2>/dev/null | grep -qF "$DEVICE_HINT"; then
+          TARGET_KIND="ios-sim"
+        else
+          TARGET_KIND="ios-device"
+        fi
+      fi
+    fi
+    ;;
+  *)
+    # Raw UDID: physical devices are 25+ hex/dash; simulators are UUID-shaped.
+    if flutter devices 2>/dev/null | grep -F "$DEVICE_HINT" | grep -qi simulator; then
+      TARGET_KIND="ios-sim"
+    elif flutter devices 2>/dev/null | grep -F "$DEVICE_HINT" | grep -qi 'ios'; then
+      TARGET_KIND="ios-device"
+    fi
+    ;;
+esac
+
+# When user said -d ios and a physical phone is connected, prefer it for --release.
+if [ "$DEVICE_HINT" = "ios" ] && printf '%s\n' "${ARGS[@]}" | grep -qx -- '--release'; then
+  PHYS="$(flutter devices 2>/dev/null | awk -F '•' '/ios/ && !/simulator/ {gsub(/^ +| +$/,"",$2); print $2; exit}')"
+  if [ -n "$PHYS" ]; then
+    TARGET_KIND="ios-device"
+    DEVICE_HINT="$PHYS"
+    NEW_ARGS=()
+    for ((i = 0; i < ${#ARGS[@]}; i++)); do
+      if [ "${ARGS[$i]}" = "-d" ] || [ "${ARGS[$i]}" = "--device-id" ]; then
+        NEW_ARGS+=("${ARGS[$i]}" "$PHYS")
+        i=$((i + 1))
+        continue
+      fi
+      NEW_ARGS+=("${ARGS[$i]}")
+    done
+    ARGS=("${NEW_ARGS[@]}")
+  fi
+fi
+
 RUST_TARGET=""
 LIB_NAME=""
-case "$DEVICE_HINT" in
-  macos|"")
+USE_PROCESS=0
+case "$TARGET_KIND" in
+  host)
     case "$(uname -s)" in
       Darwin) LIB_NAME="libaval_decode.dylib" ;;
       Linux)  LIB_NAME="libaval_decode.so" ;;
       *)      LIB_NAME="aval_decode.dll" ;;
     esac
     ;;
-  ios|iPhone*|iPad*|simulator|iphone*|ipad*)
-    # Apple Silicon Macs → arm64 sim; Intel → x86_64 sim.
+  ios-sim)
     if [ "$(uname -m)" = arm64 ]; then
       RUST_TARGET="aarch64-apple-ios-sim"
     else
       RUST_TARGET="x86_64-apple-ios"
     fi
-    LIB_NAME="libaval_decode.dylib"
+    LIB_NAME="libaval_decode.a"
+    USE_PROCESS=1
     ;;
-  *)
-    # Unknown device id: try to resolve via flutter devices later; default host lib.
-    case "$(uname -s)" in
-      Darwin) LIB_NAME="libaval_decode.dylib" ;;
-      Linux)  LIB_NAME="libaval_decode.so" ;;
-      *)      LIB_NAME="aval_decode.dll" ;;
-    esac
-    # If it looks like an iOS sim UDID / name, prefer ios-sim triple.
-    if [[ "$DEVICE_HINT" == *iPhone* || "$DEVICE_HINT" == *iPad* || "$DEVICE_HINT" == *Simulator* ]]; then
-      if [ "$(uname -m)" = arm64 ]; then
-        RUST_TARGET="aarch64-apple-ios-sim"
-      else
-        RUST_TARGET="x86_64-apple-ios"
-      fi
-    fi
+  ios-device)
+    RUST_TARGET="aarch64-apple-ios"
+    LIB_NAME="libaval_decode.a"
+    USE_PROCESS=1
     ;;
 esac
 
+write_ios_xcconfig() {
+  local static_lib="$1"
+  local out="$EXAMPLE_DIR/ios/Flutter/AvalDecode.local.xcconfig"
+  mkdir -p "$(dirname "$out")"
+  # Escape spaces for xcconfig.
+  local escaped="${static_lib// /\\ }"
+  cat >"$out" <<EOF
+// Generated by flutter/scripts/run.sh — do not edit.
+OTHER_LDFLAGS=\$(inherited) -force_load ${escaped} -lc++
+EOF
+  echo "==> wrote $out"
+}
+
+# Copy staticlib into ios/Native for Xcode force_load (relative path in pbxproj).
+install_ios_native_lib() {
+  local static_lib="$1"
+  local native_dir="$EXAMPLE_DIR/ios/Native"
+  mkdir -p "$native_dir"
+  cp -f "$static_lib" "$native_dir/libaval_decode.a"
+  echo "==> installed $native_dir/libaval_decode.a"
+}
+
 if [ -n "$RUST_TARGET" ]; then
   echo "==> cargo build --release --target $RUST_TARGET: aval_decode"
-  (cd "$FLUTTER_DIR/rust/aval_decode" && cargo build --release --target "$RUST_TARGET")
+  export IPHONEOS_DEPLOYMENT_TARGET="${IPHONEOS_DEPLOYMENT_TARGET:-13.0}"
+  export CFLAGS_aarch64_apple_ios="${CFLAGS_aarch64_apple_ios:--miphoneos-version-min=13.0}"
+  export CXXFLAGS_aarch64_apple_ios="${CXXFLAGS_aarch64_apple_ios:--miphoneos-version-min=13.0}"
+  export CFLAGS_aarch64_apple_ios_sim="${CFLAGS_aarch64_apple_ios_sim:--miphonesimulator-version-min=13.0}"
+  export CXXFLAGS_aarch64_apple_ios_sim="${CXXFLAGS_aarch64_apple_ios_sim:--miphonesimulator-version-min=13.0}"
+  # Device cdylib link fails on older min versions; staticlib is what we embed.
+  (cd "$FLUTTER_DIR/rust/aval_decode" && \
+    cargo rustc --release --target "$RUST_TARGET" --crate-type staticlib)
   export AVAL_DECODE_LIB="$FLUTTER_DIR/rust/aval_decode/target/$RUST_TARGET/release/$LIB_NAME"
+  write_ios_xcconfig "$AVAL_DECODE_LIB"
+  install_ios_native_lib "$AVAL_DECODE_LIB"
 else
   echo "==> cargo build --release: aval_decode"
   (cd "$FLUTTER_DIR/rust/aval_decode" && cargo build --release)
@@ -84,64 +159,53 @@ fi
 
 [ -f "$AVAL_DECODE_LIB" ] || { echo "missing $AVAL_DECODE_LIB" >&2; exit 1; }
 
-# Ad-hoc sign so the simulator / macOS can dlopen the cargo artifact.
 if [ "$(uname -s)" = Darwin ] && [[ "$AVAL_DECODE_LIB" == *.dylib ]]; then
   codesign -s - --force "$AVAL_DECODE_LIB" >/dev/null 2>&1 || true
 fi
 
-# Boot an iOS simulator when targeting ios / a named phone / iPad, and rewrite
-# -d ios to a concrete UDID (flutter does not accept the bare "ios" id).
-case "$DEVICE_HINT" in
-  ios|iPhone*|iPad*|iphone*|ipad*|simulator)
-    pick_sim_udid() {
-      # Prefer already-booted iPhone.
-      local udid
-      udid="$(xcrun simctl list devices booted 2>/dev/null | \
-        awk -F '[()]' '/iPhone / {print $2; exit}')"
-      if [ -n "$udid" ]; then
-        echo "$udid"
-        return
+# Boot / resolve iOS simulator when needed.
+if [ "$TARGET_KIND" = "ios-sim" ]; then
+  pick_sim_udid() {
+    local udid
+    udid="$(xcrun simctl list devices booted 2>/dev/null | \
+      awk -F '[()]' '/iPhone / {print $2; exit}')"
+    if [ -n "$udid" ]; then echo "$udid"; return; fi
+    for pattern in 'iPhone 17 Pro (' 'iPhone 16 Pro (' 'iPhone 17 (' 'iPhone 16 (' 'iPhone '; do
+      udid="$(xcrun simctl list devices available 2>/dev/null | \
+        awk -F '[()]' -v p="$pattern" 'index($0, p) {print $2; exit}')"
+      if [ -n "$udid" ]; then echo "$udid"; return; fi
+    done
+  }
+  SIM_UDID="$(pick_sim_udid)"
+  if [ -z "$SIM_UDID" ]; then
+    echo "no iOS simulator found" >&2
+    exit 1
+  fi
+  if ! xcrun simctl list devices booted 2>/dev/null | grep -q "$SIM_UDID"; then
+    echo "==> booting simulator $SIM_UDID"
+    xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
+  fi
+  open -a Simulator 2>/dev/null || true
+  if [ "$DEVICE_HINT" = "ios" ] || [ "$DEVICE_HINT" = "simulator" ]; then
+    NEW_ARGS=()
+    for ((i = 0; i < ${#ARGS[@]}; i++)); do
+      if [ "${ARGS[$i]}" = "-d" ] || [ "${ARGS[$i]}" = "--device-id" ]; then
+        NEW_ARGS+=("${ARGS[$i]}" "$SIM_UDID")
+        i=$((i + 1))
+        continue
       fi
-      for pattern in 'iPhone 17 Pro (' 'iPhone 16 Pro (' 'iPhone 17 (' 'iPhone 16 (' 'iPhone '; do
-        udid="$(xcrun simctl list devices available 2>/dev/null | \
-          awk -F '[()]' -v p="$pattern" 'index($0, p) {print $2; exit}')"
-        if [ -n "$udid" ]; then
-          echo "$udid"
-          return
-        fi
-      done
-    }
+      NEW_ARGS+=("${ARGS[$i]}")
+    done
+    ARGS=("${NEW_ARGS[@]}")
+  fi
+fi
 
-    SIM_UDID="$(pick_sim_udid)"
-    if [ -z "$SIM_UDID" ]; then
-      echo "no iOS simulator found" >&2
-      exit 1
-    fi
+DART_DEFINES=(--dart-define=AVAL_DECODE_LIB="$AVAL_DECODE_LIB")
+if [ "$USE_PROCESS" -eq 1 ]; then
+  DART_DEFINES+=(--dart-define=AVAL_DECODE_USE_PROCESS=true)
+fi
 
-    if ! xcrun simctl list devices booted 2>/dev/null | grep -q "$SIM_UDID"; then
-      echo "==> booting simulator $SIM_UDID"
-      xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
-    fi
-    open -a Simulator 2>/dev/null || true
-
-    # If the user passed -d ios (or a loose name), pin to the concrete UDID.
-    if [ "$DEVICE_HINT" = "ios" ] || [ "$DEVICE_HINT" = "simulator" ]; then
-      NEW_ARGS=()
-      for ((i = 0; i < ${#ARGS[@]}; i++)); do
-        if [ "${ARGS[$i]}" = "-d" ] || [ "${ARGS[$i]}" = "--device-id" ]; then
-          NEW_ARGS+=("${ARGS[$i]}" "$SIM_UDID")
-          i=$((i + 1))
-          continue
-        fi
-        NEW_ARGS+=("${ARGS[$i]}")
-      done
-      ARGS=("${NEW_ARGS[@]}")
-      DEVICE_HINT="$SIM_UDID"
-    fi
-    ;;
-esac
-
-echo "==> flutter run: $EXAMPLE (AVAL_DECODE_LIB=$AVAL_DECODE_LIB)"
+echo "==> flutter run: $EXAMPLE (target=$TARGET_KIND lib=$AVAL_DECODE_LIB process=$USE_PROCESS)"
 cd "$EXAMPLE_DIR"
 flutter pub get
-exec flutter run "${ARGS[@]}" --dart-define=AVAL_DECODE_LIB="$AVAL_DECODE_LIB"
+exec flutter run "${ARGS[@]}" "${DART_DEFINES[@]}"

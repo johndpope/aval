@@ -1,0 +1,6 @@
+// Force-load the Rust aval_decode static library into Runner so Dart can
+// resolve symbols via DynamicLibrary.process() (iOS forbids host-path dlopen).
+// Path is written by scripts/run.sh before `flutter run` / `flutter build ipa`.
+//
+// Do not commit AvalDecode.local.xcconfig (generated); this file is the include hook.
+#include? "AvalDecode.local.xcconfig"

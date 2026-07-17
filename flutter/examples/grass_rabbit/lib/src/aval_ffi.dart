@@ -193,6 +193,11 @@ class AvalDecodeBindings {
   factory AvalDecodeBindings.open(String path) =>
       AvalDecodeBindings._(ffi.DynamicLibrary.open(path));
 
+  /// Looks up symbols in the current process (used when `aval_decode` is
+  /// statically linked into the iOS Runner binary via `-force_load`).
+  factory AvalDecodeBindings.openProcess() =>
+      AvalDecodeBindings._(ffi.DynamicLibrary.process());
+
   final ffi.Pointer<ffi.Void> Function() sessionCreate;
   final void Function(ffi.Pointer<ffi.Void>) sessionDestroy;
   final int Function(ffi.Pointer<ffi.Void>, ffi.Pointer<AvalDecodeConfig>)

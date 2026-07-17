@@ -11,3 +11,4 @@ output/playwright/
 *.tsbuildinfo
 .DS_Store
 /flutter/examples/grass_rabbit/assets/mansion-woman.avl
+/examples/mansion-woman
