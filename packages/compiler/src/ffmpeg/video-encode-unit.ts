@@ -176,7 +176,7 @@ export function createEncodeVideoUnitInvocation(
     "-map_chapters", "-1",
     "-frames:v", String(frameCount),
     "-fps_mode", "passthrough",
-    "-c:v", encoder(input.encoding.codec),
+    "-c:v", encoder(input.encoding),
     ...videoCompressionArguments(input.encoding, input.rendition),
     ...(input.encoding.codec === "av1" ? [] : ["-pix_fmt", "yuv420p"]),
     "-color_range", "tv",
@@ -186,7 +186,7 @@ export function createEncodeVideoUnitInvocation(
     "-g", String(frameCount),
     "-keyint_min", String(frameCount),
     "-sc_threshold", "0",
-    ...codecArguments(input.encoding.codec, frameCount, input.geometry),
+    ...codecArguments(input.encoding, frameCount, input.geometry),
     "-f", outputFormat(input.encoding.codec),
     "pipe:1"
   ]);
@@ -273,9 +273,11 @@ function validate(input: Readonly<EncodeVideoUnitInput>): number {
   return input.endFrame - input.startFrame;
 }
 
-function encoder(codec: VideoCodec): string {
-  switch (codec) {
-    case "h264": return "libx264";
+function encoder(encoding: Readonly<NormalizedVideoEncoding>): string {
+  switch (encoding.codec) {
+    // hwAccel is opt-in and additive; absent (the default) keeps the
+    // existing libx264 path byte-identical.
+    case "h264": return encoding.hwAccel === "nvenc" ? "h264_nvenc" : "libx264";
     case "h265": return "libx265";
     case "vp9": return "libvpx-vp9";
     case "av1": return "libaom-av1";
@@ -293,13 +295,19 @@ function outputFormat(codec: VideoCodec): "h264" | "hevc" | "ivf" {
 }
 
 function codecArguments(
-  codec: VideoCodec,
+  encoding: Readonly<NormalizedVideoEncoding>,
   frameCount: number,
   geometry: Readonly<VideoRenditionGeometry>
 ): readonly string[] {
-  switch (codec) {
+  switch (encoding.codec) {
     case "h264": {
+      // Validate the crop deltas the same way for both encoder backends —
+      // NVENC branches off this same geometry guard below instead of
+      // duplicating it.
       const cropRect = h264CropRect(geometry);
+      if (encoding.hwAccel === "nvenc") {
+        return nvencH264Arguments(geometry);
+      }
       return [
         "-profile:v", "high",
         "-x264-params",
@@ -348,6 +356,80 @@ function codecArguments(
         "color-primaries=1:transfer-characteristics=1:matrix-coefficients=1"
       ];
   }
+}
+
+/**
+ * NVENC-equivalent H.264 codec arguments. `h264_nvenc` accepts none of
+ * libx264's `-x264-params`, so every guarantee that block carried has to be
+ * re-derived here, one clause at a time:
+ *
+ * - `crop-rect=...` (SPS conformance-window crop) is a REAL pixel-geometry
+ *   requirement, not cosmetic SEI: this repo's own test for it is titled
+ *   "owns packed H.264 macroblock padding and the matching SPS crop"
+ *   (packages/compiler/test/video-encode-unit.test.ts). H.264 alone among
+ *   the four codecs stores at 16x16 macroblock alignment (see
+ *   MACROBLOCK_ALIGNMENT in compile/video-codec-compiler.ts; every other
+ *   codec only needs 2x2 YUV420 alignment and never needed a crop), so the
+ *   raw rawvideo pipe:0 input handed to the encoder is macroblock-padded
+ *   beyond geometry.decodedStorageRect. Reproducing this with `-x264-params
+ *   crop-rect=` is not an option for NVENC, so instead a pre-encode
+ *   `-vf crop=...` filter trims the input down to the exact
+ *   decodedStorageRect pane before NVENC ever sees it. NVENC then handles
+ *   its own internal macroblock alignment and emits the correct SPS
+ *   conformance window automatically — unlike libx264, it does not require
+ *   the caller to hand-manage mod-16 padding once the input is already the
+ *   pane size.
+ * - `aud=1` is NOT cosmetic either: the format's own access-unit normalizer
+ *   (packages/format/src/h264/encoder-preparation.ts) hard-requires every
+ *   access unit to begin with an AUD NAL ("normalized access unit must
+ *   begin with AUD") because these are raw elementary streams with no
+ *   container framing. `-aud 1` reproduces this for NVENC.
+ * - `colorprim`/`colormatrix`/`transfer`/`range` in the libx264 params are
+ *   pure belt-and-suspenders duplicates of the generic
+ *   `-color_range`/`-color_primaries`/`-color_trc`/`-colorspace` flags set
+ *   unconditionally above in createEncodeVideoUnitInvocation — FFmpeg's
+ *   libx264 wrapper forwards those AVCodecContext fields into libx264's VUI
+ *   automatically, and its NVENC wrapper does the same. No NVENC-specific
+ *   color flags are needed.
+ * - `force-cfr=1` is likewise redundant here: the input is already
+ *   perfectly constant-frame-rate (a `-f rawvideo` pipe with an explicit
+ *   `-framerate` and `-fps_mode passthrough`, so there are no source
+ *   timestamps to normalize). No NVENC equivalent is needed.
+ * - `8x8dct=1`/`cabac=1` are High-profile defaults; NVENC uses the 8x8
+ *   transform for High profile automatically (no separate FFmpeg option
+ *   exists for it), and `-coder cabac` pins CABAC explicitly rather than
+ *   leaving it to NVENC's own profile-dependent default.
+ * - Closed GOP / no mid-unit keyframes (`scenecut=0`, `open-gop=0`,
+ *   `keyint=`/`min-keyint=` matching frameCount) map to `-no-scenecut 1`
+ *   (disable scene-cut-triggered keyframe insertion), `-strict_gop 1`
+ *   (don't let NVENC vary GOP structure away from the generic `-g
+ *   frameCount -keyint_min frameCount -sc_threshold 0` already set
+ *   unconditionally above), `-forced-idr 1` (force the one keyframe this
+ *   unit does emit to be a true IDR, not an I-frame carrying open-GOP-style
+ *   forward references), and `-rc-lookahead 0` (rate-control lookahead can
+ *   otherwise choose to insert its own keyframes; disabling it removes that
+ *   path entirely).
+ *
+ * JUDGMENT CALL: these flag names/semantics are the well-documented FFmpeg
+ * h264_nvenc AVOptions as of recent FFmpeg/NVENC SDK releases, but NVENC
+ * option names have shifted across FFmpeg versions historically. Confirm
+ * against the exact ffmpeg build on the target GPU box
+ * (`ffmpeg -h encoder=h264_nvenc`) before relying on this in production.
+ */
+function nvencH264Arguments(
+  geometry: Readonly<VideoRenditionGeometry>
+): readonly string[] {
+  const [left, top, width, height] = geometry.decodedStorageRect;
+  return [
+    "-vf", `crop=${String(width)}:${String(height)}:${String(left)}:${String(top)}`,
+    "-profile:v", "high",
+    "-coder", "cabac",
+    "-aud", "1",
+    "-no-scenecut", "1",
+    "-strict_gop", "1",
+    "-forced-idr", "1",
+    "-rc-lookahead", "0"
+  ];
 }
 
 function h264CropRect(

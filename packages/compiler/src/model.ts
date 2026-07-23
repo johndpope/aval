@@ -15,6 +15,14 @@ export const H264_ENCODER_PRESETS = COMPILE_BUNDLE_H264_PRESETS;
 export const H265_ENCODER_PRESETS = COMPILE_BUNDLE_H265_PRESETS;
 export const VP9_DEADLINES = COMPILE_BUNDLE_VP9_DEADLINES;
 
+/**
+ * Opt-in hardware-accelerated encoder backends for the H.264 policy. Absent
+ * (`undefined`) is the only default and keeps the existing libx264 path
+ * byte-identical. Currently limited to NVENC (h264_nvenc); h265/vp9/av1 are
+ * untouched by this switch.
+ */
+export const H264_HW_ACCELERATORS = ["nvenc"] as const;
+
 export const COMPILER_PROJECT_VERSION = "1.0" as const;
 export const MAX_PROCESS_STDERR_BYTES = 1024 * 1024;
 export const MAX_PROCESS_OUTPUT_BYTES = Number.MAX_SAFE_INTEGER;
@@ -172,6 +180,7 @@ export interface SourceBinding {
 export type H264EncoderPreset = typeof H264_ENCODER_PRESETS[number];
 export type H265EncoderPreset = typeof H265_ENCODER_PRESETS[number];
 export type Vp9Deadline = typeof VP9_DEADLINES[number];
+export type H264HwAccelerator = typeof H264_HW_ACCELERATORS[number];
 
 export type SourceAlphaPolicy = "auto" | "opaque" | "packed";
 export type VideoCodec = FormatVideoCodec;
@@ -195,6 +204,14 @@ export interface H264Encoding<R extends SourceRenditionTarget = SourceRenditionT
 {
   readonly codec: "h264";
   readonly preset: H264EncoderPreset;
+  /**
+   * Optional hardware-accelerated encoder backend. `undefined` (the default)
+   * is the existing libx264 path, unchanged. `"nvenc"` selects h264_nvenc —
+   * see `videoCompressionArguments`/`codecArguments` in
+   * `compile/video-encoding-policy.ts` and `ffmpeg/video-encode-unit.ts` for
+   * the NVENC-equivalent rate-control and closed-GOP argument mapping.
+   */
+  readonly hwAccel?: H264HwAccelerator;
   readonly renditions: readonly R[];
 }
 

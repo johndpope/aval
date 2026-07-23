@@ -181,6 +181,72 @@ describe("video encoding policy", () => {
     }
   });
 
+  it("accepts opt-in NVENC hwAccel on h264 and lowers the NVENC-equivalent rate-control vector", () => {
+    const encodings = cloneVideoEncodings([{
+      codec: "h264",
+      preset: "medium",
+      hwAccel: "nvenc",
+      renditions: [rendition(22)]
+    }], canvas);
+    expect(encodings[0]).toMatchObject({ codec: "h264", hwAccel: "nvenc" });
+    expect(videoCompressionArguments(encodings[0]!, encodings[0]!.renditions[0]!))
+      .toEqual([
+        "-preset", "p4", "-tune", "hq", "-rc", "vbr", "-cq", "22", "-b:v", "0"
+      ]);
+
+    // Absent hwAccel keeps the default libx264 argv shape byte-identical.
+    const defaultEncodings = cloneVideoEncodings([{
+      codec: "h264",
+      preset: "medium",
+      renditions: [rendition(22)]
+    }], canvas);
+    expect(defaultEncodings[0]).not.toHaveProperty("hwAccel");
+    expect(videoCompressionArguments(defaultEncodings[0]!, defaultEncodings[0]!.renditions[0]!))
+      .toEqual(["-crf", "22", "-preset", "medium"]);
+  });
+
+  it("maps every libx264 preset onto an NVENC p1..p7 preset", () => {
+    const expected: Record<string, string> = {
+      ultrafast: "p1", superfast: "p1",
+      veryfast: "p2", faster: "p2",
+      fast: "p3",
+      medium: "p4",
+      slow: "p5",
+      slower: "p6",
+      veryslow: "p7", placebo: "p7"
+    };
+    for (const preset of H264_ENCODER_PRESETS) {
+      const encodings = cloneVideoEncodings([{
+        codec: "h264",
+        preset,
+        hwAccel: "nvenc",
+        renditions: [rendition(20)]
+      }], canvas);
+      const arguments_ = videoCompressionArguments(encodings[0]!, encodings[0]!.renditions[0]!);
+      expect(arguments_[0]).toBe("-preset");
+      expect(arguments_[1]).toBe(expected[preset]);
+    }
+  });
+
+  it("rejects an hwAccel value other than the nvenc allowlist", () => {
+    expect(() => cloneVideoEncodings([{
+      codec: "h264",
+      preset: "medium",
+      hwAccel: "quicksync",
+      renditions: [rendition()]
+    }], canvas)).toThrow(CompilerError);
+  });
+
+  it("rejects hwAccel on codecs other than h264", () => {
+    expect(() => cloneVideoEncodings([{
+      codec: "h265",
+      preset: "medium",
+      threads: 1,
+      hwAccel: "nvenc",
+      renditions: [rendition()]
+    }], canvas)).toThrow(CompilerError);
+  });
+
   it("rejects codec controls placed on the wrong union member", () => {
     const cases: any[] = [
       { codec: "h264", preset: "medium", threads: 1, renditions: [rendition()] },

@@ -25,6 +25,12 @@ exposes deadline/CPU controls, and AV1 exposes 8/10-bit, CPU, tile, row-MT, and
 thread controls. Direct input requires `--codec` and lowers through the same
 one-codec bundle pipeline; arbitrary FFmpeg arguments are not accepted.
 
+H.264 additionally accepts an opt-in `hwAccel: "nvenc"` to encode with
+NVIDIA's hardware `h264_nvenc` instead of the default software `libx264` path
+(absent is unchanged default behavior). See
+[project 1.0](project/1.0.md#compression-controls) for the field and its
+CRF-to-CQ/preset mapping caveats.
+
 See [preparing video and authoring states](compiler/authoring-video-and-states.md)
 for accepted files, timing and alpha requirements, half-open ranges, a complete
 multi-state project, exact no-downscale sizing behavior, and consumer code.

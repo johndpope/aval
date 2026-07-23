@@ -113,6 +113,81 @@ describe("codec-major unit encoder argv", () => {
     expect(result.arguments.at(-2)).toBe("h264");
   });
 
+  it("selects h264_nvenc and NVENC-equivalent flags when hwAccel is nvenc, leaving the default libx264 argv shape untouched", () => {
+    const result = invocation({
+      codec: "h264",
+      preset: "veryslow",
+      hwAccel: "nvenc",
+      renditions: [rendition]
+    });
+    expectArguments(result.arguments, [
+      "-c:v", "h264_nvenc",
+      "-preset", "p7", "-tune", "hq", "-rc", "vbr", "-cq", "20", "-b:v", "0"
+    ]);
+    expectArguments(result.arguments, [
+      "-g", "6", "-keyint_min", "6", "-sc_threshold", "0"
+    ]);
+    expect(result.arguments).not.toContain("-x264-params");
+    expect(result.arguments).not.toContain("libx264");
+    expect(result.arguments).not.toContain("-crf");
+    expect(result.arguments).toContain("-coder");
+    expect(result.arguments).toContain("-aud");
+    expect(result.arguments).toContain("-no-scenecut");
+    expect(result.arguments).toContain("-strict_gop");
+    expect(result.arguments).toContain("-forced-idr");
+    expect(result.arguments).toContain("-rc-lookahead");
+    expect(result.arguments.at(-2)).toBe("h264");
+
+    const libx264 = invocation({
+      codec: "h264",
+      preset: "veryslow",
+      renditions: [rendition]
+    });
+    expect(libx264.arguments).toContain("libx264");
+    expect(libx264.arguments).not.toContain("h264_nvenc");
+    expect(libx264.arguments).toContain("-x264-params");
+  });
+
+  it("crops NVENC's macroblock-padded H.264 input to the same pane libx264's SPS crop targets", () => {
+    const packedRendition: NormalizedSourceRenditionTarget = {
+      id: "motion.1x",
+      width: 48,
+      height: 48,
+      crf: 24
+    };
+    const geometry = deriveVideoRenditionGeometry({
+      canvasWidth: 48,
+      canvasHeight: 48,
+      layout: "packed-alpha",
+      visibleWidth: 48,
+      visibleHeight: 48,
+      storage: { widthAlignment: 16, heightAlignment: 16 }
+    });
+    const result = createEncodeVideoUnitInvocation({
+      source: {
+        path: "/private/spool/render.yuv",
+        width: 48,
+        height: 112,
+        bitDepth: 8,
+        frameRate: { numerator: 30, denominator: 1 },
+        frameBytes: 48 * 112 * 3 / 2
+      },
+      startFrame: 0,
+      endFrame: 8,
+      encoding: {
+        codec: "h264",
+        preset: "slow",
+        hwAccel: "nvenc",
+        renditions: [packedRendition]
+      },
+      rendition: packedRendition,
+      geometry
+    });
+    expectArguments(result.arguments, ["-vf", "crop=48:104:0:0"]);
+    expect(result.arguments).not.toContain("-x264-params");
+    expect(result.arguments).toContain("h264_nvenc");
+  });
+
   it("lowers the requested H.265 slow preset and thread count to raw HEVC", () => {
     const result = invocation({
       codec: "h265",

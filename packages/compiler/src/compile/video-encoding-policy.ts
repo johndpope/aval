@@ -7,6 +7,7 @@ import type {
   Av1Encoding,
   Canvas,
   H264Encoding,
+  H264EncoderPreset,
   H265Encoding,
   NormalizedSourceRenditionTarget,
   NormalizedVideoEncoding,
@@ -16,6 +17,7 @@ import type {
 } from "../model.js";
 import {
   H264_ENCODER_PRESETS,
+  H264_HW_ACCELERATORS,
   H265_ENCODER_PRESETS,
   VP9_DEADLINES
 } from "../model.js";
@@ -71,6 +73,37 @@ function cloneEncodingSet(
   return Object.freeze(encodings);
 }
 
+/**
+ * Map libx264's 10-step preset scale (`ultrafast`..`placebo`) onto NVENC's
+ * 7-step `p1` (fastest) .. `p7` (slowest/highest-quality) preset scale.
+ *
+ * This is a documented judgment call, not a precision mapping: NVENC's
+ * presets trade off encode speed vs. quality along a materially different
+ * curve than libx264's software presets, so there is no exact equivalence.
+ * Chosen mapping (two adjacent libx264 presets collapse onto each faster
+ * NVENC step, since NVENC only has 7 steps to libx264's 10):
+ *   ultrafast, superfast -> p1
+ *   veryfast,  faster    -> p2
+ *   fast                 -> p3
+ *   medium                -> p4 (NVENC's own documented default)
+ *   slow                  -> p5
+ *   slower                -> p6
+ *   veryslow,  placebo    -> p7
+ */
+const NVENC_H264_PRESET_MAP: Readonly<Record<H264EncoderPreset, string>> =
+  Object.freeze({
+    ultrafast: "p1",
+    superfast: "p1",
+    veryfast: "p2",
+    faster: "p2",
+    fast: "p3",
+    medium: "p4",
+    slow: "p5",
+    slower: "p6",
+    veryslow: "p7",
+    placebo: "p7"
+  });
+
 /** Lower only the allowlisted compression controls owned by an encoding. */
 export function videoCompressionArguments(
   encoding: Readonly<NormalizedVideoEncoding>,
@@ -79,6 +112,25 @@ export function videoCompressionArguments(
   const crf = ["-crf", String(rendition.crf)];
   switch (encoding.codec) {
     case "h264":
+      if (encoding.hwAccel === "nvenc") {
+        // NVENC has no CRF control; `-cq` is its constant-quality knob on
+        // (approximately) the same 0-51 numeric scale as libx264's CRF, so
+        // this is a direct passthrough of the rendition's existing CRF
+        // value, NOT a calibrated perceptual match — libx264 CRF and NVENC
+        // CQ ride different rate-distortion curves at the same number.
+        // JUDGMENT CALL: ship this as the starting point, but visually
+        // verify against the libx264 output at the same nominal value
+        // before treating it as an equivalent quality bar.
+        // `-b:v 0` paired with `-rc vbr` leaves bitrate unconstrained so CQ
+        // alone drives quality, mirroring CRF's "no explicit bitrate" model.
+        return Object.freeze([
+          "-preset", NVENC_H264_PRESET_MAP[encoding.preset],
+          "-tune", "hq",
+          "-rc", "vbr",
+          "-cq", String(rendition.crf),
+          "-b:v", "0"
+        ]);
+      }
       return Object.freeze([...crf, "-preset", encoding.preset]);
     case "h265":
       return Object.freeze([
@@ -112,10 +164,15 @@ function cloneH264Encoding(
   path: string,
   canvas: Readonly<Canvas> | undefined
 ): H264Encoding<NormalizedSourceRenditionTarget> {
-  exactKeys(input, ["codec", "preset", "renditions"], path);
+  exactKeys(input, ["codec", "preset", "renditions"], path, ["hwAccel"]);
   return Object.freeze({
     codec: literal(input.codec, "h264", `${path}.codec`),
     preset: oneOf(input.preset, H264_ENCODER_PRESETS, `${path}.preset`),
+    ...(input.hwAccel === undefined
+      ? {}
+      : {
+          hwAccel: oneOf(input.hwAccel, H264_HW_ACCELERATORS, `${path}.hwAccel`)
+        }),
     renditions: cloneRenditions(input.renditions, path, canvas, 51)
   });
 }
